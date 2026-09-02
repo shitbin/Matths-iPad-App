@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Lottie 피드백 재생판 — 네이티브가 window.MATTHS_LOTTIE = {data, loop} 로
+   애니메이션 JSON 을 **직접 주입**한다. file:// 오리진의 WKWebView 에서는
+   fetch/XHR 가 막히므로 파일 경로 방식은 쓰지 않는다 (ProblemWebView 와 같은 이유). */
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+#stage { width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script src="lottie_light.min.js"></script>
+<script>
+(function () {
+  const cfg = window.MATTHS_LOTTIE || {};
+  if (!cfg.data) return;   // 주입 없이 열리면(브라우저 미리보기 등) 조용히 빈 화면
+  try {
+    const motionAllowed = window.MATTHS_MOTION !== false;
+    const animation = lottie.loadAnimation({
+      container: document.getElementById("stage"),
+      renderer: "svg",
+      loop: motionAllowed ? !!cfg.loop : false,
+      autoplay: motionAllowed,
+      animationData: cfg.data,
+    });
+    if (!motionAllowed) {
+      animation.addEventListener("DOMLoaded", () => animation.goToAndStop(0, true));
+    }
+    window.addEventListener("matthsAccessibilityChanged", () => {
+      if (window.MATTHS_MOTION === false) {
+        animation.goToAndStop(animation.currentFrame, true);
+      }
+    });
+  } catch (e) { /* 재생 실패는 침묵 — 네이티브 쪽 정적 아이콘이 이미 있다 */ }
+})();
+</script>
+</body>
+</html>

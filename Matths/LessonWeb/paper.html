@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="katex.min.css">
+<style>
+/* 시험지 단위 응시 화면 — 웹 assessment-attempt.ejs 의 앱판.
+   전 문항을 한 페이지에 렌더하고, 답 입력을 paperAnswer 메시지로 네이티브에 보고한다.
+   제출 후에는 review 모드로 다시 로드되어 정오·정답·해설을 공개한다
+   (시험지 모드의 웹 계약 — 개념 연습의 정답 비공개와 다른 트랙). */
+@font-face {
+  font-family: "PretendardVar";
+  src: url("PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920; font-display: swap;
+}
+:root {
+  --content-scale: 1;
+  --p-surface: #ffffff; --p-ink: #111426; --p-text2: #4a5268; --p-text3: #747d93;
+  --p-line: #e3e8f4; --p-primary: #327ffa; --p-primary-soft: #e8edff;
+  --p-success: #1e9e5a; --p-danger: #e0344a; --p-success-soft: #e3f4eb; --p-danger-soft: #fde8eb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --p-surface: #141a2e; --p-ink: #eef1fa; --p-text2: #a6aec2; --p-text3: #808aa1;
+    --p-line: #232a44; --p-primary: #7e9bff; --p-primary-soft: #14203f;
+    --p-success: #3fbe7d; --p-danger: #f26d7e; --p-success-soft: #12241b; --p-danger-soft: #331318;
+  }
+}
+html, body { margin: 0; padding: 0; background: transparent; color: var(--p-ink);
+  font-family: "PretendardVar", -apple-system, "Apple SD Gothic Neo", sans-serif; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.q { padding: 14px 2px 16px; border-bottom: 1px dashed var(--p-line); }
+.q-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.q-no { font-weight: 800; font-size: calc(16px * var(--content-scale)); }
+.q-pts { font-size: calc(12px * var(--content-scale)); line-height: 1.5; color: var(--p-text3); }
+.q-verdict { margin-left: auto; font-size: calc(13px * var(--content-scale)); font-weight: 700; }
+.q-verdict.ok { color: var(--p-success); }
+.q-verdict.bad { color: var(--p-danger); }
+.prompt { font-size: calc(16px * var(--content-scale)); line-height: 1.75; margin-bottom: 10px; }
+.q-choices { display: block; }
+.choice {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  margin: 6px 0; padding: 10px 12px; border-radius: 10px;
+  border: 1.3px solid var(--p-line); background: var(--p-surface); color: var(--p-ink);
+  min-height: 44px; font-family: inherit; font-size: calc(14px * var(--content-scale)); font-weight: 600; cursor: pointer;
+}
+.choice .no {
+  flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1.3px solid var(--p-line); font-size: calc(12px * var(--content-scale)); font-weight: 800;
+}
+.choice.picked { border-color: var(--p-primary); background: var(--p-primary-soft); }
+.choice.picked .no { border-color: var(--p-primary); color: var(--p-primary); }
+.choice.answer { border-color: var(--p-success); background: var(--p-success-soft); }
+.choice.wrongpick { border-color: var(--p-danger); background: var(--p-danger-soft); }
+.short {
+  width: 140px; padding: 10px 12px; border-radius: 10px;
+  border: 1.3px solid var(--p-line); background: var(--p-surface); color: var(--p-ink);
+  min-height: 44px; font-family: inherit; font-size: calc(15px * var(--content-scale));
+}
+.review-box {
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--p-primary-soft); font-size: calc(14px * var(--content-scale)); line-height: 1.7;
+}
+.review-box .label { font-size: calc(12px * var(--content-scale)); line-height: 1.5; color: var(--p-primary); font-weight: 800; margin-bottom: 3px; }
+/* iPhone 가로는 높이가 모자라고 폭이 남는다. 5지선다를 세로 5줄로 두면
+   네 번째부터 탭바 아래로 밀리므로 두 열에 3행으로 담는다. 접근성 글씨는
+   열 폭을 반으로 줄이지 않고 아래 JS가 붙이는 클래스로 다시 한 열을 쓴다. */
+html.paper-compact-height .q-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+html.paper-compact-height .choice { margin: 0; }
+html.paper-compact-height.paper-accessibility-text .q-choices {
+  grid-template-columns: minmax(0, 1fr);
+}
+</style>
+</head>
+<body>
+<div id="paper"></div>
+
+<script src="katex.min.js"></script>
+<script>
+(function () {
+  const data = window.MATTHS_PAPER || { questions: [] };
+  const CIRCLED = ["①", "②", "③", "④", "⑤"];
+  const KEYS = ["a", "b", "c", "d", "e"];
+  const review = data.mode === "review";
+
+  function syncAccessibleChoiceLayout() {
+    const scale = Number(window.MATTHS_ACCESSIBILITY?.scale || 1);
+    document.documentElement.classList.toggle("paper-accessibility-text", scale >= 1.5);
+    document.documentElement.classList.toggle(
+      "paper-compact-height", !!window.MATTHS_PAPER_COMPACT_HEIGHT
+    );
+  }
+  window.MATTHS_APPLY_PAPER_LAYOUT = function (compactHeight) {
+    window.MATTHS_PAPER_COMPACT_HEIGHT = !!compactHeight;
+    syncAccessibleChoiceLayout();
+  };
+  syncAccessibleChoiceLayout();
+  window.addEventListener("matthsAccessibilityChanged", syncAccessibleChoiceLayout);
+
+  function texify(el, text) {
+    // \( \) 표기(웹 로컬 생성기)도 $ 규약으로 정규화해 렌더한다
+    const normalized = String(text || "").replaceAll("\\(", "$").replaceAll("\\)", "$");
+    const parts = normalized.split(/\$([^$]+)\$/);
+    parts.forEach((part, i) => {
+      if (i % 2 === 0) el.appendChild(document.createTextNode(part));
+      else {
+        const span = document.createElement("span");
+        try { katex.render(part, span, { throwOnError: false }); }
+        catch (e) { span.textContent = part; }
+        el.appendChild(span);
+      }
+    });
+  }
+
+  const root = document.getElementById("paper");
+  data.questions.forEach((q) => {
+    const box = document.createElement("div"); box.className = "q";
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-labelledby", "question-" + q.no + "-number");
+    const head = document.createElement("div"); head.className = "q-head";
+    const no = document.createElement("span"); no.className = "q-no"; no.textContent = q.no + ".";
+    no.id = "question-" + q.no + "-number";
+    no.setAttribute("role", "heading");
+    no.setAttribute("aria-level", "2");
+    no.setAttribute("aria-label", q.no + "번 문제");
+    const pts = document.createElement("span"); pts.className = "q-pts";
+    pts.textContent = (q.points === 5 ? "심화" : q.points === 4 ? "응용" : "중상");
+    head.appendChild(no); head.appendChild(pts);
+    if (review) {
+      const v = document.createElement("span");
+      v.className = "q-verdict " + (q.correct ? "ok" : "bad");
+      v.textContent = q.correct ? "정답" : "오답";
+      head.appendChild(v);
+    }
+    box.appendChild(head);
+
+    const prompt = document.createElement("div"); prompt.className = "prompt";
+    texify(prompt, q.prompt);
+    box.appendChild(prompt);
+
+    if (q.choices && q.choices.length) {
+      const choices = document.createElement("div"); choices.className = "q-choices";
+      choices.setAttribute("role", "radiogroup");
+      choices.setAttribute("aria-label", q.no + "번 문제 답 선택");
+      q.choices.forEach((text, i) => {
+        const key = KEYS[i];
+        const btn = document.createElement("button"); btn.className = "choice";
+        btn.type = "button";
+        btn.setAttribute("role", "radio");
+        btn.setAttribute("aria-checked", q.picked === key ? "true" : "false");
+        if (q.picked === key) btn.classList.add("picked");
+        if (review) {
+          if (key === q.answer) btn.classList.add("answer");
+          else if (q.picked === key && !q.correct) btn.classList.add("wrongpick");
+          btn.disabled = true;
+        }
+        const noEl = document.createElement("span"); noEl.className = "no";
+        noEl.textContent = CIRCLED[i] || key;
+        noEl.setAttribute("aria-hidden", "true");
+        btn.appendChild(noEl);
+        const accessiblePrefix = document.createElement("span");
+        accessiblePrefix.className = "sr-only";
+        accessiblePrefix.textContent = q.no + "번 문제 " + (i + 1) + "번 선지: ";
+        btn.appendChild(accessiblePrefix);
+        const body = document.createElement("span");
+        texify(body, text);
+        btn.appendChild(body);
+        if (!review) btn.onclick = () => {
+          box.querySelectorAll(".choice").forEach((b) => {
+            b.classList.remove("picked");
+            b.setAttribute("aria-checked", "false");
+          });
+          btn.classList.add("picked");
+          btn.setAttribute("aria-checked", "true");
+          window.webkit?.messageHandlers?.paperAnswer?.postMessage({ no: q.no, value: key });
+        };
+        choices.appendChild(btn);
+      });
+      box.appendChild(choices);
+    } else {
+      const inputID = "question-" + q.no + "-answer";
+      const label = document.createElement("label");
+      label.className = "sr-only";
+      label.htmlFor = inputID;
+      label.textContent = q.no + "번 문제 답";
+      box.appendChild(label);
+      const input = document.createElement("input");
+      input.id = inputID;
+      input.className = "short"; input.placeholder = "답";
+      input.value = q.picked || "";
+      if (review) input.disabled = true;
+      else input.addEventListener("input", () => {
+        window.webkit?.messageHandlers?.paperAnswer?.postMessage({ no: q.no, value: input.value });
+      });
+      box.appendChild(input);
+      if (review) {
+        const ans = document.createElement("div"); ans.className = "review-box";
+        const lb = document.createElement("div"); lb.className = "label"; lb.textContent = "정답";
+        ans.appendChild(lb);
+        const at = document.createElement("div"); texify(at, q.answerText || q.answer);
+        ans.appendChild(at);
+        box.appendChild(ans);
+      }
+    }
+
+    if (review && q.solution) {
+      const sol = document.createElement("div"); sol.className = "review-box";
+      const lb = document.createElement("div"); lb.className = "label"; lb.textContent = "해설";
+      sol.appendChild(lb);
+      const st = document.createElement("div"); texify(st, q.solution);
+      sol.appendChild(st);
+      box.appendChild(sol);
+    }
+    root.appendChild(box);
+  });
+
+  const report = () => {
+    window.webkit?.messageHandlers?.paperHeight?.postMessage(document.body.scrollHeight);
+  };
+  new ResizeObserver(report).observe(document.body);
+  setTimeout(report, 300);
+})();
+</script>
+</body>
+</html>

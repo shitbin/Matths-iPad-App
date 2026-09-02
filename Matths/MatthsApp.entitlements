@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 홈 화면 위젯과 스냅샷을 나누는 앱 그룹. 위젯 확장(MatthsWidget.entitlements)과 같은 ID.
+	     루트의 Matths.entitlements(9B 메모리 권한)는 현재 타깃에 물려 있지 않다 —
+	     그 권한은 프로비저닝이 막혀 CODE_SIGN_ENTITLEMENTS 가 비어 있었다. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.kr.matths.app</string>
+	</array>
+
+	<!-- 스크린샷 차단(AAC). **2026-08-21 켰다.**
+	     Apple 이 개별 심사해 프로비저닝 프로파일에 넣어 주는 제한 권한이라,
+	     프로파일에 없는 상태로 여기 적으면 실기기 서명이 통째로 깨진다 —
+	     "Provisioning profile ... doesn't include the com.apple.developer.
+	      automatic-assessment-configuration entitlement".
+	     그래서 승인 전까지 주석으로 막아 두었었다. 순서는 이랬다.
+	       (1) App ID kr.matths.app 의 Capability 켜기   ← 감독, 2026-08-21
+	       (2) 프로비저닝 프로파일 다시 받기              ← 캐시 비우고 재아카이브로 확인
+	       (3) 이 키 살리기                              ← 지금
+	     (2)를 건너뛰면 서명이 깨진다. 프로파일에 실제로 들어왔는지는
+	     scripts/verify-archive-entitlements.sh 가 아카이브를 열어 확인한다.
+
+	     권한이 없어도 앱은 죽지 않는다 — begin() 이 실패하면 코디네이터가
+	     .bestEffort 등급(녹화·미러링 덮개 + 앱 전환 덮개 + 워터마크 + 스크린샷
+	     사후 기록)으로 내려앉고 시험은 그대로 진행된다. 그 폴백은 그대로 둔다. -->
+	<key>com.apple.developer.automatic-assessment-configuration</key>
+	<true/>
+
+	<!-- Sign in with Apple. **2026-08-21 켰다.** 위 AAC 와 같은 종류의 권한이고
+	     같은 순서를 밟았다.
+
+	     이건 심사와 직결된다 — 구글·카카오 로그인을 제공하므로 심사지침 4.8 이
+	     동등한 대안을 요구한다. 엔타이틀먼트가 빠진 채 올라가면 애플 로그인이
+	     런타임에 실패하고 그대로 반려 사유가 된다.
+
+	     주의: 이 키만으로 버튼이 보이지는 않는다. AuthScreen 은 서버의
+	     /auth/providers 가 apple 을 configured 로 내려줄 때만 버튼을 그린다.
+	     서버 쪽 APPLE_* 환경변수 배포가 함께 끝나야 실기기에서 보인다. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+
+	<!-- Universal Links. 서버의 /.well-known/apple-app-site-association은 앱이
+	     실제로 소유하는 학습·학원·관리·초대 경로만 허용한다. 모든 웹 경로를
+	     가로채지 않아 로그인/결제 콜백처럼 앱 라우터가 모르는 페이지가 먹통이
+	     되는 일을 막는다. App ID capability와 새 프로비저닝이 함께 필요하다. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:www.matths.kr</string>
+		<string>applinks:matths.kr</string>
+	</array>
+</dict>
+</plist>

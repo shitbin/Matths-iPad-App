@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="katex.min.css">
+<!-- ScenarioPlayer 의 무대·자막·컨트롤 스타일(.sp-*)은 brand.css 에 있다.
+     이걸 빼면 무대가 크기를 못 잡아 라벨이 페이지 아래로 쏟아진다. -->
+<link rel="stylesheet" href="brand.css">
+<style>
+/* 유형별 풀이 안무 재생기.
+   네이티브 계약: window.MATTHS_SOLUTION_SCENE = {kind, viz, steps, answer, statement}
+   kind 에 전용 안무가 있으면 그 안무를, 없으면 단계 텍스트 기반 범용 안무를 튼다.
+   무대 자체는 강의와 같은 ScenarioPlayer 라, 학생이 배우던 화법 그대로 해설이 나온다.
+
+   주의: Xcode 동기화 그룹이 리소스를 번들 루트로 평탄화하므로 모든 참조는
+   같은 디렉터리 기준이다 (하위 경로 접두사 금지). */
+@font-face {
+  font-family: "PretendardVar";
+  src: url("PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920; font-display: swap;
+}
+/* KaTeX 서브트리는 제외한다. 예전엔 그냥 `*` 였는데, 그러면 KaTeX 가 만든
+   글리프 스팬까지 Pretendard 로 덮인다. 글자 클래스가 붙은 스팬(.mathnormal 등)은
+   살아남지만 =, ≠, +, 괄호, 숫자처럼 클래스 없는 관계·연산 기호는 전부 덮여서,
+   KaTeX 가 KaTeX_Main 기준으로 잡아 둔 자리와 어긋난다. 실제로 `(x \neq 1)` 의
+   ≠ 가 뭉개져 보였다(2026-07-29 실기·시뮬 확인). 본문 폰트는 그대로 두고
+   수식만 제 폰트를 쓰게 한다. */
+/* :where() 로 감싸는 이유 — :not() 만 쓰면 특이도가 (0,2,0)으로 올라가
+   .card 같은 클래스 규칙(0,1,0)의 padding·margin 까지 이 리셋이 덮는다.
+   실제로 설명 카드의 안쪽 여백이 통째로 사라졌다. :where() 는 특이도 0 이다. */
+*:where(:not(.katex, .katex *)) { font-family: "PretendardVar", -apple-system, "Apple SD Gothic Neo", sans-serif; }
+/* brand.css 는 데모 셸용이라 body 에 크림 배경 + overflow:hidden 을 건다.
+   네이티브 카드 안에 얹히는 뷰이므로 둘 다 되돌린다 (높이 보고가 0 이 되면 안 된다). */
+html, body { margin: 0; padding: 0; background: transparent; overflow: visible; height: auto; }
+:root { --content-scale: 1; --sol-ink: #26221C; }
+#holder { width: 100%; }
+/* 무대 배경도 앱 카드 톤으로 — 데모의 크림색 사각형이 그대로 뜨면 이물감이 크다 */
+.sp-viewport { background: #ffffff; }
+@media (prefers-color-scheme: dark) {
+  /* 잉크 한 값만 뒤집는다. 예전엔 `.sp-glabel { color: … !important }` 로
+     라벨을 통째로 덮었는데, 그러면 (1) 파랑·초록·마젠타로 구분해 둔 의미
+     색까지 전부 같은 흰색이 되고 (2) 라벨이 아닌 SVG 선(넓이 모델의 바깥
+     테두리 등)은 여전히 갈색 잉크라 네이비 배경에 잠겼다.
+     solution-scenes.js 의 C.ink 가 var(--sol-ink) 라 선·글자가 함께 따라온다. */
+  :root { --sol-ink: #EEF1FA; }
+  .sp-viewport { background: #141a2e; }
+  .sp-caption, .sp-formula { color: #eef1fa; }
+}
+.ss-missing {
+  padding: 26px 10px; text-align: center; font-size: calc(13px * var(--content-scale));
+  color: #8b8578;
+}
+.sp-formula .katex { font-size: calc(21px * var(--content-scale)); }
+.sp-caption { font-size: calc(16px * var(--content-scale)); }
+.sp-summary-title { font-size: calc(15px * var(--content-scale)); }
+.sp-summary-line { font-size: calc(16px * var(--content-scale)); }
+.sp-controls button { min-width: 44px; min-height: 44px; font-size: calc(15px * var(--content-scale)); }
+.sp-time { font-size: calc(13px * var(--content-scale)); }
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation: none !important; transition: none !important;
+}
+</style>
+</head>
+<body>
+<div id="holder"></div>
+<div id="missing" class="ss-missing" hidden>이 문제는 재생할 풀이 안무가 없습니다.</div>
+
+<script src="katex.min.js"></script>
+<script src="scenario-player.js"></script>
+<script src="solution-text-contract.js"></script>
+<script src="solution-scenes.js"></script>
+<script>
+(function () {
+  const payload = window.MATTHS_SOLUTION_SCENE || {};
+  const holder = document.getElementById("holder");
+  let player = null;
+
+  function report() {
+    // 네이티브가 프레임을 잡을 수 있게 실제 높이를 올려 보낸다
+    const h = Math.ceil(document.body.scrollHeight);
+    try { window.webkit.messageHandlers.sceneHeight.postMessage(h); } catch (e) {}
+  }
+
+  try {
+    const scene = window.MatthsSolutionScenes.build(payload);
+    if (!scene) throw new Error("빌더가 안무를 만들지 못했다");
+    player = new ScenarioPlayer(holder, scene, {});
+  } catch (e) {
+    holder.hidden = true;
+    document.getElementById("missing").hidden = false;
+    console.log("solution scene 실패", e && e.message);
+  }
+
+  // 레이아웃이 잡힌 뒤 높이 보고 (KaTeX 조판 후 두 번)
+  requestAnimationFrame(() => { report(); setTimeout(report, 260); setTimeout(report, 900); });
+  window.addEventListener("resize", report);
+  // 높이는 재생 도중에도 자란다 — 자막이 2줄이 되거나 수식 바가 줄바꿈되면 900ms 가
+  // 지난 뒤에 커지는데, 그때 보고가 없으면 네이티브 프레임은 옛 높이 그대로라
+  // (스크롤도 꺼져 있어) 컨트롤 줄이 잘려 손이 닿지 않는다. 형제 페이지들처럼 감시한다.
+  new ResizeObserver(report).observe(document.body);
+})();
+</script>
+</body>
+</html>

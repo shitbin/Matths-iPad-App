@@ -1,0 +1,133 @@
+{
+  "identifier" : "6E1A4C90",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6803569629",
+    "_developerTeamID" : "64U874RU4D",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 0,
+    "_locale" : "ko_KR",
+    "_storefront" : "KOR",
+    "_storeKitErrors" : [
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Load Products"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Purchase"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Verification"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Store Sync"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Subscription Status"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "App Transaction"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Manage Subscriptions Sheet"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Refund Request"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Offer Code Redeem Sheet"
+      }
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "22322961",
+      "localizations" : [
+        {
+          "description" : "",
+          "displayName" : "맵쓰 학습권",
+          "locale" : "ko_KR"
+        }
+      ],
+      "name" : "Matths 학습권",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "29000",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6803570339",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "매월 갱신되며 결제마다 29일 학습 사이클을 제공합니다.",
+              "displayName" : "29일 학습권",
+              "locale" : "ko_KR"
+            }
+          ],
+          "productID" : "kr.matths.app.pass.29d",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "29일 학습권 패키지",
+          "subscriptionGroupID" : "22322961",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "5500",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "6803570684",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "매월 갱신되며 주간 공식 모의고사와 응시 기록을 제공합니다.",
+              "displayName" : "주간 공식 모의고사",
+              "locale" : "ko_KR"
+            }
+          ],
+          "productID" : "kr.matths.app.mock.30d",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "주간 공식 모의고사 이용권",
+          "subscriptionGroupID" : "22322961",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

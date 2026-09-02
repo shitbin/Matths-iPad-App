@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="katex.min.css">
+<style>
+/* 시각 힌트 — 웹 wrong-note-review 의 kind별 SVG 작도를 hint-core.js 로 재생한다.
+   네이티브가 window.MATTHS_HINT = {hintText, visualization} 를 주입한다. */
+@font-face {
+  font-family: "PretendardVar";
+  src: url("PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920; font-display: swap;
+}
+:root {
+  --content-scale: 1;
+  --p-ink: #111426; --p-text2: #4a5268; --p-line: #e3e8f4;
+  --p-primary: #327ffa; --p-primary-soft: #e8edff; --p-surface: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --p-ink: #eef1fa; --p-text2: #a6aec2; --p-line: #232a44;
+    --p-primary: #7e9bff; --p-primary-soft: #14203f; --p-surface: #141a2e;
+  }
+}
+html, body { margin: 0; padding: 0; background: transparent; color: var(--p-ink);
+  font-family: "PretendardVar", -apple-system, "Apple SD Gothic Neo", sans-serif; }
+#hint-text { font-size: calc(15px * var(--content-scale)); line-height: 1.7; padding: 2px 2px 10px; color: var(--p-text2); }
+#graph { border: 1px solid var(--p-line); border-radius: 12px; overflow: hidden;
+  background: var(--p-surface); }
+#graph svg { display: block; width: 100%; height: auto; }
+.no-graph { font-size: calc(13px * var(--content-scale)); line-height: 1.6; color: var(--p-text2); padding: 10px 12px; }
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation: none !important; transition: none !important;
+}
+
+/* 힌트 그래프 팔레트 — hint-core.js 가 SVG 속성에 var(--hc-*) 로 쓴다.
+   폴백이 원색이라 이 블록이 없어도 라이트는 그대로다.
+   예전엔 hint-core 에 라이트 색이 하드코딩돼 있어, 다크 모드에서
+   어두운 카드 안에 **흰 플롯판**이 박혔다(2026-07-29 감사 적발). */
+:root {
+  --hc-blue: #327ffa;  --hc-blue2: #8da1ff;
+  --hc-green: #20a078; --hc-purple: #704bd7;
+  --hc-red: #e45f70;   --hc-red2: #e05b6f;
+  --hc-text: #7b8499;  --hc-text2: #9aa4ba; --hc-text3: #94a0bd;
+  --hc-title: #17213b;
+  --hc-grid: #dfe4ef;  --hc-grid2: #e7ecff;
+  --hc-fill: #eee8ff;
+  --hc-plot: #f7f8fc;  --hc-plot2: #f5f7fb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 데이터 색은 근검정 위에서 읽히게 올린다 (채도는 유지, 명도만) */
+    --hc-blue: #7f9dff;  --hc-blue2: #a9bcff;
+    --hc-green: #45c79b; --hc-purple: #a98bf0;
+    --hc-red: #f4808f;   --hc-red2: #f4808f;
+    /* 크롬은 카드(#141a2e) 위에 얹히는 톤으로 */
+    --hc-text: #9a9aa8;  --hc-text2: #808aa1; --hc-text3: #74747f;
+    --hc-title: #eef1fa;
+    --hc-grid: #2b2b36;  --hc-grid2: #33333f;
+    --hc-fill: #14203f;
+    --hc-plot: #1b1b23;  --hc-plot2: #1b1b23;
+  }
+}
+</style>
+</head>
+<body>
+<div id="hint-text"></div>
+<div id="graph" hidden></div>
+
+<script src="katex.min.js"></script>
+<script src="hint-core.js"></script>
+<script>
+(function () {
+  const data = window.MATTHS_HINT || {};
+
+  // $...$ 인라인, \[...\] · $$...$$ 디스플레이를 모두 KaTeX 로.
+  //
+  // 예전엔 \( \) 만 $ 로 정규화하고 \[ \] 는 손대지 않았다. 그래서 표 발문
+  // (\[\begin{array}{c|cccc}…\end{array}\])이 **LaTeX 원문 그대로** 화면에 나왔다
+  // — 학생이 표 대신 소스를 보고 있었다(2026-07-29 시뮬 확인).
+  function texRender(el, tex, display) {
+    const span = document.createElement("span");
+    if (display) span.style.display = "block";
+    try { katex.render(tex, span, { throwOnError: false, displayMode: display }); }
+    catch (e) { span.textContent = tex; }
+    el.appendChild(span);
+  }
+  // 구분자 없이 들어온 수식을 살린다.
+  //
+  // texify 는 $...$ 로만 수식을 가른다. 그래서 발문이나 보기가 구분자 없이
+  // "ax^2+bx+c=0\\Longleftrightarrow y=ax^2+bx+c\\text{의 x절편}" 처럼 오면
+  // 통째로 평문이 되어 **LaTeX 소스가 화면에 그대로** 나왔다(사용자 보고).
+  //
+  // 그렇다고 아무 글이나 KaTeX 에 넘기면 한국어 발문이 깨진다. 그래서
+  // "명령(\\alpha)이나 첨자(^, _)가 있고, 한글이 없는" 조각만 수식으로 본다.
+  // 한글이 섞였다면 그건 설명문이고, 그 안의 수식은 원래대로 $ 로 감싸 와야 한다.
+  function looksLikeMath(s) {
+    if (!s || !s.trim()) return false;
+    // \text{...} 안의 한글은 수식의 일부다(예: "\\text{의 x절편}").
+    // 그걸 먼저 걷어내고 나서 한글이 남으면 그건 설명문이다.
+    const stripped = s.replace(/\\(?:text|mathrm|mbox)\{[^{}]*\}/g, "");
+    if (/[가-힣]/.test(stripped)) return false;
+    return /\\[a-zA-Z]+/.test(s) || /[\^_]\{?[A-Za-z0-9]/.test(s);
+  }
+  function appendProse(el, part) {
+    if (looksLikeMath(part)) { texRender(el, part, false); return; }
+    el.appendChild(document.createTextNode(part));
+  }
+  function texify(el, text) {
+    const normalized = String(text || "")
+      .replaceAll("\\(", "$").replaceAll("\\)", "$")
+      // 주의: replaceAll 의 치환 문자열에서 "$$" 는 **달러 한 개**로 해석된다.
+      // 그대로 쓰면 디스플레이가 인라인이 돼 표가 한 줄로 뭉갠다 — 함수형으로 넘긴다.
+      .replaceAll("\\[", () => "$$").replaceAll("\\]", () => "$$");
+    // 디스플레이를 먼저 가른다 — 안쪽 줄바꿈도 삼켜야 해서 [\s\S] 를 쓴다
+    normalized.split(/\$\$([\s\S]+?)\$\$/).forEach((chunk, i) => {
+      if (i % 2 === 1) { texRender(el, chunk, true); return; }
+      chunk.split(/\$([^$]+)\$/).forEach((part, j) => {
+        if (j % 2 === 0) appendProse(el, part);
+        else texRender(el, part, false);
+      });
+    });
+  }
+  if (data.hintText) texify(document.getElementById("hint-text"), data.hintText);
+
+  // R6 작도 연속성 — 통짜 표시 대신 그리기 순서대로 순차 드로잉.
+  // hint-core 출력(문서 순서 = 좌표계→도형→라벨)을 후처리만 한다: 선은 stroke-dash
+  // 드로잉, 면·글자는 페이드. 원본 hint-core.js 는 불변.
+  function animateDrawing(box) {
+    const svg = box.querySelector("svg");
+    if (!svg) return;
+    const els = [...svg.querySelectorAll("path, line, polyline, polygon, circle, ellipse, rect, text")];
+    if (!els.length) return;
+    const step = Math.min(90, 2200 / els.length);   // 요소가 많아도 전체 2.2초 안에
+    els.forEach((el, i) => {
+      const t0 = 120 + Math.round(i * step);
+      const cs = getComputedStyle(el);
+      let len = 0;
+      if (el.tagName !== "text" && typeof el.getTotalLength === "function") {
+        try { len = el.getTotalLength(); } catch (e) { len = 0; }
+      }
+      if (len > 1 && cs.stroke !== "none") {
+        const hasFill = cs.fill !== "none" && el.tagName !== "line";
+        const origDash = el.getAttribute("stroke-dasharray");
+        el.style.strokeDasharray = len + " " + len;
+        el.style.strokeDashoffset = len;
+        if (hasFill) el.style.fillOpacity = "0";
+        el.style.transition = "stroke-dashoffset .5s ease " + t0 + "ms"
+          + (hasFill ? ", fill-opacity .4s ease " + (t0 + 350) + "ms" : "");
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          el.style.strokeDashoffset = "0";
+          if (hasFill) el.style.fillOpacity = "";
+        }));
+        // 점선(점근선 등)은 드로잉이 끝난 뒤 원래 무늬로 복원
+        if (origDash) setTimeout(() => {
+          el.style.transition = ""; el.style.strokeDasharray = ""; el.style.strokeDashoffset = "";
+        }, t0 + 650);
+      } else {
+        el.style.opacity = "0";
+        el.style.transition = "opacity .45s ease " + t0 + "ms";
+        requestAnimationFrame(() => requestAnimationFrame(() => { el.style.opacity = "1"; }));
+      }
+    });
+  }
+
+  function finishDrawing(box) {
+    box.querySelectorAll("path, line, polyline, polygon, circle, ellipse, rect, text")
+      .forEach((el) => {
+        el.style.transition = "none";
+        el.style.opacity = "1";
+        el.style.strokeDashoffset = "0";
+        el.style.strokeDasharray = "";
+        el.style.fillOpacity = "";
+      });
+  }
+
+  try {
+    if (data.visualization && window.MatthsHint) {
+      const svg = MatthsHint.renderSVG(data.visualization);
+      const box = document.getElementById("graph");
+      if (svg) {
+        box.innerHTML = svg; box.hidden = false;
+        // 모션이 꺼져 있으면 **그리는 과정 없이 완성된 그림**만 보여 준다.
+        // 그림 자체를 숨기면 정보가 사라진다 — 없애야 하는 건 움직임뿐이다.
+        if (window.MATTHS_MOTION !== false) animateDrawing(box);
+      }
+    }
+  } catch (e) { /* 작도 실패는 침묵 — 힌트 문장이 이미 있다 */ }
+
+  window.addEventListener("matthsAccessibilityChanged", () => {
+    if (window.MATTHS_MOTION === false) finishDrawing(document.getElementById("graph"));
+  });
+
+  const report = () => {
+    window.webkit?.messageHandlers?.hintHeight?.postMessage(document.body.scrollHeight);
+  };
+  new ResizeObserver(report).observe(document.body);
+  setTimeout(report, 250);
+})();
+</script>
+</body>
+</html>

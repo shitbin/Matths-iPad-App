@@ -1,0 +1,442 @@
+/*
+ * demo-dark.css — 데모 목업 전용 다크 외관 레이어
+ *
+ * 왜 이 파일이 따로 있나:
+ * 웹 저장소의 community.css / matths-theme.css / public-navigation.css 는
+ * **라이트 단일 외관**이다(matths-brand-tokens.css 주석: "웹은 라이트 단일 외관").
+ * 그런데 앱의 CommunityScreen 은 WKWebView 이고 iPad 는 시스템 외관을 따르므로,
+ * 다크 모드 기기에서 이 페이지를 열면 흰 판이 그대로 뜬다.
+ * 감독이 다크에서도 레이아웃을 볼 수 있어야 하므로, 원본 CSS 는 한 줄도 고치지 않고
+ * 이 파일에서 prefers-color-scheme 로 색만 덮는다.
+ *
+ * 규율:
+ *   · 원본 파일(community.css 등)은 웹 저장소와 바이트 단위로 같게 유지한다.
+ *     색이 마음에 안 들면 원본이 아니라 여기를 고친다.
+ *   · 레이아웃(그리드/여백/폰트 크기)은 건드리지 않는다 — 다크에서 배치가 달라지면
+ *     감독이 보는 것과 실제 웹이 갈린다. 여기서 바꾸는 건 색뿐이다.
+ *   · 네이비 면(.community-hero, .school-board-membership, .community-popular-strip,
+ *     .community-rules-detail > header, .community-footer)은 원래 어두우므로 그대로 둔다.
+ *
+ * 이 파일은 반드시 **마지막에** 로드한다. matths-theme.css 가 body 배경을
+ * 다시 칠하기 때문에(공용 파샬이 <body> 안에서 링크한다) 순서가 뒤집히면 안 먹는다.
+ */
+
+@media (prefers-color-scheme: dark) {
+  /* ── 토큰 재정의 ─────────────────────────────────────────────
+     community.css 와 matths-theme.css 가 각자 :root 토큰을 쓴다. 둘 다 덮어야
+     본문(커뮤니티)과 공용 헤더(내비)의 색이 같이 넘어간다. */
+  :root {
+    --community-ink: #e9ecf7;
+    --community-muted: #98a1b8;
+    --community-line: #272d42;
+    --community-paper: #0a0d18;
+    --community-blue: #8aa2ff;
+
+    --matths-ink: #e9ecf7;
+    --matths-muted: #9aa3ba;
+    --matths-subtle: #98a1b8;
+    --matths-line: #272d42;
+    --matths-surface: #141a2c;
+    --matths-canvas: #0a0d18;
+    --matths-primary-soft: #1d2547;
+
+    /* 데모 다크 전용 보조 값 — 위 토큰만으로는 표현이 안 되는 면들 */
+    --demo-surface: #131829;      /* 카드 본판(흰 판의 대체) */
+    --demo-inset: #0f1424;        /* 카드 안에 파인 면(#f7f8fc 계열의 대체) */
+    --demo-hairline: #232941;     /* 목록 구분선(#e8ebf2 계열의 대체) */
+    --demo-fill-blue: #3d5cf0;    /* 글자를 흰색으로 얹는 채워진 버튼 */
+    --demo-tint-blue: #1d2547;    /* 파란 글자를 얹는 옅은 파란 면 */
+
+    /* 로고 워드마크 잉크 — 인라인 SVG 가 이 변수를 읽는다.
+       원본 SVG 는 #0C0F1A 고정이라 다크에서 글자가 통째로 사라진다. */
+    --demo-logo-ink: #f2f4fb;
+  }
+
+  /* matths-theme.css 의 body 배경(라이트 캔버스 + 유채색 광원)을 덮는다. */
+  body {
+    color: var(--community-ink);
+    background:
+      radial-gradient(circle at 80% 0%, rgba(122, 150, 255, 0.1), transparent 28rem),
+      radial-gradient(circle at 24% 18%, rgba(216, 66, 238, 0.07), transparent 25rem),
+      var(--community-paper);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #8892a8;
+  }
+
+  /* ── 공용 헤더 ───────────────────────────────────────────── */
+  .site-header {
+    background: rgba(12, 16, 29, 0.94);
+  }
+
+  .site-header .nav-cluster-menu,
+  .site-header .mobile-menu summary,
+  .site-header .mobile-menu > div {
+    background: var(--demo-surface);
+    box-shadow: 0 16px 38px rgba(0, 0, 0, 0.5);
+  }
+
+  .site-header .mobile-menu > div .mobile-arena-link {
+    background: #10303a;
+  }
+
+  /* ── 카드 본판(흰 판) ───────────────────────────────────── */
+  .community-board,
+  .community-board-tabs a,
+  .community-compose,
+  .community-post-detail,
+  .community-comments,
+  .community-rules-detail {
+    background: var(--demo-surface);
+  }
+
+  .community-board-tabs a.active {
+    background: var(--demo-tint-blue);
+    border-color: #34406f;
+  }
+
+  .community-board-tabs span {
+    color: #8390c2;
+  }
+
+  /* ── 폼 컨트롤 ──────────────────────────────────────────── */
+  .community-board-heading input,
+  .community-compose input,
+  .community-compose textarea,
+  .community-compose select {
+    background: var(--demo-inset);
+    border-color: #2a3049;
+  }
+
+  .community-board-heading button,
+  .community-compose button {
+    background: var(--demo-fill-blue);
+  }
+
+  .community-compose button:disabled {
+    color: #6d7488;
+    background: #212739;
+  }
+
+  /* ── 알림 줄 ────────────────────────────────────────────── */
+  .community-feedback {
+    color: #7de3b8;
+    background: #10281f;
+    border-color: #1f4b39;
+  }
+
+  .community-error {
+    color: #ff9aab;
+    background: #2a1219;
+    border-color: #4d2530;
+  }
+
+  /* ── 글 목록 ────────────────────────────────────────────── */
+  .community-post-list > a {
+    border-bottom-color: var(--demo-hairline);
+  }
+
+  .community-post-list > a.is-pinned {
+    background: linear-gradient(90deg, rgba(80, 116, 255, 0.16), rgba(140, 106, 255, 0.06));
+    border-bottom-color: #2f3a68;
+  }
+
+  .community-post-list > a.community-rules-post {
+    background:
+      radial-gradient(circle at 92% 0%, rgba(129, 122, 255, 0.18), transparent 36%),
+      linear-gradient(110deg, #171e3a, #1a1730);
+    border-color: #333c6b;
+  }
+
+  .community-rules-status,
+  .community-operations-status {
+    color: #a99bff !important;
+  }
+
+  .community-list-votes {
+    color: #8aa2ff !important;
+  }
+
+  .community-post-list aside small {
+    color: #8d95ab;
+  }
+
+  /* ── 뱃지 ───────────────────────────────────────────────── */
+  .community-popular-badge {
+    color: #ff9aab;
+    background: #3a1622;
+  }
+
+  .community-pin-badge {
+    color: #9fb3ff;
+    background: var(--demo-tint-blue);
+  }
+
+  .community-operation-badge {
+    background: #2a3252;
+  }
+
+  /* ── 페이지 이동 · 하단 버튼 ────────────────────────────── */
+  .community-pagination a,
+  .community-post-actions a {
+    color: #9fb3ff;
+    background: #1b2242;
+  }
+
+  .community-post-actions a.primary {
+    color: #fff;
+    background: var(--demo-fill-blue);
+  }
+
+  /* ── 정렬 탭 · 운영 분류 ────────────────────────────────── */
+  .community-sort-tabs a,
+  .community-operations-categories a {
+    color: #98a1b8;
+    background: var(--demo-inset);
+    border-color: #2a3049;
+  }
+
+  .community-sort-tabs a.active,
+  .community-operations-categories a.active,
+  .community-operations-categories a:hover {
+    color: #fff;
+    background: var(--demo-fill-blue);
+    border-color: var(--demo-fill-blue);
+  }
+
+  .community-operations-categories {
+    background: var(--demo-inset);
+    border-color: #262c42;
+  }
+
+  /* ── 학교/로그인 안내 ───────────────────────────────────── */
+  .school-board-login-guide {
+    color: #9aa3ba;
+    background: var(--demo-inset);
+    border-color: #262c42;
+  }
+
+  .school-board-login-guide strong {
+    color: var(--community-ink);
+  }
+
+  /* ── 글 상세 ────────────────────────────────────────────── */
+  .community-post-detail .community-anonymous-school {
+    color: #9fb3ff;
+    background: var(--demo-tint-blue);
+  }
+
+  .community-announcement-detail > header {
+    background:
+      radial-gradient(circle at 93% 0%, rgba(129, 122, 255, 0.16), transparent 35%),
+      #151b2e;
+  }
+
+  .community-announcement-link {
+    background: #171d30;
+  }
+
+  /* 원본은 background: var(--community-blue) + color: #fff 인데, 다크에서
+     --community-blue 가 밝은 파랑(#8aa2ff)이 되면서 흰 글자가 2.4:1 로 뭉갠다.
+     채워진 버튼은 밝기가 반대로 가야 하므로 명시적으로 진한 파랑을 준다. */
+  .community-announcement-link a {
+    background: var(--demo-fill-blue);
+  }
+
+  /* ── 첨부 ───────────────────────────────────────────────── */
+  .community-post-attachments > header {
+    border-top-color: var(--demo-hairline);
+  }
+
+  .community-post-attachments > header p {
+    color: #8aa2ff;
+  }
+
+  .community-image-grid a,
+  .community-file-list a {
+    background: var(--demo-inset);
+    border-color: #262c42;
+  }
+
+  .community-file-list > a > span {
+    color: #9fb3ff;
+    background: var(--demo-tint-blue);
+  }
+
+  .community-file-list a b {
+    color: #8aa2ff;
+  }
+
+  /* ── 추천 / 비추천 ──────────────────────────────────────── */
+  .community-vote-box {
+    background: var(--demo-inset);
+    border-top-color: var(--demo-hairline);
+  }
+
+  .community-vote-box p {
+    color: #a8b0c6;
+  }
+
+  .community-vote-box button {
+    color: #9fb3ff;
+    background: var(--demo-surface);
+    border-color: #33407a;
+  }
+
+  .community-vote-box button.down {
+    color: #949cb2;
+    border-color: #2a3049;
+  }
+
+  .community-vote-box button.selected {
+    color: #fff;
+    background: var(--demo-fill-blue);
+    border-color: var(--demo-fill-blue);
+  }
+
+  .community-vote-readonly span,
+  .community-vote-readonly a {
+    color: #9aa3ba;
+    background: var(--demo-surface);
+    border-color: #2a3049;
+  }
+
+  .community-vote-readonly a {
+    color: #9fb3ff;
+  }
+
+  /* ── 신고 ───────────────────────────────────────────────── */
+  .community-report-box {
+    background: #1c1218;
+    border-color: #3d2530;
+  }
+
+  .community-report-box summary {
+    color: #ff9aab;
+  }
+
+  .community-report-box textarea {
+    color: var(--community-ink);
+    background: #140f14;
+    border-color: #3d2530;
+  }
+
+  /* ── 댓글 ───────────────────────────────────────────────── */
+  .community-comment-form,
+  .community-comment-login {
+    background: var(--demo-inset);
+  }
+
+  .community-comment-login {
+    color: #9aa3ba;
+  }
+
+  .community-comment-login a,
+  .community-comment-form button {
+    color: #fff;
+    background: var(--demo-fill-blue);
+  }
+
+  .community-comment-login a {
+    color: #9fb3ff;
+    background: none;
+  }
+
+  .community-comment-form textarea {
+    color: var(--community-ink);
+    background: #0c1120;
+    border-color: #2a3049;
+  }
+
+  .community-comment-list article {
+    border-bottom-color: var(--demo-hairline);
+  }
+
+  /* 원본이 `.community-compose .community-anonymous-choice, .community-anonymous-choice`
+     두 선택자로 한 번에 칠한다. 앞쪽이 특이도 (0,2,0) 이라 글쓰기 페이지에서는
+     한 칸짜리 선택자로 덮이지 않는다 — 같은 특이도로 맞춰 준다. */
+  .community-compose .community-anonymous-choice,
+  .community-anonymous-choice {
+    background: var(--demo-inset);
+    border-color: #262c42;
+  }
+
+  .community-compose .community-anonymous-choice.compact,
+  .community-anonymous-choice.compact {
+    background: var(--demo-surface);
+  }
+
+  /* ── 글쓰기 ─────────────────────────────────────────────── */
+  .community-posting-quota {
+    color: #9fb3ff;
+    background: #171f3d;
+    border-color: #2c3766;
+  }
+
+  .community-posting-quota small {
+    color: #98a1b8;
+  }
+
+  .community-posting-quota.is-exhausted {
+    color: #ff9aab;
+    background: #2a1219;
+    border-color: #4d2530;
+  }
+
+  .community-attachment-field {
+    background: var(--demo-inset);
+    border-color: #262c42;
+  }
+
+  .community-attachment-field.is-restricted {
+    background: #1c1218;
+    border-color: #3d2530;
+  }
+
+  .community-attachment-field.is-restricted > strong {
+    color: #ff9aab;
+  }
+
+  .community-compose .community-file-picker {
+    color: #9fb3ff;
+    background: var(--demo-surface);
+    border-color: #3b4780;
+  }
+
+  .community-compose form > p {
+    color: #f0cf9a;
+    background: #2b2415;
+  }
+
+  /* ── 규칙 페이지 ────────────────────────────────────────── */
+  .community-rules-detail {
+    border-color: #262c42;
+  }
+
+  .community-rules-grid article {
+    background: var(--demo-inset);
+    border-color: #262c42;
+  }
+
+  .community-rules-grid article span {
+    color: #8fa2ff;
+  }
+
+  .community-rules-grid p {
+    color: #98a1b8;
+  }
+
+  .community-rules-detail > footer {
+    background: #161d33;
+  }
+
+  .community-rules-detail > footer p {
+    color: #98a1b8;
+  }
+
+  .community-rules-detail > footer a {
+    background: var(--demo-fill-blue);
+  }
+}

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="katex.min.css">
+<link rel="stylesheet" href="brand.css">
+<style>
+/* 주의: Xcode 동기화 그룹은 리소스를 번들 루트로 평탄화한다.
+   그래서 이 파일의 모든 참조는 같은 디렉터리 기준이다 (katex/ 접두사 금지). */
+
+/* 한글 웹폰트 번들 — 시뮬레이터의 WKWebView 웹 콘텐츠 프로세스가
+   시스템 한글 폰트를 못 불러와 두부(□)가 되는 문제의 우회.
+   (진단 근거: 텍스트는 정상 UTF-8, 폰트 체인도 정상인데 렌더만 실패.
+    KaTeX 는 파일 @font-face 라서 멀쩡했다 — 그래서 같은 방식으로 해결.)
+   실기기에서는 시스템 폰트로도 되지만, 번들 폰트가 있으면 양쪽 다 안전하다. */
+@font-face {
+  font-family: "PretendardVar";
+  src: url("PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920;
+  font-display: swap;
+}
+/* 전역 기본 서체 — KaTeX 클래스(.katex …)는 자기 규칙의 특이도가 높아 영향 없음 */
+/* KaTeX 서브트리는 제외한다. 예전엔 그냥 `*` 였는데, 그러면 KaTeX 가 만든
+   글리프 스팬까지 Pretendard 로 덮인다. 글자 클래스가 붙은 스팬(.mathnormal 등)은
+   살아남지만 =, ≠, +, 괄호, 숫자처럼 클래스 없는 관계·연산 기호는 전부 덮여서,
+   KaTeX 가 KaTeX_Main 기준으로 잡아 둔 자리와 어긋난다. 실제로 `(x \neq 1)` 의
+   ≠ 가 뭉개져 보였다(2026-07-29 실기·시뮬 확인). 본문 폰트는 그대로 두고
+   수식만 제 폰트를 쓰게 한다. */
+/* :where() 로 감싸는 이유 — :not() 만 쓰면 특이도가 (0,2,0)으로 올라가
+   .card 같은 클래스 규칙(0,1,0)의 padding·margin 까지 이 리셋이 덮는다.
+   실제로 설명 카드의 안쪽 여백이 통째로 사라졌다. :where() 는 특이도 0 이다. */
+*:where(:not(.katex, .katex *)) { font-family: "PretendardVar", -apple-system, "Apple SD Gothic Neo", sans-serif; }
+/* 네이티브 앱 안의 강의 뷰 — 데모 셸 스타일을 걷어내고 콘텐츠만 남긴다.
+   팔레트는 앱 토큰 v4 와 동일. */
+:root {
+  --lw-paper: #f3f6ff; --lw-surface: #ffffff; --lw-ink: #111426;
+  --lw-text2: #4a5268; --lw-line: #e3e8f4; --lw-primary: #327ffa;
+  /* CI 가이드북 원색 — 주 액션(썸·선택 칩)은 바이올렛, soft 면은 primarySoft.
+     바이올렛은 고정 브랜드색이라 다크 블록에서 덮지 않는다. */
+  --lw-accent: #7b4efc; --lw-primary-soft: #e8edff;
+  --content-scale: 1; font-size: calc(16px * var(--content-scale));
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --lw-paper: #090c1b; --lw-surface: #141a2e; --lw-ink: #eef1fa;
+    --lw-text2: #a6aec2; --lw-line: #232a44; --lw-primary: #7e9bff;
+    --lw-primary-soft: #14203f;
+  }
+}
+html, body { margin: 0; padding: 0; background: var(--lw-paper); color: var(--lw-ink);
+  font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; }
+.lw-wrap { padding: 4px 2px 24px; }
+.lw-section { background: var(--lw-surface); border-radius: 16px; padding: 14px;
+  margin-bottom: 14px; box-shadow: 0 2px 9px rgba(23,23,31,.055); }
+.lw-label { font-size: .75rem; font-weight: 700; color: var(--lw-primary); margin: 0 0 8px; }
+.lw-guide { font-size: .8125rem; color: var(--lw-text2); line-height: 1.6; margin: 8px 0 0; }
+.lw-missing { padding: 28px 8px; text-align: center; color: var(--lw-text2); font-size: .875rem; }
+/* 데모 CSS 위에서 플레이어·컨트롤 배경을 이 페이지 톤으로 정리 */
+#scenario-holder, #pg-holder { background: transparent; }
+
+/* ── 컨트롤 재스킨 (브랜드 v4) ─────────────────────────────────────
+   데모 원판은 빨간 글로우 썸 + 남색 테두리 알약 버튼(구 브랜드).
+   lesson.html 이 brand.css 뒤에 로드되므로 여기 규칙이 이긴다.
+   CI 그라데이션은 브랜드 모먼트 전용(뷰포트당 1회)이라 컨트롤은 단색이다 —
+   트랙은 soft 면, 썸·선택 칩(on)은 바이올렛. 종전의 "그라데이션을 0.25
+   불투명으로 눕히는" 트릭도 soft 토큰 단색으로 대체했다(검수 R-06). */
+.ctl { margin-bottom: 16px; }
+.ctl-label { color: var(--lw-text2) !important; font-size: .8125rem !important; }
+.ctl-value { color: var(--lw-primary) !important; font-size: 1rem !important; font-weight: 800 !important; }
+.ctl input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px !important;
+  background: var(--lw-primary-soft) !important;
+}
+.ctl input[type="range"]::-webkit-slider-thumb {
+  width: 26px !important; height: 26px !important; margin-top: -10px !important;
+  background: var(--lw-accent) !important;
+  border: 3px solid var(--lw-surface) !important;
+  /* 구형 퍼플 글로우(블러 8px) → 하드 엣지. 인터랙티브 깊이는 하드 섀도만. */
+  box-shadow: 0 2px 0 rgba(123, 78, 252, 0.35) !important;
+}
+.chip-btn {
+  border: 1.4px solid var(--lw-line) !important;
+  border-radius: 10px !important;
+  background: var(--lw-surface) !important;
+  color: var(--lw-ink) !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 4px rgba(23,23,31,.06);
+}
+.chip-btn:hover { background: var(--lw-paper) !important; }
+.chip-btn.on {
+  background: var(--lw-accent) !important;
+  border-color: transparent !important;
+  color: #fdfcff !important;
+}
+.formula { color: var(--lw-ink) !important; font-size: 1.1875rem !important; }
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation-duration: .001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: .001ms !important;
+  scroll-behavior: auto !important;
+}
+.d-count, .readout small { color: var(--lw-text2) !important; }
+
+/* ── 한 시야 레이아웃 ─────────────────────────────────────────
+   슬라이더를 만지는 동안 그래프가 화면 밖에 있던 1순위 결함의 수정.
+   Graph 가 viewBox 를 정사각(560×560)으로 다시 잡는 개념이 많아
+   폭만큼 키가 자란다 — 스테이지에 상한을 걸고, 넓은 화면에서는
+   조작부(왼쪽)와 그래프(오른쪽)를 나란히 놓는다. */
+#pg-svg { max-height: 380px; }
+.ctl input[type="range"] { height: 44px; }   /* brand.css 34px — 터치 타겟 미달 */
+@media (min-width: 700px) {
+  /* display 승격이 [hidden] 의 display:none 을 이기지 않도록 :not 게이트 */
+  #pg-section:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+    grid-template-areas: "label label" "controls stage" "readout stage" "guide stage";
+    column-gap: 18px;
+    align-items: start;
+  }
+  #pg-section > .lw-label { grid-area: label; }
+  #pg-controls { grid-area: controls; }
+  #pg-svg { grid-area: stage; max-height: 440px; }
+  #pg-readout { grid-area: readout; }
+  #pg-guide { grid-area: guide; }
+}
+</style>
+</head>
+<body>
+<div class="lw-wrap">
+  <div id="scenario-section" class="lw-section" hidden>
+    <p class="lw-label">시각 강의</p>
+    <div id="scenario-holder"></div>
+  </div>
+  <div id="pg-section" class="lw-section" hidden>
+    <p class="lw-label">직접 만져보기</p>
+    <div id="pg-controls"></div>
+    <svg id="pg-svg" viewBox="0 0 640 400" style="width:100%;height:auto;display:block"></svg>
+    <div id="pg-readout"></div>
+    <p id="pg-guide" class="lw-guide"></p>
+  </div>
+  <div id="quiz-section" class="lw-section" hidden>
+    <p class="lw-label">확인 문제</p>
+    <div id="quiz-question" role="heading" aria-level="3" style="font-size:1rem;font-weight:700;margin-bottom:10px"></div>
+    <div id="quiz-choices"></div>
+    <p id="quiz-feedback" class="lw-guide"></p>
+  </div>
+  <div id="missing" class="lw-missing" hidden>이 개념의 시각 강의는 준비 중입니다. 아래에서 바로 문제로 확인해 보세요.</div>
+</div>
+
+<script src="katex.min.js"></script>
+<script src="viz.js"></script>
+<script src="engines.js"></script>
+<script src="engines-stat.js"></script>
+<script src="concepts.js"></script>
+<script src="concepts-cm1.js"></script>
+<script src="concepts-cm2.js"></script>
+<script src="course-probstat.js"></script>
+<script src="scenarios-data.js"></script>
+<script src="scenario-player.js"></script>
+<script>
+/* 부트: ?concept=<id> 를 받아 데모 개념 모듈을 그대로 마운트한다.
+   registry = 공통수학(26) + 확통(16, PS_CONCEPTS 로 리네임됨). */
+
+/* 강의 스테이지 상한 — 데모 브라우저와 달리 이 웹뷰의 innerHeight 는
+   자기가 보고한 문서 높이라, 상한 없이는 문서가 클수록 스테이지도
+   따라 커진다(최대 760px). 화면에 들어오는 값으로 고정한다.
+   검수 RG-19: 420 → 340 — 시각 강의가 화면을 덜 차지하게 낮췄다.
+   놀이터 상한(#pg-svg max-height)은 그대로다. */
+window.MATTHS_STAGE_MAX = 340;
+
+function bootLesson(forcedId) {
+  // 개념 id 소스 3중 폴백:
+  //  1. 네이티브(WKUserScript)가 주입한 window.MATTHS_CONCEPT
+  //  2. ?concept= 쿼리  3. #concept= 해시 (브라우저 수동 테스트용)
+  const params = new URLSearchParams(location.search);
+  const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const id = forcedId || window.MATTHS_CONCEPT || params.get("concept") || hash.get("concept");
+  const registry = (typeof CONCEPTS !== "undefined" ? CONCEPTS : [])
+    .concat(typeof PS_CONCEPTS !== "undefined" ? PS_CONCEPTS : []);
+  const concept = registry.find((c) => c.id === id);
+
+  let shown = false;
+
+  // 1) 시각 강의 (ScenarioPlayer)
+  try {
+    // 시나리오 키는 v2 개념 id 다. 레거시 appId(cm1-poly 등)로 들어오면
+    // SCENARIO_INDEX 가 v2 id 로 넘겨준다 (구 SCENARIO_MAP 의 후신).
+    const scenes = typeof SCENARIOS !== "undefined" ? SCENARIOS : {};
+    const alias = typeof SCENARIO_INDEX !== "undefined" ? SCENARIO_INDEX : {};
+    const sceneId = scenes[id] ? id : (alias[id] || null);
+    const scene = sceneId ? scenes[sceneId] : null;
+    if (scene) {
+      document.getElementById("scenario-section").hidden = false;
+      new ScenarioPlayer(document.getElementById("scenario-holder"), scene, {});
+      shown = true;
+    }
+  } catch (e) { console.log("scenario error", e); }
+
+  // 2) 인터랙티브 플레이그라운드
+  try {
+    if (concept && typeof concept.mountPlayground === "function") {
+      document.getElementById("pg-section").hidden = false;
+      document.getElementById("pg-guide").textContent = concept.playgroundGuide || "";
+      concept.mountPlayground(
+        document.getElementById("pg-controls"),
+        document.getElementById("pg-svg"),
+        document.getElementById("pg-readout")
+      );
+      shown = true;
+    }
+  } catch (e) { console.log("playground error", e); }
+
+  // 3) 확인 문제 — 데모 모듈의 quiz 를 그대로 마운트한다.
+  //    통과해야 네이티브의 "완료" 버튼이 열린다 (quizResult 메시지).
+  try {
+    const quiz = concept && concept.quiz;
+    if (quiz && quiz.question && Array.isArray(quiz.choices)) {
+      document.getElementById("quiz-section").hidden = false;
+      document.getElementById("quiz-question").innerHTML = quiz.question;
+      const box = document.getElementById("quiz-choices");
+      const feedback = document.getElementById("quiz-feedback");
+      let solved = false;
+
+      quiz.choices.forEach((choice, i) => {
+        const btn = document.createElement("button");
+        btn.textContent = (i + 1) + ". " + choice.replace(/<[^>]+>/g, "");
+        btn.style.cssText = "display:block;width:100%;text-align:left;margin:6px 0;" +
+          "padding:11px 13px;border-radius:10px;border:1.2px solid var(--lw-line);" +
+          "background:var(--lw-surface);color:var(--lw-ink);font-size:.875rem;font-weight:600;min-height:44px";
+        btn.onclick = () => {
+          if (solved) return;
+          if (i === quiz.answer) {
+            solved = true;
+            btn.style.borderColor = "#1e9e5a"; btn.style.color = "#1e9e5a";
+            feedback.textContent = "정답! 아래에서 완료 처리할 수 있습니다.";
+            window.webkit?.messageHandlers?.quizResult?.postMessage(true);
+          } else {
+            btn.style.borderColor = "#e0344a"; btn.style.color = "#e0344a";
+            // 데모 모듈의 오답별 해설 — 왜 틀렸는지까지 그대로
+            feedback.textContent = (quiz.wrongNotes && quiz.wrongNotes[i])
+              || quiz.hint || "다시 생각해 보세요.";
+          }
+        };
+        box.appendChild(btn);
+      });
+      shown = true;
+    } else if (window.webkit?.messageHandlers?.quizResult) {
+      // 퀴즈가 없는 개념 — 게이트를 걸 것이 없으므로 바로 통과 신호
+      window.webkit.messageHandlers.quizResult.postMessage(true);
+    }
+  } catch (e) { console.log("quiz error", e); }
+
+  if (!shown) document.getElementById("missing").hidden = false;
+
+  // 네이티브에 실제 콘텐츠 높이를 알려준다 (WKWebView 높이 맞춤)
+  const report = () => {
+    const h = document.body.scrollHeight;
+    if (window.webkit?.messageHandlers?.lessonHeight) {
+      window.webkit.messageHandlers.lessonHeight.postMessage(h);
+    }
+  };
+  new ResizeObserver(report).observe(document.body);
+  setTimeout(report, 300);
+
+  // 진단 채널 (네이티브 os_log 로 전달) — 한글 두부 원인 추적용
+  if (window.webkit?.messageHandlers?.lessonDebug) {
+    const label = document.querySelector(".lw-label");
+    const cs = getComputedStyle(label || document.body);
+    window.webkit.messageHandlers.lessonDebug.postMessage(JSON.stringify({
+      charset: document.characterSet,
+      labelText: label ? label.textContent : null,
+      labelCodes: label ? [...label.textContent].slice(0,4).map(c => c.codePointAt(0)) : [],
+      fontFamily: cs.fontFamily,
+      fontWeight: cs.fontWeight,
+      lang: document.documentElement.lang,
+    }));
+  }
+}
+bootLesson();
+</script>
+</body>
+</html>

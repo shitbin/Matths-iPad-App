@@ -1,0 +1,646 @@
+/* ============================================================
+   맵쓰 SPICY MATH — 공통 브랜드/컴포넌트 스타일
+   (iPad / PC 레이아웃 파일이 함께 사용)
+   ============================================================ */
+
+:root {
+  /* 구형 UI 액센트 — 버튼·칩 등 크롬에만 남아 있다.
+     그래프를 그릴 때는 절대 쓰지 말 것(아래 시맨틱 그래프 토큰 사용). */
+  --red: #e8302a;
+  --red-deep: #c81f1a;
+  --navy: #1e3799;
+  --navy-deep: #14245e;
+  --lime: #9cc70a;
+  --lime-bright: #c6f22e;
+  --bg: #f7f5f0;
+  --card: #ffffff;
+  --ink: #26221c;
+  --ink-soft: #6f6a60;
+  --line: #e7e3da;
+  --green: #178a4c;
+  --shadow: 0 6px 24px rgba(38, 34, 28, 0.08);
+  --radius: 20px;
+
+  /* ── 시맨틱 그래프 토큰 (RG-17) ──
+     색이 의미를 갖는다: 같은 함수는 어디서 그려지든 같은 파랑이다.
+     주 대상 파랑 · 보조/변환 바이올렛 · 강조 마젠타 · 만지는 점은 시안.
+     빨강(#e8302a)은 오류·경고 의미로만 남긴다. */
+  --graph-primary: #327ffa;     /* 기본 곡선·주 대상 (상단 강의 = 하단 놀이터) */
+  --graph-secondary: #7b4efc;   /* 보조 곡선·변환·짝 대상 */
+  --graph-highlight: #ca44e3;   /* 순간 강조 */
+  --interactive-point: #0cdcf1; /* 인터랙티브 점·핸들 */
+  --state-correct: #178a4c;     /* 정답 — 기존 초록 유지 */
+  --state-error: #e8302a;       /* 오류 전용으로 강등된 구 --red */
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- 화면 전환 ---------- */
+.screen { display: none; height: 100%; }
+.screen.active { display: flex; flex-direction: column; }
+
+/* ---------- 개념 카드 ---------- */
+.concept-card {
+  text-align: left;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+  box-shadow: var(--shadow);
+  font-family: inherit;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.concept-card:hover, .concept-card:active {
+  transform: translateY(-3px);
+  border-color: var(--red);
+  box-shadow: 0 10px 28px rgba(232, 48, 42, 0.16);
+}
+.cc-badge {
+  align-self: flex-start;
+  font-size: 12px; font-weight: 700;
+  color: var(--navy);
+  background: rgba(30, 55, 153, 0.08);
+  border-radius: 99px; padding: 5px 12px;
+}
+.cc-title { font-size: 21px; font-weight: 800; letter-spacing: -0.3px; }
+.cc-tag { font-size: 14px; color: var(--ink-soft); line-height: 1.5; }
+.cc-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; }
+.cc-num { font-size: 26px; font-weight: 900; color: var(--line); }
+.cc-go { font-size: 14px; font-weight: 800; color: var(--red); }
+
+/* ---------- 단원 그룹 ---------- */
+.unit-sec { margin-bottom: 20px; }
+.unit-head {
+  font-size: 15px; font-weight: 900; color: var(--navy);
+  margin: 2px 0 10px;
+  display: flex; align-items: center; gap: 12px;
+}
+.unit-head::after { content: ""; flex: 1; height: 2px; background: var(--line); border-radius: 2px; }
+.unit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.unit-grid .concept-card { padding: 16px 18px; gap: 6px; }
+.unit-grid .cc-title { font-size: 17px; }
+.unit-grid .cc-tag { font-size: 12.5px; line-height: 1.45; }
+.unit-grid .cc-num { font-size: 18px; }
+.unit-grid .cc-go { font-size: 12.5px; }
+
+/* ---------- 코치 ---------- */
+.coach-strip { display: flex; gap: 14px; align-items: flex-start; }
+#coach-img {
+  width: 84px; height: auto; flex: none;
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,0.12));
+  transition: transform 0.2s;
+}
+.coach-bubble {
+  position: relative;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-size: 15px; line-height: 1.55; font-weight: 600;
+  min-height: 74px; flex: 1;
+  white-space: pre-line;
+  box-shadow: var(--shadow);
+}
+.coach-bubble::before {
+  content: "";
+  position: absolute; left: -9px; top: 26px;
+  width: 14px; height: 14px;
+  background: var(--card);
+  border-left: 2px solid var(--line);
+  border-bottom: 2px solid var(--line);
+  transform: rotate(45deg);
+}
+.coach-name { font-size: 12px; font-weight: 800; color: var(--red); margin-bottom: 4px; }
+
+@keyframes shakeX { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-6px)} 40%{transform:translateX(6px)} 60%{transform:translateX(-4px)} 80%{transform:translateX(4px)} }
+.shake { animation: shakeX 0.5s; }
+
+/* ---------- SHU 게이지 ---------- */
+.shu-wrap { display: flex; align-items: center; gap: 10px; }
+.shu-wrap img { width: 34px; height: auto; }
+.shu-bar {
+  flex: 1; height: 12px; border-radius: 99px;
+  background: var(--line); overflow: hidden;
+}
+#shu-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--lime-bright), #f5a623);
+  border-radius: 99px;
+  transition: width 0.5s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+#shu-fill.hot { background: linear-gradient(90deg, #f5a623, var(--red)); }
+#shu-label { font-size: 12px; font-weight: 800; color: var(--ink-soft); white-space: nowrap; }
+
+/* ---------- 수위 토글 ---------- */
+.spice-toggle {
+  display: flex; gap: 6px;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 99px; padding: 5px;
+}
+.spice-opt {
+  border: none; background: transparent;
+  font-family: inherit; font-size: 14px; font-weight: 800;
+  padding: 9px 16px; border-radius: 99px;
+  cursor: pointer; color: var(--ink-soft);
+  transition: all 0.15s;
+}
+.spice-opt.on { background: var(--red); color: #fff; box-shadow: 0 3px 10px rgba(232,48,42,0.35); }
+.spice-opt.on[data-level="mild"] { background: var(--green); }
+.spice-opt.on[data-level="hell"] { background: #1a1a1e; }
+
+/* ---------- 그래프/놀이터 ---------- */
+.graph-card {
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px;
+  display: flex; flex-direction: column;
+  position: relative;
+}
+.graph-card.veiled svg { filter: blur(16px) saturate(0.5); opacity: 0.4; }
+.graph-card.veiled::after {
+  content: attr(data-veil);
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: 0 30px;
+  font-size: 19px; font-weight: 900; color: var(--ink-soft);
+}
+.graph-card svg { width: 100%; height: auto; display: block; border-radius: 12px; background: #fdfcfa; }
+
+.ctl { margin-bottom: 14px; }
+.ctl-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.ctl-label { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+.ctl-value { font-size: 15px; font-weight: 900; color: var(--navy); font-variant-numeric: tabular-nums; }
+.ctl input[type="range"] {
+  width: 100%; height: 34px; appearance: none; -webkit-appearance: none;
+  background: transparent; cursor: pointer;
+}
+.ctl input[type="range"]::-webkit-slider-runnable-track {
+  height: 10px; border-radius: 99px; background: var(--line);
+}
+.ctl input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 30px; height: 30px; margin-top: -10px;
+  /* 만지는 핸들은 인터랙티브 시안 — 글로우 대신 하드 섀도 */
+  border-radius: 50%; background: var(--interactive-point);
+  border: 4px solid #fff;
+  box-shadow: 0 2px 0 rgba(12, 220, 241, 0.35);
+}
+
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.chip-btn {
+  font-family: inherit; font-size: 14px; font-weight: 800;
+  background: var(--card); color: var(--navy);
+  border: 2px solid var(--navy); border-radius: 99px;
+  padding: 11px 18px; cursor: pointer;
+  transition: all 0.15s;
+}
+.chip-btn:hover { background: rgba(30,55,153,0.06); }
+.chip-btn.on { background: var(--navy); color: #fff; }
+.chip-btn.lime { border-color: var(--lime); color: #5a7a00; }
+.chip-btn.lime:hover { background: rgba(156,199,10,0.1); }
+.chip-btn:disabled { opacity: 0.4; cursor: default; }
+
+.formula {
+  font-size: 22px; font-weight: 900; letter-spacing: 0.2px;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+.d-badge {
+  display: inline-block;
+  font-size: 15px; font-weight: 900;
+  border-radius: 10px; padding: 6px 12px; margin-bottom: 6px;
+}
+.d-badge.pos { background: rgba(23,138,76,0.12); color: var(--green); }
+.d-badge.zero { background: rgba(245,166,35,0.16); color: #b06c00; }
+.d-badge.neg { background: rgba(232,48,42,0.1); color: var(--red); }
+.d-count { font-size: 16px; font-weight: 700; color: var(--ink-soft); }
+.d-count b { color: var(--ink); font-size: 19px; }
+.tip-line { margin-top: 8px; font-size: 13px; font-weight: 700; color: var(--red); }
+
+/* ---------- 단계 표시 ---------- */
+.step-dots { display: flex; gap: 8px; align-items: center; }
+.step-dot {
+  font-size: 12px; font-weight: 800;
+  color: var(--ink-soft); background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 99px; padding: 6px 14px;
+}
+.step-dot.on { border-color: var(--red); color: var(--red); }
+
+/* ---------- 퀴즈 ---------- */
+.quiz-question { font-size: 19px; font-weight: 700; line-height: 1.55; margin-bottom: 16px; }
+.quiz-question b { color: var(--navy); }
+.choice-btn {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; text-align: left;
+  font-family: inherit; font-size: 17px; font-weight: 700;
+  background: var(--card); color: var(--ink);
+  border: 2px solid var(--line); border-radius: 14px;
+  padding: 15px 18px; margin-bottom: 10px; cursor: pointer;
+  transition: all 0.15s;
+}
+.choice-btn:hover:not(:disabled) { border-color: var(--navy); }
+.choice-no {
+  flex: none; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 900; color: var(--ink-soft);
+}
+.choice-btn.correct { border-color: var(--green); background: rgba(23,138,76,0.08); }
+.choice-btn.correct .choice-no { background: var(--green); border-color: var(--green); color: #fff; }
+.choice-btn.wrong { border-color: var(--state-error); background: rgba(232,48,42,0.06); animation: shakeX 0.4s; }
+.choice-btn.wrong .choice-no { background: var(--state-error); border-color: var(--state-error); color: #fff; }
+.choice-btn:disabled { cursor: default; }
+
+.hint-box {
+  background: rgba(156, 199, 10, 0.12);
+  border: 2px dashed var(--lime);
+  border-radius: 14px; padding: 12px 16px; margin-top: 4px;
+}
+
+/* ---------- 해설 ---------- */
+.explain-caption {
+  font-size: 17px; font-weight: 700; line-height: 1.6;
+  min-height: 56px;
+}
+
+/* ---------- 공통 버튼 ---------- */
+.big-btn {
+  font-family: inherit; font-size: 17px; font-weight: 900;
+  background: var(--red); color: #fff;
+  border: none; border-radius: 16px;
+  padding: 16px 28px; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(232, 48, 42, 0.35);
+  transition: transform 0.12s;
+}
+.big-btn:active { transform: scale(0.97); }
+.big-btn.navy { background: var(--navy); box-shadow: 0 6px 18px rgba(30, 55, 153, 0.3); }
+.big-btn.ghost {
+  background: var(--card); color: var(--ink-soft);
+  border: 2px solid var(--line); box-shadow: none;
+}
+
+/* ---------- PRO: 채팅 ---------- */
+.chat-body { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding: 16px; }
+.chat-day { align-self: center; font-size: 12px; font-weight: 700; color: var(--ink-soft); background: var(--line); border-radius: 99px; padding: 4px 12px; }
+.chat-msg { max-width: 78%; border-radius: 16px; padding: 12px 15px; font-size: 15px; line-height: 1.55; font-weight: 600; }
+.chat-msg.me { align-self: flex-end; background: var(--navy); color: #fff; border-bottom-right-radius: 4px; }
+.chat-msg.ai { align-self: flex-start; background: var(--card); border: 2px solid var(--line); border-bottom-left-radius: 4px; }
+.chat-model { font-size: 11px; font-weight: 900; color: var(--red); margin-bottom: 4px; }
+.chat-msg.typing { display: flex; gap: 5px; padding: 15px 18px; }
+.chat-msg.typing span { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-soft); opacity: 0.5; animation: blink 1s infinite; }
+.chat-msg.typing span:nth-child(2) { animation-delay: 0.2s; }
+.chat-msg.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%,100%{opacity:0.25} 50%{opacity:0.9} }
+.chat-inputbar { display: flex; gap: 8px; padding: 12px 16px; border-top: 2px solid var(--line); background: var(--card); }
+.chat-inputbar input {
+  flex: 1; font-family: inherit; font-size: 15px; font-weight: 600;
+  border: 2px solid var(--line); border-radius: 99px; padding: 12px 18px; outline: none;
+}
+.chat-inputbar input:focus { border-color: var(--navy); }
+.chat-send {
+  font-family: inherit; font-weight: 900; font-size: 15px;
+  background: var(--red); color: #fff; border: none; border-radius: 99px;
+  padding: 0 22px; cursor: pointer;
+}
+
+/* ---------- PRO: OCR ---------- */
+.ocr-stage { display: flex; gap: 18px; align-items: stretch; }
+.ocr-paper {
+  position: relative; flex: 1;
+  background: #fff; border: 2px solid var(--line); border-radius: 14px;
+  padding: 22px 24px; overflow: hidden;
+  font-size: 14px; line-height: 1.7;
+  box-shadow: var(--shadow);
+}
+.ocr-paper .prob { font-weight: 700; margin-bottom: 10px; }
+.hand {
+  font-family: "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+  color: #3a45a0; font-size: 15px;
+}
+.hand.err { position: relative; display: inline-block; padding: 2px 10px; margin-left: -10px; }
+.hand.err::after {
+  content: ""; position: absolute; inset: -5px -6px;
+  border: 3px solid rgba(232, 48, 42, 0.8);
+  border-radius: 50% / 46%;
+  pointer-events: none;
+  opacity: 0; transition: opacity 0.4s;
+  transform: rotate(-1.2deg);
+}
+.ocr-paper.marked .hand.err::after { opacity: 1; }
+#ocr-scanline {
+  position: absolute; left: 0; right: 0; top: -8%;
+  height: 10px; border-radius: 99px;
+  background: linear-gradient(90deg, transparent, var(--lime-bright), transparent);
+  opacity: 0; pointer-events: none;
+}
+#ocr-scanline.scanning { animation: scanmove 2.4s linear; opacity: 1; }
+@keyframes scanmove { from { top: -4%; } to { top: 102%; } }
+.ocr-result { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.diag-card {
+  background: var(--card); border: 2px solid var(--line);
+  border-radius: 14px; padding: 14px 16px;
+}
+.diag-card h4 { font-size: 13px; font-weight: 900; color: var(--ink-soft); margin-bottom: 6px; }
+.diag-card p { font-size: 14px; font-weight: 600; line-height: 1.55; }
+.diag-card.bad { border-color: rgba(232,48,42,0.4); }
+.diag-card.bad h4 { color: var(--state-error); }
+.diag-card.good { border-color: rgba(23,138,76,0.4); }
+.diag-card.good h4 { color: var(--state-correct); }
+.pop { animation: popin 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+@keyframes popin { from { transform: scale(0.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ---------- PRO: 녹음 ---------- */
+.rec-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.rec-btn {
+  width: 66px; height: 66px; border-radius: 50%;
+  border: none; cursor: pointer;
+  background: var(--red); color: #fff; font-size: 26px;
+  box-shadow: 0 6px 18px rgba(232, 48, 42, 0.4);
+}
+.rec-btn.recording { animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(232,48,42,0.5);} 50% { box-shadow: 0 0 0 16px rgba(232,48,42,0);} }
+.rec-status { font-size: 15px; font-weight: 800; color: var(--ink-soft); }
+.rec-transcript { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.rec-line {
+  background: var(--card); border: 2px solid var(--line);
+  border-radius: 12px; padding: 10px 14px;
+  font-size: 14px; font-weight: 600; line-height: 1.5;
+}
+.rec-line.key { border-color: var(--lime); background: rgba(198, 242, 46, 0.12); }
+.rec-t { font-weight: 900; color: var(--navy); font-size: 12px; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.rec-star { font-size: 12px; font-weight: 900; color: #5a7a00; }
+.rec-summary {
+  margin-top: 12px; background: var(--navy); color: #fff;
+  border-radius: 14px; padding: 16px 18px;
+  font-size: 14px; font-weight: 600; line-height: 1.6;
+}
+.rec-summary b { color: var(--lime-bright); }
+
+/* ---------- 3b1b 시나리오 플레이어 ---------- */
+.sp-container { display: flex; flex-direction: column; width: 100%; }
+.sp-viewport {
+  position: relative; width: 100%; overflow: hidden;
+  background: #fdfcfa; border-radius: 12px;
+}
+.sp-stage { position: absolute; width: 1920px; height: 1080px; transform-origin: 0 0; }
+.sp-svg, .sp-html { position: absolute; inset: 0; }
+.sp-html { pointer-events: none; }
+.sp-label { position: absolute; font-family: "Pretendard","Apple SD Gothic Neo",system-ui,sans-serif; white-space: nowrap; }
+.sp-glabel { translate: -50% -50%; width: max-content; max-width: 560px; text-align: center; white-space: normal; }
+.sp-tick { position: absolute; font-size: 22px; color: #8b8578; font-family: "Pretendard",system-ui,sans-serif; text-shadow: 0 0 4px #fdfcfa, 0 0 4px #fdfcfa; }
+/* 수식 바 — 스테이지 밖, 앱 크기 조판 */
+.sp-formula-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 8px 22px; min-height: 40px; padding: 4px 8px 8px;
+}
+.sp-formula-bar.empty { min-height: 0; padding: 0; }
+.sp-formula { color: var(--ink); }
+.sp-formula .katex { font-size: 21px; }
+/* 자막 — 스테이지 아래, 앱 타이포 */
+.sp-caption {
+  min-height: 52px;
+  padding: 10px 6px 2px;
+  text-align: center; font-weight: 700;
+  font-size: 16px;
+  color: var(--ink); line-height: 1.55;
+}
+.sp-caption .katex { font-size: 1.05em; }
+.sp-word { display: inline-block; }
+.sp-summary { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(253,252,250,0.88); backdrop-filter: blur(4px); }
+.sp-summary-card {
+  background: #fff; border: 2px solid var(--line); border-radius: 20px;
+  box-shadow: var(--shadow); padding: 26px 34px; max-width: 84%;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sp-summary-title { font-size: 15px; font-weight: 900; color: var(--red); }
+.sp-summary-line { font-size: 16px; font-weight: 600; line-height: 1.6; }
+.sp-bigplay {
+  position: absolute; left: 50%; top: 50%; translate: -50% -50%;
+  width: 84px; height: 84px; border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(232,48,42,0.92); color: #fff; font-size: 30px;
+  box-shadow: 0 8px 24px rgba(232,48,42,0.4);
+}
+.sp-controls {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 4px 2px;
+}
+.sp-btn {
+  font-family: inherit; font-size: 15px; font-weight: 900;
+  background: var(--card); color: var(--ink);
+  border: 2px solid var(--line); border-radius: 10px;
+  padding: 7px 12px; cursor: pointer;
+}
+.sp-btn:hover { border-color: var(--navy); }
+.sp-progress { flex: 1; height: 10px; background: var(--line); border-radius: 99px; cursor: pointer; overflow: hidden; }
+/* 진행바는 그래프 주 색과 같은 파랑 — 빨강은 오류 의미로만 (RG-20) */
+.sp-progress-fill { height: 100%; width: 0%; background: var(--graph-primary); border-radius: 99px; }
+.sp-time { font-size: 13px; font-weight: 800; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.sp-tex .katex { font-size: 1.06em; }
+
+/* 해설 와이드 모드 — 플레이어가 전체 폭을 쓰고 우측 패널이 아래로 내려온다 */
+.learn-main.explain-wide { flex-direction: column; overflow-y: auto; }
+.learn-main.explain-wide .learn-left { flex: none; width: 100%; }
+.learn-main.explain-wide .learn-left .graph-card { min-height: 0; padding: 10px 14px 6px; }
+.learn-main.explain-wide .learn-right { width: 100%; flex: none; overflow: visible; }
+.learn-main.explain-wide .stage-panel { overflow: visible; flex: none; }
+
+/* ---------- 영상관 ---------- */
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.lib-card {
+  text-align: left; font-family: inherit; cursor: pointer;
+  background: var(--card); border: 2px solid var(--line); border-radius: 16px;
+  padding: 14px 16px; transition: all 0.15s;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.lib-card:hover { border-color: var(--navy); transform: translateY(-2px); }
+.lib-card .lc-unit { font-size: 11px; font-weight: 800; color: var(--navy); }
+.lib-card .lc-title { font-size: 15.5px; font-weight: 800; color: var(--ink); }
+.lib-card .lc-dur { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.lib-card.playing { border-color: var(--red); }
+
+/* ---------- 풀이 노트 (격자 캔버스) ---------- */
+.note-wrap {
+  margin-top: 14px;
+  border: 2px solid var(--line); border-radius: 14px;
+  overflow: hidden; background: #fff;
+  flex: none;
+}
+.note-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px;
+  background: var(--bg); border-bottom: 2px solid var(--line);
+  font-size: 12.5px; font-weight: 900; color: var(--ink-soft);
+}
+.note-canvas {
+  display: block; width: 100%; height: 250px;
+  touch-action: none; cursor: crosshair;
+  background-image:
+    linear-gradient(rgba(30, 55, 153, 0.10) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 55, 153, 0.10) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ---------- 훈련 탭: 난이도 선택 ---------- */
+.drill-tier-row {
+  display: flex; gap: 8px; align-items: center;
+  margin-bottom: 12px;
+}
+.drill-tier-label { font-size: 13px; font-weight: 900; color: var(--ink-soft); margin-right: 4px; }
+.drill-tier-btn {
+  font-family: inherit; font-size: 13.5px; font-weight: 800;
+  background: var(--card); color: var(--ink-soft);
+  border: 2px solid var(--line); border-radius: 99px;
+  padding: 9px 16px; cursor: pointer;
+}
+.drill-tier-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
+
+/* ---------- 단원평가 ---------- */
+.ut-card {
+  text-align: left; font-family: inherit; cursor: pointer;
+  background: linear-gradient(120deg, #fff 60%, rgba(30,55,153,0.06));
+  border: 2px solid var(--line); border-radius: 16px;
+  padding: 16px 18px; transition: all 0.15s;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ut-card:hover { border-color: var(--navy); transform: translateY(-2px); }
+.ut-title { font-size: 16px; font-weight: 900; color: var(--ink); }
+.ut-desc { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); }
+.ut-go { font-size: 13px; font-weight: 900; color: var(--navy); }
+.ut-result-head { display: flex; align-items: center; gap: 16px; }
+.ut-score { font-size: 44px; font-weight: 900; color: var(--ink); }
+.ut-score small { font-size: 20px; color: var(--ink-soft); }
+.ut-grade { font-size: 16px; font-weight: 900; border-radius: 99px; padding: 8px 16px; }
+.ut-grade.pass { background: rgba(23,138,76,0.12); color: var(--state-correct); }
+.ut-grade.fail { background: rgba(232,48,42,0.1); color: var(--state-error); }
+.ut-review { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 4px; }
+.ut-review-row {
+  display: flex; justify-content: space-between;
+  background: var(--card); border: 2px solid var(--line); border-radius: 10px;
+  padding: 9px 14px; font-size: 13.5px; font-weight: 700;
+}
+.ut-review-row.no { border-color: rgba(232,48,42,0.35); }
+
+/* ---------- 훈련 탭 ---------- */
+.drill-type-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.drill-type-btn {
+  font-family: inherit; font-size: 13.5px; font-weight: 800;
+  background: var(--card); color: var(--ink-soft);
+  border: 2px solid var(--line); border-radius: 99px;
+  padding: 9px 15px; cursor: pointer;
+}
+.drill-type-btn.active { background: var(--navy); border-color: var(--navy); color: #fff; }
+.drill-progress { font-size: 13px; font-weight: 800; color: var(--ink-soft); }
+.sn-card {
+  background: var(--card); border: 2px solid var(--line); border-radius: 14px;
+  padding: 14px 16px; cursor: pointer; text-align: left; font-family: inherit;
+  display: flex; align-items: center; gap: 12px; transition: all 0.15s;
+}
+.sn-card:hover { border-color: var(--red); }
+.sn-num { flex: none; width: 44px; height: 44px; border-radius: 12px; background: var(--bg); border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 16px; color: var(--navy); }
+.sn-meta { font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.sn-idea { font-size: 13.5px; font-weight: 600; line-height: 1.45; color: var(--ink); }
+.sn-step {
+  background: var(--card); border: 2px solid var(--line); border-radius: 14px;
+  padding: 14px 16px; margin-bottom: 10px;
+}
+.sn-step .cap { font-size: 12px; font-weight: 900; color: var(--red); margin-bottom: 6px; }
+.sn-step .math { font-size: 17px; overflow-x: auto; padding: 4px 0; }
+.sn-step .sub { font-size: 13.5px; font-weight: 600; color: var(--ink-soft); margin-top: 6px; line-height: 1.5; }
+
+/* ---------- 단답형 입력 ---------- */
+.sa-row { display: flex; gap: 10px; align-items: stretch; margin-top: 6px; }
+.sa-input {
+  flex: 1; font-family: inherit; font-size: 19px; font-weight: 800;
+  border: 2px solid var(--line); border-radius: 14px;
+  padding: 14px 18px; outline: none; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.sa-input:focus { border-color: var(--navy); }
+.sa-input.sa-correct { border-color: var(--state-correct); background: rgba(23,138,76,0.06); }
+.sa-input.sa-wrong { border-color: var(--state-error); background: rgba(232,48,42,0.05); animation: shakeX 0.4s; }
+
+/* ---------- PRO 채팅 입력모드 ---------- */
+.chat-modes { display: flex; gap: 6px; padding: 8px 16px 0; }
+.chat-mode-btn {
+  font-family: inherit; font-size: 12.5px; font-weight: 800;
+  background: var(--card); color: var(--ink-soft);
+  border: 2px solid var(--line); border-radius: 99px;
+  padding: 7px 13px; cursor: pointer;
+}
+.chat-mode-btn.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+.chat-tool-panel {
+  margin: 8px 16px 0; background: var(--card);
+  border: 2px dashed var(--line); border-radius: 14px; padding: 14px;
+}
+.pin-step {
+  display: block; width: 100%; text-align: left; font-family: inherit;
+  font-size: 14px; font-weight: 600;
+  background: var(--bg); border: 2px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+}
+.pin-step:hover, .pin-step.picked { border-color: var(--red); background: rgba(232,48,42,0.05); }
+.pin-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.pin-chip {
+  font-family: inherit; font-size: 12.5px; font-weight: 800;
+  background: rgba(30,55,153,0.07); color: var(--navy);
+  border: 2px solid transparent; border-radius: 99px; padding: 7px 12px; cursor: pointer;
+}
+.pin-chip:hover { border-color: var(--navy); }
+#hw-canvas { width: 100%; height: 170px; background: #fff; border: 2px solid var(--line); border-radius: 10px; touch-action: none; cursor: crosshair; }
+.hw-result { margin-top: 10px; font-size: 15px; font-weight: 700; }
+.hw-result .katex { font-size: 1.2em; }
+
+/* ---------- PRO 탭 ---------- */
+.pro-tabs { display: flex; gap: 8px; }
+.pro-tab {
+  font-family: inherit; font-size: 14px; font-weight: 800;
+  background: var(--card); color: var(--ink-soft);
+  border: 2px solid var(--line); border-radius: 99px;
+  padding: 10px 18px; cursor: pointer;
+}
+.pro-tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.pro-lock {
+  font-size: 12px; font-weight: 900; color: #b06c00;
+  background: rgba(245,166,35,0.15); border-radius: 99px; padding: 4px 10px;
+}
+
+/* ---------- 심화 모의고사 ---------- */
+.exam-sec-head { margin: 20px 0 10px; }
+.exam-sec-head:first-child { margin-top: 4px; }
+.exam-sec-head .est { font-size: 16.5px; font-weight: 900; }
+.exam-sec-head .esd { font-size: 12.5px; font-weight: 600; color: var(--ink-soft); margin-top: 2px; }
+.exam-course-row { margin-bottom: 12px; }
+.ecr-label { font-size: 13px; font-weight: 900; color: var(--navy); margin: 10px 0 6px; }
+.exam-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.exam-integrated { border-color: var(--red); background: rgba(232, 48, 42, 0.04); }
+.exam-integrated:hover { border-color: var(--red-deep); }
+.exam-sub-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 5px 0; }
+.esl-unit { font-size: 12px; font-weight: 800; color: var(--ink-soft); margin-right: 4px; flex: none; min-width: 150px; }
+.exam-sub-chip {
+  border: 1.5px solid var(--line); background: #fff; border-radius: 999px;
+  padding: 6px 13px; font-size: 12.5px; font-weight: 700;
+  cursor: pointer; font-family: inherit; color: var(--ink);
+  transition: border-color 0.15s, color 0.15s, transform 0.15s;
+}
+.exam-sub-chip:hover { border-color: var(--navy); color: var(--navy); transform: translateY(-1px); }
+#exam-q .katex { font-size: 1.08em; }
+#exam-choices .choice-btn .katex { font-size: 1.05em; }

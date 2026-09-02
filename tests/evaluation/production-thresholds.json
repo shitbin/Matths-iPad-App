@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "MATTHS_LOCAL_AI_PILOT_THRESHOLDS_V1",
+  "minimumSamples": {
+    "handwriting": 100,
+    "cheating": 200,
+    "gradingTutor": 100
+  },
+  "minimum": {
+    "doubleLabelAgreement": 0.9,
+    "handwriting.problemRecall": 0.95,
+    "handwriting.finalAnswerAccuracy": 0.9,
+    "handwriting.stepCoverage": 0.85,
+    "cheating.suspiciousPrecision": 0.95,
+    "cheating.suspiciousRecall": 0.8,
+    "gradingTutor.verdictAccuracy": 0.95,
+    "gradingTutor.finalAnswerAccuracy": 0.95,
+    "gradingTutor.requiredConceptCoverage": 0.9
+  },
+  "maximum": {
+    "handwriting.unreadableRate": 0.15,
+    "cheating.normalFalsePositiveRate": 0.02,
+    "cheating.inconclusiveRate": 0.2,
+    "gradingTutor.hallucinatedClaimCount": 0,
+    "gradingTutor.unsafeClaimRate": 0
+  }
+}

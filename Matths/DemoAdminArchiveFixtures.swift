@@ -1,0 +1,14 @@
+import Foundation
+
+#if DEBUG
+enum DemoAdminArchiveFixtures {
+    static let folder = #"{"id":"archive-folder-1","parentFolderId":null,"name":"고3 실전 자료","description":"고3 실전 대비 문제지와 해설","slug":"grade-3","isPublished":true,"accessLevel":"LEARNING_PACKAGE","requiredAccessLevel":"LEARNING_PACKAGE","isPinned":true,"pinnedAt":"2026-09-01T02:00:00.000Z","itemCount":2,"isLocked":false,"createdAt":"2026-08-20T00:00:00.000Z","depth":0,"pathLabel":"고3 실전 자료"}"#
+    static let childFolder = #"{"id":"archive-folder-2","parentFolderId":"archive-folder-1","name":"9월 모의고사","description":"9월 배포 자료","slug":"september","isPublished":true,"accessLevel":"MOCK_EXAM_PACKAGE","requiredAccessLevel":"LEARNING_PACKAGE","isPinned":false,"pinnedAt":null,"itemCount":1,"isLocked":false,"createdAt":"2026-09-01T00:00:00.000Z","depth":1,"pathLabel":"고3 실전 자료 / 9월 모의고사"}"#
+    static let item = #"{"id":"archive-item-1","folderId":null,"title":"수학Ⅰ 실전 문제지 1회","description":"80분 실전 훈련용","category":"문제지","originalName":"수학1-실전-1회.pdf","mimeType":"application/pdf","sizeBytes":2849712,"storageProvider":"R2","storagePurpose":"ADMIN_ARCHIVE","backupStatus":"READY","backedUpAt":"2026-09-01T03:00:00.000Z","downloadCount":128,"createdAt":"2026-09-01T02:30:00.000Z","deletedAt":null,"purgeAfter":null,"isPublished":true}"#
+    static let secondItem = #"{"id":"archive-item-2","folderId":null,"title":"수학Ⅰ 실전 해설","description":"전 문항 상세 해설","category":"해설","originalName":"수학1-실전-1회-해설.pdf","mimeType":"application/pdf","sizeBytes":4175360,"storageProvider":"R2","storagePurpose":"ADMIN_ARCHIVE","backupStatus":"PENDING","backedUpAt":null,"downloadCount":84,"createdAt":"2026-09-01T02:40:00.000Z","deletedAt":null,"purgeAfter":null,"isPublished":true}"#
+    static let trash = #"{"id":"archive-trash-1","folderId":null,"title":"이전 버전 공식집","description":"","category":"개념 자료","originalName":"공식집-old.pdf","mimeType":"application/pdf","sizeBytes":1048576,"storageProvider":"R2","storagePurpose":"ADMIN_ARCHIVE","backupStatus":"READY","backedUpAt":"2026-08-01T00:00:00.000Z","downloadCount":11,"createdAt":"2026-08-01T00:00:00.000Z","deletedAt":"2026-09-01T01:00:00.000Z","purgeAfter":"2026-10-01T01:00:00.000Z","isPublished":false}"#
+
+    static let dashboard = #"{"schemaVersion":"ADMIN_ARCHIVE_NATIVE_V1","archive":{"isAdmin":true,"categories":["문제지","해설","개념 자료","기타"],"folders":["# + folder + "," + childFolder + #"],"folderOptions":["# + folder + "," + childFolder + #"],"breadcrumbs":[],"selectedFolder":null,"items":["# + item + "," + secondItem + #"],"trashItems":["# + trash + #"]}}"#
+    static let mutation = #"{"schemaVersion":"ADMIN_ARCHIVE_NATIVE_V1","ok":true,"affectedCount":1,"archive":{"isAdmin":true,"categories":["문제지","해설","개념 자료","기타"],"folders":["# + folder + "," + childFolder + #"],"folderOptions":["# + folder + "," + childFolder + #"],"breadcrumbs":[],"selectedFolder":null,"items":["# + item + "," + secondItem + #"],"trashItems":["# + trash + #"]}}"#
+}
+#endif

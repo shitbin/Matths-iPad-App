@@ -1,0 +1,643 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2D8827B3329726DE1BAFC766 /* MatthsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DBC521BF699DC71F61EC724 /* MatthsWidget.swift */; };
+		3E944457F2D041A9A74AD881 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A3D8B4C9E51740218F6A33BC /* PrivacyInfo.xcprivacy */; };
+		49330995D333C04D4249EA7A /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6582D17CF5A87BE69D4E4DDA /* Foundation.framework */; };
+		4AB3A227710290E91B8434F4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 81C486D31BDA7DA83120F89E /* Assets.xcassets */; };
+		6435990990BF690698C00E2B /* WidgetSnapshot.swift (shared) in Sources */ = {isa = PBXBuildFile; fileRef = 1AF9CEC1A0A11B69CFE3A266 /* WidgetSnapshot.swift (shared) */; };
+		A1000102000000000000001 /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000101000000000000001 /* llama.xcframework */; };
+		A1000103000000000000001 /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A1000101000000000000001 /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A1000202000000000000001 /* MatthsLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000201000000000000001 /* MatthsLiveActivity.swift */; };
+		A1000204000000000000001 /* LiveActivityAttributes.swift (shared) in Sources */ = {isa = PBXBuildFile; fileRef = A1000203000000000000001 /* LiveActivityAttributes.swift (shared) */; };
+		A1000302000000000000001 /* ConceptMotion in Resources */ = {isa = PBXBuildFile; fileRef = A1000301000000000000001 /* ConceptMotion */; };
+		F5BF4713C58FA5982877F297 /* MatthsWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 81296F2B07F34377EDBBB1D7 /* MatthsWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4EA5FF94B5A594BE54F1D448 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000A1000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF8E50FB83A9EE72FF2B4654;
+			remoteInfo = MatthsWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		35263EB2620BD6EB9728CF51 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				F5BF4713C58FA5982877F297 /* MatthsWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000104000000000000001 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A1000103000000000000001 /* llama.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		1AF9CEC1A0A11B69CFE3A266 /* WidgetSnapshot.swift (shared) */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "WidgetSnapshot.swift (shared)"; path = Matths/WidgetSnapshot.swift; sourceTree = "<group>"; };
+		5C81E3CC80AB5F29BE3B3BF8 /* MatthsWidget.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = MatthsWidget.entitlements; sourceTree = "<group>"; };
+		6582D17CF5A87BE69D4E4DDA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		7DBC521BF699DC71F61EC724 /* MatthsWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MatthsWidget.swift; sourceTree = "<group>"; };
+		81296F2B07F34377EDBBB1D7 /* MatthsWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MatthsWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		81C486D31BDA7DA83120F89E /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8B499ABA738E9B35B9358C90 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A3D8B4C9E51740218F6A33BC /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A1000001000000000000001 /* Matths.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Matths.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000101000000000000001 /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = llama.xcframework; path = Frameworks/llama.xcframework; sourceTree = "<group>"; };
+		A1000106000000000000001 /* Matths.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Matths.entitlements; sourceTree = "<group>"; };
+		A1000201000000000000001 /* MatthsLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MatthsLiveActivity.swift; sourceTree = "<group>"; };
+		A1000203000000000000001 /* LiveActivityAttributes.swift (shared) */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "LiveActivityAttributes.swift (shared)"; path = Matths/LiveActivityAttributes.swift; sourceTree = "<group>"; };
+		A1000301000000000000001 /* ConceptMotion */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ConceptMotion; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A1000108000000000000001 /* Exceptions for "Matths" folder in "Matths" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"DemoWeb/attach-notebook.svg",
+				DemoWeb/brand.css,
+				"DemoWeb/community-announcement.html",
+				"DemoWeb/community-empty.html",
+				"DemoWeb/community-guest.html",
+				"DemoWeb/community-new-quota.html",
+				"DemoWeb/community-new-restricted.html",
+				"DemoWeb/community-new.html",
+				"DemoWeb/community-notice.html",
+				"DemoWeb/community-operations.html",
+				"DemoWeb/community-post-guest.html",
+				"DemoWeb/community-post.html",
+				"DemoWeb/community-rules.html",
+				"DemoWeb/community-school-guest.html",
+				"DemoWeb/community-school.html",
+				"DemoWeb/community-search.html",
+				DemoWeb/community.css,
+				DemoWeb/community.html,
+				"DemoWeb/demo-dark.css",
+				"DemoWeb/demo-extras.css",
+				"DemoWeb/matths-brand-tokens.css",
+				"DemoWeb/matths-theme.css",
+				"DemoWeb/public-navigation.css",
+				"DemoWeb/public-navigation.js",
+				"KiceBank/kice-index.json",
+				"KiceBank/mopyeong-2024-06-math.pdf",
+				"KiceBank/mopyeong-2024-09-math.pdf",
+				"KiceBank/mopyeong-2025-06-math.pdf",
+				"KiceBank/mopyeong-2025-09-math.pdf",
+				"KiceBank/mopyeong-2026-06-math.pdf",
+				"KiceBank/mopyeong-2026-09-math.pdf",
+				"KiceBank/suneung-2024-math.pdf",
+				"KiceBank/suneung-2025-math.pdf",
+				"KiceBank/suneung-2026-math.pdf",
+			);
+			target = A1000061000000000000001 /* Matths */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A1000011000000000000001 /* Matths */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A1000108000000000000001 /* Exceptions for "Matths" folder in "Matths" target */,
+			);
+			path = Matths;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8FFC2D9000E76A37F612EDCF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				49330995D333C04D4249EA7A /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000031000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000102000000000000001 /* llama.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5AEB7AC5D41889D487542A56 /* MatthsWidget */ = {
+			isa = PBXGroup;
+			children = (
+				7DBC521BF699DC71F61EC724 /* MatthsWidget.swift */,
+				A1000201000000000000001 /* MatthsLiveActivity.swift */,
+				8B499ABA738E9B35B9358C90 /* Info.plist */,
+				A3D8B4C9E51740218F6A33BC /* PrivacyInfo.xcprivacy */,
+				5C81E3CC80AB5F29BE3B3BF8 /* MatthsWidget.entitlements */,
+				81C486D31BDA7DA83120F89E /* Assets.xcassets */,
+			);
+			path = MatthsWidget;
+			sourceTree = "<group>";
+		};
+		91D6C25051A3BE4AB23B7382 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				6582D17CF5A87BE69D4E4DDA /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		A1000041000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A1000011000000000000001 /* Matths */,
+				A1000301000000000000001 /* ConceptMotion */,
+				A1000106000000000000001 /* Matths.entitlements */,
+				A1000101000000000000001 /* llama.xcframework */,
+				A1000051000000000000001 /* Products */,
+				FFEFFF07DF335B5092CBF30F /* Frameworks */,
+				5AEB7AC5D41889D487542A56 /* MatthsWidget */,
+				1AF9CEC1A0A11B69CFE3A266 /* WidgetSnapshot.swift (shared) */,
+				A1000203000000000000001 /* LiveActivityAttributes.swift (shared) */,
+			);
+			sourceTree = "<group>";
+		};
+		A1000051000000000000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1000001000000000000001 /* Matths.app */,
+				81296F2B07F34377EDBBB1D7 /* MatthsWidget.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FFEFFF07DF335B5092CBF30F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				91D6C25051A3BE4AB23B7382 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1000061000000000000001 /* Matths */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000071000000000000001 /* Build configuration list for PBXNativeTarget "Matths" */;
+			buildPhases = (
+				A1000105000000000000001 /* Release 서버 주소 게이트 */,
+				A1000081000000000000001 /* Sources */,
+				A1000031000000000000001 /* Frameworks */,
+				A1000091000000000000001 /* Resources */,
+				A1000107000000000000001 /* Debug KICE internal materials gate */,
+				A1000110000000000000001 /* Debug 데모 게시판 목업 복사 */,
+				A1000104000000000000001 /* Embed Frameworks */,
+				35263EB2620BD6EB9728CF51 /* Embed Foundation Extensions */,
+				A1000109000000000000001 /* Embed build provenance */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A1B38AF7EF8CE17F712C30EE /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A1000011000000000000001 /* Matths */,
+			);
+			name = Matths;
+			productName = Matths;
+			productReference = A1000001000000000000001 /* Matths.app */;
+			productType = "com.apple.product-type.application";
+		};
+		BF8E50FB83A9EE72FF2B4654 /* MatthsWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 88B305248AAAAFDE00B2F6BF /* Build configuration list for PBXNativeTarget "MatthsWidget" */;
+			buildPhases = (
+				47B24ABE836C86AB5F3B9F57 /* Sources */,
+				8FFC2D9000E76A37F612EDCF /* Frameworks */,
+				0F5092CC80186B5679063EE1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MatthsWidget;
+			productName = MatthsWidget;
+			productReference = 81296F2B07F34377EDBBB1D7 /* MatthsWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000A1000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2630;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					A1000061000000000000001 = {
+						CreatedOnToolsVersion = 26.3;
+					};
+				};
+			};
+			buildConfigurationList = A10000B1000000000000001 /* Build configuration list for PBXProject "Matths" */;
+			developmentRegion = ko;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				ko,
+				en,
+				Base,
+			);
+			mainGroup = A1000041000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A1000051000000000000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1000061000000000000001 /* Matths */,
+				BF8E50FB83A9EE72FF2B4654 /* MatthsWidget */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0F5092CC80186B5679063EE1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4AB3A227710290E91B8434F4 /* Assets.xcassets in Resources */,
+				3E944457F2D041A9A74AD881 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000091000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000302000000000000001 /* ConceptMotion in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1000105000000000000001 /* Release 서버 주소 게이트 */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Release 서버 주소 게이트";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# F-07 게이트: 임시 터널/로컬 주소가 기본 서버인 채 Release 로 빌드되는 것을 사람의 기억이 아니라 빌드가 막는다.\n# verify-release.sh [3/5] 는 바이너리 사후 감사이고, 여기서는 소스의 defaultURL 선언을 컴파일 전에 선제 차단한다.\n# 선언 한 줄만 검사하는 이유: DEBUG 전용 localhost 경로는 #if DEBUG 로 Release 바이너리에서 빠지므로 오탐을 막기 위해서다.\nif [ \"${CONFIGURATION}\" != \"Release\" ]; then exit 0; fi\nSRC=\"${SRCROOT}/Matths/ServerAPI.swift\"\nDECL=$(grep -E 'static let defaultURL' \"$SRC\" 2>/dev/null)\nif [ -z \"$DECL\" ]; then\n  # 선언을 못 찾으면 통과가 아니라 실패 — 게이트가 조용히 무력화되는 것을 막는다.\n  echo \"error: ServerAPI.swift 에서 defaultURL 선언을 찾지 못했다. 이 게이트(Run Script)를 코드 구조 변경에 맞게 갱신하라.\"\n  exit 1\nfi\nif echo \"$DECL\" | grep -qE 'trycloudflare|ngrok|loca[.]lt|localhost|127[.]0[.]0[.]1'; then\n  echo \"error: ServerAPI.defaultURL 이 임시/로컬 주소다: $DECL\"\n  echo \"error: 터널 이름은 만료 후 제3자가 재점유할 수 있다. set-server-url.sh 로 정식 도메인으로 바꾼 뒤 다시 빌드하라 (백로그 L-3).\"\n  exit 1\nfi\necho \"Release 서버 주소 게이트 통과: $DECL\"\n";
+		};
+		A1000107000000000000001 /* Debug KICE internal materials gate */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Matths/KiceBank",
+			);
+			name = "Debug KICE internal materials gate";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# KICE 기출 원문은 권리 확인 전 내부 Debug 빌드에서만 사용한다.\n# File System Synchronized Group의 KiceBank 폴더는 target membership에서 제외하고,\n# 이 단계가 Debug 산출물에만 명시적으로 복사한다. Release에서는 복사하지 않을 뿐\n# 아니라 번들에 섞여 들어왔는지도 검사해 조용한 회귀를 막는다.\nSOURCE_DIR=\"${SRCROOT}/Matths/KiceBank\"\nBUNDLE_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ \"${CONFIGURATION}\" = \"Debug\" ]; then\n  /bin/mkdir -p \"${BUNDLE_DIR}\"\n  for SOURCE_FILE in \"${SOURCE_DIR}\"/*; do\n    [ -f \"${SOURCE_FILE}\" ] || continue\n    # Finder resource fork/확장 속성을 서명 대상 번들로 복사하지 않는다.\n    /bin/cp -X -f \"${SOURCE_FILE}\" \"${BUNDLE_DIR}/$(basename \"${SOURCE_FILE}\")\"\n  done\n  echo \"Debug KICE 내부 자료 복사 완료\"\n  exit 0\nfi\nfor SOURCE_FILE in \"${SOURCE_DIR}\"/*; do\n  [ -f \"${SOURCE_FILE}\" ] || continue\n  BUNDLED_FILE=\"${BUNDLE_DIR}/$(basename \"${SOURCE_FILE}\")\"\n  if [ -e \"${BUNDLED_FILE}\" ]; then\n    echo \"error: 권리 확인 전 KICE 내부 자료가 ${CONFIGURATION} 번들에 포함됐다: ${BUNDLED_FILE}\"\n    exit 1\n  fi\ndone\necho \"${CONFIGURATION} KICE 자료 제외 게이트 통과\"\nif ! /bin/sh \"${SRCROOT}/scripts/verify-curriculum-story-bundle.sh\" \"${BUNDLE_DIR}\"; then\n  echo \"error: Release 커리큘럼 5분 해설 번들 게이트 실패\"\n  exit 1\nfi\necho \"\"\necho \"${CONFIGURATION} 커리큘럼 220개 번들 게이트 통과\"\n";
+		};
+		A1000109000000000000001 /* Embed build provenance */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Matths/RankMotion/rank-promotion-assets.json",
+				"$(SRCROOT)/scripts/embed-build-provenance.sh",
+				"$(SRCROOT)/scripts/verifyRankPromotionBundle.js",
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Embed build provenance";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/MatthsBuildProvenance.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"${SRCROOT}/scripts/embed-build-provenance.sh\"\n";
+		};
+		A1000110000000000000001 /* Debug 데모 게시판 목업 복사 */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Matths/DemoWeb",
+			);
+			name = "Debug 데모 게시판 목업 복사";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# 데모 게시판 목업(Matths/DemoWeb/)은 **DEBUG 전용 리소스**다. 두 가지를 동시에 해결한다.\n#\n# ① 이름 충돌: 동기화 폴더 그룹(PBXFileSystemSynchronizedRootGroup)은 하위 폴더를 평탄화해\n#    번들 최상단에 붓는다. DemoWeb/brand.css 와 LessonWeb/brand.css 가 이름이 같아서\n#    그대로 두면 \"Multiple commands produce .../Matths.app/brand.css\" 로 빌드가 죽는다.\n#    그래서 membershipExceptions 로 DemoWeb 을 그룹에서 빼고, 여기서 DemoWeb/ 폴더째 복사한다.\n#    (폴더를 유지해야 목업 HTML 이 자기 형제 CSS 를 상대경로로 찾을 수 있다.)\n# ② Release 격리: 데모 모드는 #if DEBUG 전용이다. Release 번들에는 복사하지 않을 뿐 아니라\n#    섞여 들어왔는지 검사까지 한다 — KICE 자료 게이트와 같은 방식.\nSOURCE_DIR=\"${SRCROOT}/Matths/DemoWeb\"\nBUNDLE_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nDEST_DIR=\"${BUNDLE_DIR}/DemoWeb\"\nif [ \"${CONFIGURATION}\" = \"Debug\" ]; then\n  /bin/rm -rf \"${DEST_DIR}\"\n  /bin/mkdir -p \"${DEST_DIR}\"\n  for SOURCE_FILE in \"${SOURCE_DIR}\"/*; do\n    [ -f \"${SOURCE_FILE}\" ] || continue\n    # Finder resource fork/확장 속성을 서명 대상 번들로 복사하지 않는다.\n    /bin/cp -X -f \"${SOURCE_FILE}\" \"${DEST_DIR}/$(basename \"${SOURCE_FILE}\")\"\n  done\n  if [ ! -f \"${DEST_DIR}/community.html\" ]; then\n    echo \"error: 데모 게시판 목업 진입 페이지를 복사하지 못했다: ${SOURCE_DIR}/community.html\"\n    exit 1\n  fi\n  COUNT=$(/usr/bin/find \"${DEST_DIR}\" -type f | /usr/bin/wc -l | /usr/bin/tr -d \" \")\n  echo \"Debug 데모 게시판 목업 ${COUNT}개 복사 완료 → DemoWeb/\"\n  exit 0\nfi\nif [ -e \"${DEST_DIR}\" ]; then\n  echo \"error: DEBUG 전용 데모 목업이 ${CONFIGURATION} 번들에 포함됐다: ${DEST_DIR}\"\n  exit 1\nfi\n# 평탄화 경로로 새어 들어왔는지도 본다. 이름을 하드코딩하면 목업을 새로 추가한 사람이\n# membershipExceptions 를 빠뜨렸을 때 조용히 통과한다 — 그래서 소스 폴더를 훑어\n# **DemoWeb 에만 있는 이름**을 그때그때 만들어 검사한다. LessonWeb 과 겹치는 이름\n# (brand.css 등)은 정상적으로 번들에 있으므로 제외한다.\nfor SOURCE_FILE in \"${SOURCE_DIR}\"/*; do\n  [ -f \"${SOURCE_FILE}\" ] || continue\n  NAME=$(basename \"${SOURCE_FILE}\")\n  if [ -e \"${SRCROOT}/Matths/LessonWeb/${NAME}\" ]; then continue; fi\n  if [ -e \"${BUNDLE_DIR}/${NAME}\" ]; then\n    echo \"error: DEBUG 전용 데모 목업이 ${CONFIGURATION} 번들 최상단에 평탄화됐다: ${BUNDLE_DIR}/${NAME}\"\n    exit 1\n  fi\ndone\necho \"${CONFIGURATION} 데모 목업 제외 게이트 통과\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		47B24ABE836C86AB5F3B9F57 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2D8827B3329726DE1BAFC766 /* MatthsWidget.swift in Sources */,
+				A1000202000000000000001 /* MatthsLiveActivity.swift in Sources */,
+				6435990990BF690698C00E2B /* WidgetSnapshot.swift (shared) in Sources */,
+				A1000204000000000000001 /* LiveActivityAttributes.swift (shared) in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000081000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A1B38AF7EF8CE17F712C30EE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = MatthsWidget;
+			target = BF8E50FB83A9EE72FF2B4654 /* MatthsWidget */;
+			targetProxy = 4EA5FF94B5A594BE54F1D448 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		45DB579CE80E44F0065B468F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_ENTITLEMENTS = MatthsWidget/MatthsWidget.entitlements;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = 64U874RU4D;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MatthsWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Matths;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kr.matths.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "Matths Widget App Store 2026-09-01";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A10000C1000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_FRAMEWORKS = SwiftUI;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000D1000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOL_FRAMEWORKS = SwiftUI;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A10000E1000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Matths/MatthsApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 64U874RU4D;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Matths;
+				INFOPLIST_KEY_NSCameraUsageDescription = "시험지와 풀이 증거를 촬영하는 데 사용합니다. 풀이 증거 제출을 선택하면 촬영한 사진이 검토를 위해 Matths 서버에 전송됩니다.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "시험지·AI 튜터 질문·프로필·풀이 증거 사진을 선택하는 데 사용합니다. AI 튜터 질문은 기기 안에서 처리하며, 프로필 저장 또는 풀이 증거 제출을 선택하면 해당 사진이 Matths 서버에 전송됩니다.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = NO;
+				INFOPLIST_KEY_UIRequiresFullScreen = NO;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kr.matths.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A10000F1000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_ENTITLEMENTS = Matths/MatthsApp.entitlements;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 64U874RU4D;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Matths;
+				INFOPLIST_KEY_NSCameraUsageDescription = "시험지와 풀이 증거를 촬영하는 데 사용합니다. 풀이 증거 제출을 선택하면 촬영한 사진이 검토를 위해 Matths 서버에 전송됩니다.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "시험지·AI 튜터 질문·프로필·풀이 증거 사진을 선택하는 데 사용합니다. AI 튜터 질문은 기기 안에서 처리하며, 프로필 저장 또는 풀이 증거 제출을 선택하면 해당 사진이 Matths 서버에 전송됩니다.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = NO;
+				INFOPLIST_KEY_UIRequiresFullScreen = NO;
+				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kr.matths.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "Matths App Store 2026-09-01";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C3A59918C7FFA852C7F3EE43 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = MatthsWidget/MatthsWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = 64U874RU4D;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MatthsWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Matths;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = kr.matths.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		88B305248AAAAFDE00B2F6BF /* Build configuration list for PBXNativeTarget "MatthsWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				45DB579CE80E44F0065B468F /* Release */,
+				C3A59918C7FFA852C7F3EE43 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000071000000000000001 /* Build configuration list for PBXNativeTarget "Matths" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000E1000000000000001 /* Debug */,
+				A10000F1000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000B1000000000000001 /* Build configuration list for PBXProject "Matths" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000C1000000000000001 /* Debug */,
+				A10000D1000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000A1000000000000001 /* Project object */;
+}

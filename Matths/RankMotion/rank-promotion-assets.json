@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "MATTHS_RANK_PROMOTION_ASSETS_V1",
+  "sourceProvenance": {
+    "status": "verified-git-origin",
+    "approvedSource": true,
+    "externalAttestationRequired": false,
+    "repository": "https://github.com/is4553807/Matths-Official.git",
+    "commit": "2b4e518f670d96e5c85128504faedb38456874ef",
+    "path": "public/media/rank-motion"
+  },
+  "assets": [
+    {
+      "tierCode": "BRONZE",
+      "filename": "bronze-rank-up.v6.mp4",
+      "sha256": "d8910111e26328371b7831c8ce99d70b4091f8d2c2e22e27fccb2dfffdd01a16",
+      "sizeBytes": 973206
+    },
+    {
+      "tierCode": "SILVER",
+      "filename": "silver-rank-up.v6.mp4",
+      "sha256": "7d25c368ef24294a76caf1bbd5f3f31f519e550e549287c0339ac0583fcdd05e",
+      "sizeBytes": 1117571
+    },
+    {
+      "tierCode": "GOLD",
+      "filename": "gold-rank-up.v6.mp4",
+      "sha256": "cff67370d3340a6e48328ee6809ac904c1590016ea3d46f436eb46f923926554",
+      "sizeBytes": 1602366
+    },
+    {
+      "tierCode": "PLATINUM",
+      "filename": "platinum-rank-up.v7.mp4",
+      "sha256": "99495b7718dc04d6d3c038b4fda2b9e7eb06c39f4a4c33736d8064018acba1c8",
+      "sizeBytes": 2104846
+    },
+    {
+      "tierCode": "EMERALD",
+      "filename": "emerald-rank-up.v6.mp4",
+      "sha256": "c3216627ca194c21f5f8cb4b54b6e26827a9a7832ed1b11ec660371b503d994a",
+      "sizeBytes": 2439520
+    },
+    {
+      "tierCode": "DIAMOND",
+      "filename": "diamond-rank-up.v6.mp4",
+      "sha256": "9ae55c28a784d504ac9382326576e45f8e12aea0f997557e6dee5d76a7bbe55b",
+      "sizeBytes": 2416307
+    },
+    {
+      "tierCode": "MASTER",
+      "filename": "master-rank-up.v6.mp4",
+      "sha256": "a6c2973ed94f207f6304988b97ff72f2c71a77749c117fe64c0923846b3ae059",
+      "sizeBytes": 3050809
+    },
+    {
+      "tierCode": "GRANDMASTER",
+      "filename": "grandmaster-rank-up.v6.mp4",
+      "sha256": "5863f3bb4c783fea7b21a206dbda36acfa3e672095ebfb19c38dfdc6ca6aca3e",
+      "sizeBytes": 2919255
+    },
+    {
+      "tierCode": "CHALLENGER",
+      "filename": "challenger-rank-up.v12.mp4",
+      "sha256": "71d6c90fda117caab4b67bff8e5b339c1b0d3dace8bb6f9fa2ae14c4cea8cd71",
+      "sizeBytes": 2572765
+    }
+  ]
+}

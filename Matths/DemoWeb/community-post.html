@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>미적분 극한에서 로피탈 정리 쓰면 내신 시험에서 감점되나요? | Matths 게시판</title>
+    <!--
+      ⚠️ 데모 추가분: 실제 views/community.ejs 는 matths-brand-tokens.css 를 링크하지 않는다.
+      그런데 공용 파샬(public-navigation.ejs)이 쓰는 --matths-action-primary /
+      --matths-primary-soft / --matths-radius-md / --matths-arena-accent / --motion-* 와
+      .matths-skip-link 스타일이 전부 그 파일에만 있다. 없으면 "본문으로 바로가기"
+      스킵 링크가 헤더 위에 그냥 보이는 링크로 뜨고 GOAT Arena 점이 투명해진다.
+      감독이 그 깨짐에 피드백을 쓰게 두면 안 되므로 데모는 의도된 모습으로 로드한다.
+      → 웹 쪽에 "커뮤니티 페이지에 brand-tokens 누락" 으로 별도 보고했다.
+    -->
+    <link rel="stylesheet" href="matths-brand-tokens.css" />
+    <link rel="stylesheet" href="community.css" />
+    <link rel="stylesheet" href="public-navigation.css" />
+    <link rel="stylesheet" href="brand.css" />
+  </head>
+  <body>
+    <!--
+      views/partials/public-navigation.ejs 를 EJS 없이 펼친 것.
+      로그인한 회원(publicUser 있음) 기준으로 굳혔다 — 앱 웹뷰는 세션을 이어서 연다.
+      데모에 없는 페이지로 가는 링크는 전부 href="#" 로 막았다. file:// 에서 없는
+      파일을 열면 웹뷰가 에러 화면으로 넘어가 목업 순회가 끊기기 때문이다.
+    -->
+    <link rel="stylesheet" href="matths-theme.css" />
+    <a class="matths-skip-link" href="#public-navigation-end">본문으로 바로가기</a>
+    <header class="site-header">
+      <nav class="navbar container" aria-label="주요 메뉴">
+        <a class="brand" href="community.html" aria-label="Matths 메인">
+          <!-- public/images/brand/matths-logo.svg 를 인라인으로 옮긴 것.
+               #0C0F1A 고정색이던 워드마크만 var(--demo-logo-ink) 로 바꿔서
+               다크 모드에서 글자가 배경에 묻히지 않게 했다. -->
+          <svg class="brand-logo" xmlns="http://www.w3.org/2000/svg" width="132" height="41" viewBox="285 160 790 240" preserveAspectRatio="xMidYMid meet" shape-rendering="geometricPrecision" aria-hidden="true" focusable="false">
+            <defs>
+              <linearGradient id="mGradient" gradientUnits="userSpaceOnUse" x1="343.514" y1="219.822" x2="426.748" y2="351.087"><stop offset="0" stop-color="#E649D2"/><stop offset="1" stop-color="#674DFF"/></linearGradient>
+              <linearGradient id="iGradient" gradientUnits="userSpaceOnUse" x1="506.386" y1="397.065" x2="502.53" y2="301.857"><stop offset="0" stop-color="#07EAF0"/><stop offset="1" stop-color="#229DF8"/></linearGradient>
+              <linearGradient id="starAccent" gradientUnits="userSpaceOnUse" x1="487" y1="201" x2="516" y2="201"><stop offset="0" stop-color="#AD91E7" stop-opacity="0.95"/><stop offset="0.78" stop-color="#924AF6" stop-opacity="0.22"/><stop offset="1" stop-color="#7B4EFC" stop-opacity="0"/></linearGradient>
+              <clipPath id="starClip"><path d="M 512 175.4 C 513.5 190 518.5 198.5 537 201 C 518.5 203.5 513.5 212 512 227 C 510.5 212 505.5 203.5 487 201 C 505.5 198.5 510.5 190 512 175.4 Z"/></clipPath>
+            </defs>
+            <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M 327 377.5 L 327 255 L 409 332.5 L 484 255" stroke="url(#mGradient)" stroke-width="44"/>
+              <rect x="482.6" y="299.5" width="43.8" height="100" rx="21.9" fill="url(#iGradient)" stroke="none"/>
+              <path d="M 512 175.4 C 513.5 190 518.5 198.5 537 201 C 518.5 203.5 513.5 212 512 227 C 510.5 212 505.5 203.5 487 201 C 505.5 198.5 510.5 190 512 175.4 Z" fill="#7B4EFC" stroke="none"/><rect x="487" y="175" width="31" height="53" fill="url(#starAccent)" clip-path="url(#starClip)" stroke="none"/>
+            </g>
+            <g fill="none" stroke="var(--demo-logo-ink, #0C0F1A)" stroke-width="13.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M 590 344 L 590 263 L 634 330.5 L 678 263 L 678 344"/>
+              <path d="M 801 265 L 801 327 C 801 339 807 344.7 817.5 344.7 C 821.5 344.7 825 343.7 827.5 342.2" stroke-width="12.4"/>
+              <path d="M 787.2 282 L 828.7 282" stroke-width="11.2"/>
+              <path d="M 860 265 L 860 327 C 860 339 866 344.7 875.5 344.7 C 880 344.7 883.5 343.7 886 342.2" stroke-width="13"/>
+              <path d="M 845.5 282 L 882.4 282" stroke-width="11.2"/>
+              <path d="M 915 255 L 915 344"/>
+              <path d="M 915 307 C 921 290 934 281 949 281 C 964 281 972 292 972 309 L 972 344"/>
+            </g>
+            <path fill="var(--demo-logo-ink, #0C0F1A)" fill-rule="evenodd" clip-rule="evenodd" stroke="none" d="M 727.973 276.266 C 771.933 272.788 768.608 295.767 768.289 329.572 C 768.258 332.889 768.999 346.921 767.06 348.412 C 755.942 356.963 755.21 341.03 755.495 341.555 C 755.077 341.551 754.251 342.117 753.952 342.407 C 741.77 354.239 723.581 353.264 710.608 343.642 C 707.364 339.486 705.176 335.8 704.944 330.506 C 703.818 304.855 715 308.3 728 308.3 L 752.037 308.3 C 752.465 308.383 754.432 307.827 754.508 307.395 C 758.751 283.283 731.345 282.302 716.548 292.17 C 714.677 293.415 711.014 293.248 709.779 291.18 C 703.797 281.167 722.794 277.411 727.973 276.266 Z M 725.5 318 L 746.8 318 C 752.5 318 755.5 320 754 324 C 751.5 331.5 745.5 337.5 735.5 339 C 724 340.5 716 336 716 329 C 716 323 719.5 319.5 725.5 318 Z"/>
+            <path fill="var(--demo-logo-ink, #0C0F1A)" stroke="none" d="M 1019.24 275.24 C 1024.96 274.755 1052.65 274.672 1050.51 286.292 C 1049.37 293.501 1040.1 289.334 1035.53 287.154 C 1022.38 280.869 996.127 291.923 1013.61 304.674 C 1022.11 310.872 1053.35 305.655 1054.07 327.006 C 1054.71 346.037 1040.13 349.418 1025.34 350.697 C 1016.7 350.484 1013.55 349.589 1004.56 347.749 C 996.067 346.012 987.904 336.396 999.519 333.647 C 1002.19 334.504 1005.84 336.483 1008.39 337.54 C 1035.38 348.761 1060.95 323.562 1021.5 318.054 C 1002.87 315.454 987.49 305.968 998.175 286.022 C 1001.95 278.97 1012.21 276.505 1019.24 275.24 Z"/>
+          </svg>
+        </a>
+
+        <div class="nav-links">
+          <a class="nav-arena-link" href="#">GOAT Arena</a>
+          <details class="nav-cluster" data-public-nav-cluster>
+            <summary aria-controls="public-nav-learning-menu" aria-expanded="false" aria-haspopup="true" data-public-nav-toggle>학습</summary>
+            <div class="nav-cluster-menu" id="public-nav-learning-menu">
+              <a href="#">시각화 학습</a>
+              <a href="#">학습 과정</a>
+              <a href="#">교육과정</a>
+            </div>
+          </details>
+          <details class="nav-cluster active" data-public-nav-cluster>
+            <summary aria-controls="public-nav-service-menu" aria-expanded="false" aria-haspopup="true" data-public-nav-toggle>서비스</summary>
+            <div class="nav-cluster-menu" id="public-nav-service-menu">
+              <a href="#">서비스 소개</a>
+              <a href="#">이용권</a>
+              <a href="#">자주 묻는 질문</a>
+              <a class="active" href="community.html" aria-current="page">커뮤니티</a>
+              <a href="#">아카이브</a>
+            </div>
+          </details>
+        </div>
+
+        <div class="nav-actions">
+          <a class="login-link" href="#">대시보드</a>
+          <a class="button button-primary button-small" href="#">학습 계속하기</a>
+        </div>
+
+        <details class="mobile-menu" data-public-mobile-menu>
+          <summary aria-expanded="false" aria-label="메뉴 열기" data-public-mobile-toggle>
+            <span></span><span></span><span></span>
+          </summary>
+          <div>
+            <a class="mobile-arena-link" href="#">GOAT Arena</a>
+            <p>학습</p>
+            <a href="#">시각화 학습</a>
+            <a href="#">학습 과정</a>
+            <a href="#">교육과정</a>
+            <p>서비스</p>
+            <a href="#">서비스 소개</a>
+            <a href="#">이용권</a>
+            <a href="#">자주 묻는 질문</a>
+            <a class="active" href="community.html" aria-current="page">커뮤니티</a>
+            <a href="#">아카이브</a>
+            <a href="#">대시보드</a>
+            <a class="mobile-primary-action" href="#">학습 계속하기</a>
+          </div>
+        </details>
+      </nav>
+    </header>
+    <span class="matths-skip-target" id="public-navigation-end" tabindex="-1"></span>
+    <!-- 데모 전용 · 서버에는 없는 이동줄. demo-extras.css 의 .demo-state-bar 참조. -->
+    <nav class="demo-state-bar" aria-label="데모 화면 상태">
+      <span>DEMO 상태</span>
+      <div><a href="community.html">목록</a><a href="community-school.html">학교별</a><a href="community-operations.html">운영 공지</a><a href="community-search.html">검색 결과</a><a href="community-empty.html">빈 게시판</a><a href="community-post.html" class="is-current" aria-current="page">글 상세</a><a href="community-announcement.html">운영 공지 상세</a><a href="community-notice.html">게시판 공지</a><a href="community-rules.html">운영 규칙</a><a href="community-new.html">글쓰기</a><a href="community-new-restricted.html">첨부 제한</a><a href="community-new-quota.html">한도 소진</a><a href="community-guest.html">비로그인 목록</a><a href="community-school-guest.html">비로그인 학교별</a><a href="community-post-guest.html">비로그인 글 상세</a></div>
+    </nav>
+    <main class="community-post-main">
+      <a class="community-back" href="community.html">← 통합 고등학교 게시판</a>
+      <article class="community-post-detail">
+        <header>
+          <span>통합 고등학교 게시판</span>
+          <b class="community-popular-badge">인기 글</b>
+          <h1>미적분 극한에서 로피탈 정리 쓰면 내신 시험에서 감점되나요? 학교 선생님이랑 인강 선생님 말이 완전히 달라서 3주째 헷갈리는 중입니다</h1>
+          <div>
+            <strong>익명(482910)</strong>
+            <span class="community-anonymous-school">서울 OO고등학교 3학년</span>
+            <small>2026년 8월 17일 오후 10:41 · 조회 3412</small>
+          </div>
+        </header>
+        <!-- 본문은 서버에서 이스케이프된 평문으로 나오고 CSS 가 white-space: pre-wrap 을
+             건다. 그래서 수식도 마크업이 아니라 유니코드 문자로 적는다 — MathJax 는
+             커뮤니티 페이지에 붙어 있지 않다(views/partials/mathjax-runtime.ejs 미포함). -->
+        <div class="community-post-content">이번 주 수행평가 대비하다가 진짜 답답해서 글 씁니다.
+
+문제는 이거였습니다.
+
+    lim (x→0)  (e^x − 1 − x) / x²
+
+분자·분모가 다 0으로 가는 0/0 꼴이라, 저는 로피탈을 두 번 써서
+
+    = lim (x→0)  (e^x − 1) / 2x
+    = lim (x→0)  e^x / 2
+    = 1/2
+
+이렇게 답을 냈습니다. 답 자체는 1/2 로 맞았고요.
+
+그런데 학교 선생님은 "로피탈은 교육과정 밖이라 과정 점수를 줄 수 없다"고 하셨습니다. 서술형이라 답만 맞으면 8점 중 3점만 준다고 하시더라고요. 반면 인강 선생님은 "객관식이나 검산용으로는 얼마든지 써도 되고, 오히려 시간 아끼려면 익혀두는 게 맞다"고 하셨습니다.
+
+제가 궁금한 건 두 가지입니다.
+
+1. 내신 서술형에서 로피탈을 쓰면 실제로 감점하는 학교가 많은가요? 아니면 저희 학교만 유독 빡빡한 건가요?
+2. 감점이 무서우면 결국 정석 풀이를 알아야 하는데, 이 문제를 로피탈 없이 푸는 가장 깔끔한 방법이 뭔가요? 저는 테일러 전개로
+
+        e^x = 1 + x + x²/2 + x³/6 + …
+
+   를 대입해서 (x²/2 + O(x³)) / x² → 1/2 로 정리했는데, 이것도 교과 외라고 하실 것 같아서요.
+
+노트에 정리한 사진이랑 학교에서 나눠준 프린트 같이 올립니다. 조언 부탁드립니다. 🙏</div>
+        <section class="community-post-attachments" aria-labelledby="community-attachments-title">
+          <header>
+            <div><p>ATTACHMENTS</p><h2 id="community-attachments-title">첨부파일 2개</h2></div>
+            <span>사진을 누르면 원본으로 확인할 수 있습니다.</span>
+          </header>
+          <div class="community-image-grid">
+            <a href="attach-notebook.svg" target="_blank" rel="noopener">
+              <img src="attach-notebook.svg" alt="극한_풀이_노트.jpg" loading="lazy" />
+              <span>극한_풀이_노트.jpg</span>
+            </a>
+          </div>
+          <div class="community-file-list">
+            <a href="#">
+              <span aria-hidden="true">IMG</span>
+              <div><strong>극한_풀이_노트.jpg</strong><small>2.4MB</small></div>
+              <b>다운로드 ↓</b>
+            </a>
+            <a href="#">
+              <span aria-hidden="true">FILE</span>
+              <div><strong>3학년_1학기_미적분_수행평가_대비_프린트_최종본.pdf</strong><small>870KB</small></div>
+              <b>다운로드 ↓</b>
+            </a>
+          </div>
+        </section>
+        <section class="community-vote-box" id="post-votes" aria-label="게시글 평가">
+          <p>이 글이 도움이 되었나요?</p>
+          <div>
+            <form action="community-post.html" method="GET">
+              <input type="hidden" name="value" value="1" />
+              <button class="selected" type="submit" aria-pressed="true">
+                <span aria-hidden="true">↑</span> 추천 <strong>214</strong>
+              </button>
+            </form>
+            <form action="community-post.html" method="GET">
+              <input type="hidden" name="value" value="-1" />
+              <button class="down " type="submit" aria-pressed="false">
+                <span aria-hidden="true">↓</span> 비추천 <strong>6</strong>
+              </button>
+            </form>
+          </div>
+          <small>같은 버튼을 다시 누르면 선택이 취소됩니다.</small>
+        </section>
+        <details class="community-report-box">
+          <summary>게시글 신고</summary>
+          <form action="community-post.html" method="GET">
+            <label for="report-reason">신고 사유</label>
+            <textarea id="report-reason" name="reason" minlength="5" maxlength="1000" required placeholder="문제가 되는 내용을 구체적으로 적어주세요."></textarea>
+            <button type="submit">신고 접수</button>
+          </form>
+        </details>
+      </article>
+      <section class="community-comments" id="comments">
+        <header>
+          <div>
+            <p>COMMENTS</p>
+            <h2>댓글 8개</h2>
+          </div>
+          <span>서로의 풀이와 생각을 존중해 주세요.</span>
+        </header>
+
+        <form class="community-comment-form" action="community-post.html" method="GET">
+          <label for="comment-content">댓글 내용</label>
+          <textarea id="comment-content" name="content" minlength="1" maxlength="2000" placeholder="수학적인 질문, 풀이 아이디어, 응원의 말을 남겨보세요." required></textarea>
+          <div class="community-comment-options">
+            <label class="community-anonymous-choice compact">
+              <input type="checkbox" name="isAnonymous" checked />
+              <span>
+                <b>익명으로 댓글 작성</b>
+                <small>계정에 고정된 익명 번호가 표시됩니다.</small>
+              </span>
+            </label>
+            <div><small>최대 2,000자</small><button type="submit">댓글 등록</button></div>
+          </div>
+        </form>
+
+        <!-- ⚠️ 아래 댓글의 is-adopted / is-reply / community-comment-badge 는
+             데모 전용 표시다. 서버 템플릿(views/community-post.ejs)의 댓글은
+             작성자·시간·본문만 내는 평면 목록이다. 자세한 내용은 demo-extras.css 주석. -->
+        <div class="community-comment-list">
+          <article class="is-adopted">
+            <header>
+              <strong>익명(730118)</strong>
+              <b class="community-comment-badge adopted">채택</b>
+              <time>2026년 8월 17일 오후 11:02</time>
+            </header>
+            <p>고3 담임 겸 수학 교사입니다. 학교마다 다르지만 서술형 채점 기준표에 "교육과정 내 개념으로 서술" 조항이 들어가 있으면 로피탈은 과정 점수를 못 받습니다. 저희 학교도 그렇게 운영해요.
+
+2번 질문 답도 드리면, 이 문제는 도함수의 정의로 푸는 게 제일 깔끔합니다.
+
+    f(x) = e^x 라 두면 f'(0) = lim (x→0) (e^x − 1)/x = 1
+
+이걸 알고 있으니
+
+    (e^x − 1 − x) / x² 에서 분자를 g(x) = e^x − 1 − x 로 두면
+    g(0) = 0, g'(x) = e^x − 1, g'(0) = 0, g''(x) = e^x, g''(0) = 1
+
+이므로 이계도함수의 정의로 바로 1/2 이 나옵니다. 테일러라고 부르지 않고 "g''(0) 을 정의로 계산했다"고 쓰면 교과 안입니다.</p>
+          </article>
+
+          <article class="is-reply">
+            <header>
+              <strong>익명(482910)</strong>
+              <b class="community-comment-badge author">글쓴이</b>
+              <time>2026년 8월 17일 오후 11:19</time>
+            </header>
+            <p>아 이계도함수 정의로 쓰면 되는군요… 3주 동안 이걸 몰라서 헤맸습니다. 감사합니다!</p>
+          </article>
+
+          <article>
+            <header>
+              <strong>미분하다말았어</strong>
+              <time>2026년 8월 17일 오후 11:31</time>
+            </header>
+            <p>저희 학교는 로피탈 써도 안 깎았어요. 근데 그 선생님 올해 옮기셔서 내년엔 어떻게 될지 모름</p>
+          </article>
+
+          <article class="is-reply">
+            <header>
+              <strong>적분요정</strong>
+              <time>2026년 8월 18일 오전 12:04</time>
+            </header>
+            <p>그게 제일 무서운 부분이죠. 채점 기준은 선생님 재량이라 매년 바뀝니다. 안전하게 가려면 정석으로 쓰고 로피탈은 검산에만 쓰는 게 맞아요.</p>
+          </article>
+
+          <article>
+            <header>
+              <strong>익명(115902)</strong>
+              <time>2026년 8월 18일 오전 00:47</time>
+            </header>
+            <p>ㄹㅇ 이거 매년 올라오는 질문</p>
+          </article>
+
+          <article>
+            <header>
+              <strong>n제사냥꾼</strong>
+              <time>2026년 8월 18일 오전 01:22</time>
+            </header>
+            <p>첨부하신 노트 사진 보니까 마지막 줄 "시험에선 테일러 말고 정석으로!!" 라고 이미 적어두셨네요 ㅋㅋㅋ 답을 알고 계셨던 거 아닌가요</p>
+          </article>
+
+          <article>
+            <header>
+              <strong>익명(904471)</strong>
+              <time>2026년 8월 18일 오전 07:58</time>
+            </header>
+            <p>참고로 평가원 기출에서는 이런 꼴이 나오면 거의 항상 도함수의 정의나 치환으로 풀리게 설계돼 있습니다. 로피탈이 필요한 순간이 오면 오히려 문제를 잘못 읽은 거라고 생각하시면 편해요.</p>
+          </article>
+
+          <article>
+            <header>
+              <strong>익명(268034)</strong>
+              <time>2026년 8월 18일 오전 09:10</time>
+            </header>
+            <p>저장</p>
+          </article>
+        </div>
+      </section>
+      <div class="community-post-actions"><a href="community.html">목록으로</a><a class="primary" href="community-new.html">새 글 쓰기</a></div>
+    </main>
+    <!--
+      데모 전용 시트는 **맨 마지막**에 건다.
+      matths-theme.css 가 <body> 안에서 로드되면서 body 배경을 다시 칠하기 때문에,
+      다크 오버라이드가 그보다 먼저 오면 라이트 캔버스에 덮여 무효가 된다.
+    -->
+    <link rel="stylesheet" href="demo-extras.css" />
+    <link rel="stylesheet" href="demo-dark.css" />
+    <script src="public-navigation.js" defer></script>
+  </body>
+</html>

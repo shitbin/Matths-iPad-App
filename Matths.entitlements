@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 9B 모델을 8GB 기기에서 여는 데 필요한 두 권한.
+	     increased-memory-limit 이 없으면 앱의 상주 메모리 상한이 기기 기본값에
+	     묶여, 가중치를 올리는 도중 시스템이 앱을 그냥 죽인다(재현 로그: jetsam).
+	     extended-virtual-addressing 은 그 위에서 32비트 주소공간 한계를 푼다.
+	     IQ2_XXS·n_gpu_layers=0 우회로 지금은 버티고 있지만, 그건 양자화를 낮춘
+	     대가이지 권한을 대신하는 것이 아니다. -->
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
+	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+	<true/>
+</dict>
+</plist>

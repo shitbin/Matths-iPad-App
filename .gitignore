@@ -1,0 +1,28 @@
+# Xcode/Swift build products are reproducible and can contain file-provider metadata.
+build/
+build-*/
+.derived*/
+DerivedData/
+*.xcresult
+*.xcarchive
+
+# llama.xcframework is a large prebuilt dependency. Its source/revision is audited separately.
+Frameworks/
+
+# Captured review media is evidence, not application source.
+screenshots/
+
+# KICE originals are Debug-only local review material and are not licensed source assets.
+Matths/KiceBank/*.pdf
+
+# Local machine metadata and user-specific Xcode state.
+.DS_Store
+*.xcuserstate
+xcuserdata/
+
+# 개념 코드 애니메이션 자산(178MB)은 앱 번들에 들어가지만 소스는 여기가 아니다.
+# 진실원은 matths-concept-motion 저장소이고, 그쪽 ASSET_MANIFEST.json 이 파일별
+# SHA256 을 들고 있어 개정은 그 저장소에서 감사한다(Frameworks/ 와 같은 취급).
+# 채우는 법: scripts/sync-concept-motion-bundle.sh
+# 이 폴더가 비어 있으면 앱은 Application Support 만 보고, 그것도 없으면 개념학습이 빈다.
+ConceptMotion/

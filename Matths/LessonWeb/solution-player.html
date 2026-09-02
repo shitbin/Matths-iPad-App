@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="katex.min.css">
+<style>
+/* 풀이 애니메이션 플레이어 v3 — 항 단위 연결성 (TransformMatchingTex 문법).
+   식이 바뀔 때 공통 토큰은 이전 줄에서 복제되어 새 줄의 제 위치로 "날아가고"(R1, 파랑),
+   이전 식은 흐려진 채 장부처럼 남으며(R2), 신규 항은 노랑으로 태어나 식고(R3),
+   소거된 항은 이전 줄에서 빨강으로 가라앉는다(R4).
+   구현: KaTeX 리프 글리프 분해 → LCS 매칭 → FLIP 클론 비행. 전부 steps 텍스트로만
+   구동되는 결정론 안무 — 어떤 시드의 수치가 와도 같은 규칙(R7).
+   네이티브 계약 v1 과 동일: window.MATTHS_SOLUTION = {steps, startStep, autoplay}. */
+@font-face {
+  font-family: "PretendardVar";
+  src: url("PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920; font-display: swap;
+}
+:root {
+  --content-scale: 1;
+  /* 무대는 라이트/다크 무관하게 어둡다 — 3B1B 의 정체성 */
+  --stage-bg: #12141f;
+  --stage-ink: #f2f3fb;
+  --stage-dim: #8b90a8;
+  --accent-y: #ffd166;       /* 신규 항 노랑 */
+  --accent-b: #6aa5ff;       /* 비행 토큰 파랑 */
+  --accent-r: #ff7b8a;       /* 소거 항 빨강 */
+  --p-line: #2a2d3f;
+  --p-primary: #7e9bff;
+}
+html, body { margin: 0; padding: 0; background: transparent;
+  font-family: "PretendardVar", -apple-system, "Apple SD Gothic Neo", sans-serif; }
+
+#theater {
+  background: var(--stage-bg); border-radius: 16px; overflow: hidden;
+  border: 1px solid var(--p-line); padding: 18px 16px 8px;
+}
+
+/* 유도 장부 — 줄들이 쌓인다. 전 줄 동일 크기(비행 기하 안정) */
+#ledger { min-height: 90px; }
+.line { text-align: center; padding: 8px 0; color: var(--stage-ink);
+  font-size: calc(16px * var(--content-scale)); line-height: 1.9; transition: opacity .6s; }
+.line .katex { font-size: 1.3em; }
+.line.past { opacity: .34; }
+.line.prose { font-size: calc(15px * var(--content-scale)); color: var(--stage-dim); }
+.line .mid { font-size: calc(13px * var(--content-scale)); color: var(--stage-dim); margin: 0 10px; font-weight: 600; }
+.line .badge {
+  display: block; width: fit-content; margin: 0 auto 8px; font-size: calc(12px * var(--content-scale)); font-weight: 800;
+  color: var(--accent-y); border: 1px solid var(--accent-y);
+  border-radius: 999px; padding: 2px 12px; letter-spacing: .02em;
+}
+
+/* 토큰 상태 — lt 는 빌드 시 리프 글리프에 부착 */
+.lt { display: inline-block; }
+.lt.pre { opacity: 0; }                              /* 조립 전 (클론이 날아오는 중) */
+.lt.gone { color: var(--accent-r); opacity: .3;      /* R4 소거 — 빨강으로 가라앉음 */
+  transition: color .25s, opacity .8s; }
+.lt.pop { animation: popin .5s cubic-bezier(.2,.7,.2,1) both; }   /* R3 신규 항 */
+.lt.fresh { color: var(--accent-y); transition: color 1.4s; }
+@keyframes popin {
+  0% { opacity: 0; transform: translateY(12px) scale(.55); }
+  100% { opacity: 1; transform: none; }
+}
+.fly-clone { pointer-events: none; z-index: 30; }    /* R1 비행 클론 (JS 가 좌표 지정) */
+
+/* 내레이션 — 하단 한 줄 타이핑 */
+#caption {
+  color: var(--stage-ink); font-size: calc(15px * var(--content-scale)); line-height: 1.75; min-height: 50px;
+  padding: 10px 8px 8px; text-align: center; opacity: .95;
+}
+#caption:empty { display: none; }
+#caption .cursor { display: inline-block; width: 2px; height: 1em;
+  background: var(--accent-y); vertical-align: -2px; margin-left: 2px;
+  animation: blink 0.9s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation: none !important; transition: none !important;
+}
+.reduce-motion #caption .cursor { display: none !important; }
+#caption .num { color: var(--accent-y); font-variant-numeric: tabular-nums; font-weight: 700; }
+
+/* 진행 게이지 + 컨트롤 */
+#deck { display: flex; align-items: center; gap: 10px; padding: 10px 4px 2px; }
+#rail { flex: 1; display: flex; gap: 6px; }
+.seg { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--p-primary) 18%, transparent); }
+.seg.done { background: var(--p-primary); }
+.seg.now { background: linear-gradient(90deg, var(--p-primary), var(--accent-b));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--p-primary) 60%, transparent); }
+button.ctl {
+  border: 1.2px solid var(--p-line); background: var(--stage-bg); color: var(--stage-ink);
+  min-width: 44px; min-height: 44px; border-radius: 9px; font-family: inherit;
+  font-size: calc(13px * var(--content-scale)); font-weight: 700;
+  padding: 7px 12px; cursor: pointer;
+}
+button.ctl.primary { border-color: var(--p-primary); color: var(--p-primary); }
+@media (prefers-color-scheme: light) {
+  button.ctl { background: #ffffff; color: #111426; border-color: #e3e8f4; }
+}
+</style>
+</head>
+<body>
+<div id="theater">
+  <div id="ledger"></div>
+  <div id="caption"></div>
+</div>
+<div id="deck">
+  <div id="rail"></div>
+  <button class="ctl" id="prev">◀</button>
+  <button class="ctl primary" id="play">재생</button>
+  <button class="ctl" id="next">▶</button>
+</div>
+
+<script src="katex.min.js"></script>
+<script src="solution-text-contract.js"></script>
+<script>
+(function () {
+  const FLY_MS = 650;          // R1 비행 시간
+  const GONE_MS = 260;         // R4 소거 플래시
+  const POP_GAP = 50;          // R3 신규 항 스태거 간격
+
+  const TextContract = window.MatthsSolutionTextContract;
+  if (!TextContract) throw new Error("풀이 문장 표시 계약을 불러오지 못했습니다.");
+
+  const data = window.MATTHS_SOLUTION || { steps: [] };
+  const steps = (data.steps || []).map(parseStep);
+  const startStep = Math.min(Math.max(1, data.startStep || 1), Math.max(1, steps.length));
+  let cursor = 0;
+  let timer = null;
+  let autoplayTimer = null;
+  let typerTimer = null;
+  let lines = [];              // {el, toks} — 장부의 각 줄
+  let pendingTimers = [];      // 진행 중 안무 타이머 (되감기 시 청소)
+
+  const ledger = document.getElementById("ledger");
+  const caption = document.getElementById("caption");
+  const rail = document.getElementById("rail");
+
+  // 단계 텍스트 분해: 앞 문장 → 수식 → 조사/설명 → 수식 → 종결어의 원래
+  // 순서를 전부 장부 한 줄에 보존한다. 수식 바깥 조각만 떼어 자막으로 만들면
+  // `여기에 입니다.` 같은 고아 문장이 생기므로 파생 자막은 만들지 않는다.
+  function parseStep(text) {
+    const parsed = TextContract.analyze(text);
+    return {
+      segs: parsed.segments,
+      maths: parsed.maths,
+      prose: parsed.normalized,
+      caption: "",                                  // 원문을 다시 복제하지 않는다
+    };
+  }
+
+  steps.forEach(() => {
+    const s = document.createElement("span");
+    s.className = "seg";
+    rail.appendChild(s);
+  });
+
+  // ── 토큰 기하 ──────────────────────────────────────────────
+
+  const TOKSEL = ".mord, .mbin, .mrel, .mopen, .mclose, .mop, .mpunct";
+
+  // KaTeX 리프 글리프만 — 자식에 또 토큰이 있으면 컨테이너이므로 제외
+  function leafTokens(container) {
+    return [...container.querySelectorAll(TOKSEL)]
+      .filter((el) => !el.querySelector(TOKSEL))
+      .filter((el) => el.textContent.trim().length > 0);
+  }
+
+  function tokenText(el) {
+    // 유니코드 마이너스 등 표기 편차를 흡수해 매칭 안정화
+    return el.textContent.trim().replace(/−/g, "-").replace(/\s+/g, "");
+  }
+
+  // 순서 보존 공통 부분열 — 매칭된 (이전 idx, 새 idx) 쌍 목록
+  function lcsPairs(a, b) {
+    const n = a.length, m = b.length;
+    const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const pairs = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { pairs.push([i, j]); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+      else j++;
+    }
+    return pairs;
+  }
+
+  // R1 — 이전 글리프의 복제를 만들어 새 위치로 날린다 (FLIP)
+  function fly(fromEl, toEl) {
+    const r0 = fromEl.getBoundingClientRect();
+    const r1 = toEl.getBoundingClientRect();
+    const clone = fromEl.cloneNode(true);
+    const cs = getComputedStyle(fromEl);
+    clone.className = "fly-clone";
+    clone.style.cssText =
+      `position:fixed;left:${r0.left}px;top:${r0.top}px;margin:0;` +
+      `font:${cs.font};color:${cs.color};pointer-events:none;z-index:30;` +
+      `transform-origin:left top;will-change:transform;` +
+      `transition:transform ${FLY_MS}ms cubic-bezier(.3,.75,.2,1),color ${Math.round(FLY_MS * 0.6)}ms;`;
+    document.body.appendChild(clone);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const sx = r0.width > 1 && r1.width > 1 ? r1.width / r0.width : 1;
+      const sy = r0.height > 1 && r1.height > 1 ? r1.height / r0.height : 1;
+      clone.style.transform =
+        `translate(${r1.left - r0.left}px,${r1.top - r0.top}px) scale(${sx},${sy})`;
+      clone.style.color = "var(--accent-b)";
+    }));
+    return clone;
+  }
+
+  // ── 장부 줄 ──────────────────────────────────────────────
+
+  function buildLine(no) {
+    const st = steps[no - 1];
+    const el = document.createElement("div");
+    el.className = "line";
+    if (no === startStep && startStep > 1) {
+      const b = document.createElement("span");
+      b.className = "badge"; b.textContent = "여기서 갈라졌어요 — 이 단계부터 다시";
+      el.appendChild(b);
+    }
+    if (st.maths.length) {
+      st.segs.forEach((seg) => {
+        if (seg.math !== undefined) {
+          const span = document.createElement("span");
+          try { katex.render(seg.math, span, { throwOnError: false }); }
+          catch (e) { span.textContent = seg.math; }
+          el.appendChild(span);
+        } else {
+          const mid = document.createElement("span");
+          mid.className = "mid"; mid.textContent = seg.text;
+          el.appendChild(mid);
+        }
+      });
+    } else {
+      el.classList.add("prose");
+      el.textContent = st.prose;
+    }
+    ledger.appendChild(el);
+    const toks = leafTokens(el);
+    toks.forEach((t) => t.classList.add("lt"));
+    return { el, toks };
+  }
+
+  function clearChoreo() {
+    pendingTimers.forEach(clearTimeout);
+    pendingTimers = [];
+    document.querySelectorAll(".fly-clone").forEach((c) => c.remove());
+  }
+  function after(ms, fn) { pendingTimers.push(setTimeout(fn, ms)); }
+
+  // 정적 재구성 — 초기 진입·되감기용 (안무 없이 cursor 까지)
+  function renderStatic() {
+    clearChoreo();
+    ledger.innerHTML = "";
+    lines = [];
+    for (let k = 1; k <= cursor; k++) {
+      const line = buildLine(k);
+      if (k < cursor) line.el.classList.add("past");
+      lines.push(line);
+    }
+    typeCaption(cursor >= 1 ? captionOf(cursor) : "");
+  }
+
+  function captionOf(no) {
+    const st = steps[no - 1];
+    return TextContract.standalone(st.caption);
+  }
+
+  // 한 단계 전진 안무: 소거 플래시 → 비행 → 신규 팝 → 내레이션
+  function animateForward(no) {
+    if (window.MATTHS_MOTION === false) {
+      renderStatic();
+      return;
+    }
+    clearChoreo();
+    const prev = lines[lines.length - 1] || null;
+    const line = buildLine(no);
+    lines.push(line);
+    line.toks.forEach((t) => t.classList.add("pre"));
+    if (!line.toks.length) line.el.style.opacity = "0";
+
+    const a = prev ? prev.toks.map(tokenText) : [];
+    const b = line.toks.map(tokenText);
+    const pairs = prev ? lcsPairs(a, b) : [];
+    const matchedOld = new Set(pairs.map((p) => p[0]));
+    const matchedNew = new Set(pairs.map((p) => p[1]));
+
+    // 2차 그리디 — LCS 가 놓친 순서 교차 이동도 비행시킨다 (항이 서로 가로질러 난다)
+    if (prev) {
+      const leftovers = new Map();   // 토큰 텍스트 → 남은 이전 idx 목록
+      a.forEach((t, i) => {
+        if (matchedOld.has(i)) return;
+        if (!leftovers.has(t)) leftovers.set(t, []);
+        leftovers.get(t).push(i);
+      });
+      b.forEach((t, j) => {
+        if (matchedNew.has(j)) return;
+        const pool = leftovers.get(t);
+        if (pool && pool.length) {
+          const i = pool.shift();
+          pairs.push([i, j]);
+          matchedOld.add(i);
+          matchedNew.add(j);
+        }
+      });
+    }
+
+    // R4 — 넘어오지 못한 항이 빨강으로 가라앉는다
+    if (prev) prev.toks.forEach((t, i) => { if (!matchedOld.has(i)) t.classList.add("gone"); });
+
+    const flightDelay = prev && pairs.length ? GONE_MS : 0;
+    after(flightDelay, () => {
+      // R1 — 공통 토큰 비행 / R2 — 원본은 흐려진 채 남는다
+      const clones = pairs.map(([i, j]) => fly(prev.toks[i], line.toks[j]));
+      if (prev) prev.el.classList.add("past");
+      if (!line.toks.length) line.el.style.opacity = "";   // 산문 줄은 통째로 페이드인
+
+      after(pairs.length ? FLY_MS + 40 : 0, () => {
+        pairs.forEach(([, j]) => line.toks[j].classList.remove("pre"));
+        clones.forEach((c) => c.remove());
+        // R3 — 신규 항 노랑 팝, 스태거
+        let d = 0;
+        line.toks.forEach((t, j) => {
+          if (matchedNew.has(j)) return;
+          after(d, () => {
+            t.classList.remove("pre");
+            t.classList.add("pop", "fresh");
+            pendingTimers.push(setTimeout(() => t.classList.remove("fresh"), 1100));
+          });
+          d += POP_GAP;
+        });
+        after(d + 200, () => typeCaption(captionOf(no)));
+      });
+    });
+  }
+
+  function typeCaption(text, done) {
+    if (typerTimer) { clearInterval(typerTimer); typerTimer = null; }
+    caption.innerHTML = "";
+    if (!text) { if (done) done(); return; }
+    if (window.MATTHS_MOTION === false) {
+      caption.textContent = text;
+      if (done) done();
+      return;
+    }
+    const cursorEl = document.createElement("span");
+    cursorEl.className = "cursor";
+    const textEl = document.createElement("span");
+    caption.appendChild(textEl);
+    caption.appendChild(cursorEl);
+    let i = 0;
+    typerTimer = setInterval(() => {
+      i += 1;
+      textEl.innerHTML = text.slice(0, i).replace(/(\d{2,})/g, '<span class="num">$1</span>');
+      if (i >= text.length) {
+        clearInterval(typerTimer); typerTimer = null;
+        setTimeout(() => cursorEl.remove(), 900);
+        if (done) done();
+      }
+    }, 26);
+  }
+
+  // ── 진행 제어 ──────────────────────────────────────────────
+
+  function sync() {
+    [...rail.children].forEach((seg, i) => {
+      seg.classList.toggle("done", i + 1 < cursor);
+      seg.classList.toggle("now", i + 1 === cursor);
+    });
+    report();
+  }
+
+  function forward() {
+    if (cursor >= steps.length) return false;
+    cursor += 1;
+    animateForward(cursor);
+    sync();
+    return true;
+  }
+
+  function backward() {
+    if (cursor <= 1) return;
+    cursor -= 1;
+    renderStatic();
+    sync();
+  }
+
+  function stop() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (autoplayTimer) { clearTimeout(autoplayTimer); autoplayTimer = null; }
+    document.getElementById("play").textContent = "재생";
+  }
+
+  function dwellOf(no) {
+    const st = steps[no - 1];
+    // 안무 실측 리듬: 소거+비행+팝 스태거+내레이션 타이핑+숨 고르기
+    const base = GONE_MS + FLY_MS + 700;
+    const popTime = st.maths.join("").length * 14;
+    const typeTime = captionOf(no).length * 26;
+    return Math.min(7000, Math.max(2600, base + popTime + typeTime + 900));
+  }
+
+  function scheduleNext() {
+    if (cursor >= steps.length) { stop(); return; }
+    timer = setTimeout(() => {
+      if (!forward()) { stop(); return; }
+      scheduleNext();
+    }, dwellOf(Math.min(cursor + 1, steps.length)));
+  }
+
+  function play() {
+    if (timer) { stop(); return; }
+    document.getElementById("play").textContent = "일시정지";
+    if (cursor >= steps.length) {
+      // 처음부터 다시 — 갈라진 지점 직전을 정적으로 깔고 재생
+      cursor = Math.max(0, startStep - 1);
+      renderStatic();
+      sync();
+    }
+    if (cursor < steps.length) forward();
+    scheduleNext();
+  }
+
+  document.getElementById("play").onclick = play;
+  document.getElementById("next").onclick = () => { stop(); forward(); };
+  document.getElementById("prev").onclick = () => { stop(); backward(); };
+
+  window.addEventListener("matthsAccessibilityChanged", () => {
+    if (window.MATTHS_MOTION !== false) return;
+    stop();
+    clearChoreo();
+    if (typerTimer) { clearInterval(typerTimer); typerTimer = null; }
+    renderStatic();
+  });
+
+  const report = () => {
+    window.webkit?.messageHandlers?.playerHeight?.postMessage(document.body.scrollHeight);
+  };
+  new ResizeObserver(report).observe(document.body);
+
+  // 시작: 갈라진 단계 직전까지 정적 장부, 이후 자동 재생
+  cursor = Math.max(0, startStep - 1);
+  renderStatic();
+  sync();
+  // 모션이 꺼져 있으면 자동재생하지 않는다 — 재생 버튼은 남으므로
+  // 보고 싶은 학생은 직접 누를 수 있다(정보는 뺏지 않고 움직임만 뺀다).
+  if (data.autoplay !== false && window.MATTHS_MOTION !== false) {
+    autoplayTimer = setTimeout(() => {
+      autoplayTimer = null;
+      play();
+    }, 600);
+  }
+})();
+</script>
+</body>
+</html>

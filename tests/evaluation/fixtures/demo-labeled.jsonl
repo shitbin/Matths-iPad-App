@@ -1,0 +1,9 @@
+{"kind":"handwriting","sampleId":"DEMO-H-001","expected":{"problems":[{"problemId":"1","finalAnswer":"12","requiredSteps":["미분","임계점 비교"]}]},"observed":{"unreadable":false,"problems":[{"problemId":"1","finalAnswer":"12","recognizedSteps":["미분","임계점 비교"]}]}}
+{"kind":"handwriting","sampleId":"DEMO-H-002","expected":{"problems":[{"problemId":"2","finalAnswer":"3","requiredSteps":["인수분해","근 확인"]}]},"observed":{"unreadable":true,"problems":[{"problemId":"2","finalAnswer":"8","recognizedSteps":["인수분해"]}]}}
+{"kind":"cheating","sampleId":"DEMO-C-001","expected":{"verdict":"suspicious"},"observed":{"verdict":"suspicious"}}
+{"kind":"cheating","sampleId":"DEMO-C-002","expected":{"verdict":"suspicious"},"observed":{"verdict":"inconclusive"}}
+{"kind":"cheating","sampleId":"DEMO-C-003","expected":{"verdict":"normal"},"observed":{"verdict":"suspicious"}}
+{"kind":"cheating","sampleId":"DEMO-C-004","expected":{"verdict":"normal"},"observed":{"verdict":"normal"}}
+{"kind":"grading-tutor","sampleId":"DEMO-G-001","expected":{"verdict":"correct","finalAnswer":"12","requiredConcepts":["미분","임계점"],"forbiddenClaims":["항상 증가한다"]},"observed":{"verdict":"correct","finalAnswer":"12","mentionedConcepts":["미분","임계점"],"tutorAnswer":"도함수가 0인 임계점과 끝점을 비교합니다.","unsafeClaim":false}}
+{"kind":"grading-tutor","sampleId":"DEMO-G-002","expected":{"verdict":"incorrect","finalAnswer":"3","requiredConcepts":["인수분해"],"forbiddenClaims":["실근이 없다"]},"observed":{"verdict":"correct","finalAnswer":"8","mentionedConcepts":[],"tutorAnswer":"실근이 없다.","unsafeClaim":true}}
+

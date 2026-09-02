@@ -1,0 +1,257 @@
+/*
+ * demo-extras.css — 서버 템플릿에 **없는** 데모 전용 표시
+ *
+ * ⚠️ 감독·다음 작업자에게: 이 파일이 그리는 것들은 현재 웹 서버(EJS)가
+ * 실제로 렌더하지 않는다. 목업 요구사항(목록의 댓글 수, 대댓글, 글쓴이 표시,
+ * 채택된 답변)을 보여주기 위해 데모에서만 추가한 것이다.
+ * 그래서 원본을 그대로 베낀 community.css 에 섞지 않고 여기에 격리해 두었다.
+ *
+ * 지금 서버가 렌더하지 않는 것 (= 감독이 여기에 피드백을 주면 서버 작업이 필요함):
+ *   1. 목록의 "댓글 N"        — views/community.ejs 의 aside 는 조회·추천·비추천만 낸다.
+ *   2. 댓글의 "글쓴이" 뱃지    — CommunityComment 에 작성자 동일 여부 표시가 없다.
+ *   3. 댓글의 "채택" 뱃지      — 채택 개념 자체가 스키마에 없다.
+ *   4. 대댓글(들여쓰기)        — 댓글은 현재 평면 목록이다(parentId 없음).
+ *
+ * 색은 community.css 의 기존 뱃지(.community-pin-badge / .community-popular-badge)
+ * 규칙을 그대로 따라가서, 새 디자인 언어를 만들지 않는다.
+ * 다크 값은 이 파일 아래쪽 prefers-color-scheme 블록에 같이 둔다.
+ */
+
+/* 1. 글 목록의 댓글 수 — aside 의 다른 small 과 같은 급으로 보이게 한다. */
+.community-list-comments {
+  color: #6b7897 !important;
+  font-weight: 750;
+}
+
+/* 2·3. 댓글 헤더 뱃지 */
+.community-comment-badge {
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.community-comment-badge.author {
+  color: #3157f6;
+  background: #e9edff;
+}
+
+.community-comment-badge.adopted {
+  color: #17684f;
+  background: #e2f6ee;
+}
+
+/* 4. 대댓글 — 들여쓰기 + 왼쪽 안내선. 카드로 감싸지 않고 선만 그어서
+      기존 목록의 얇은 구분선 리듬을 깨지 않는다. */
+.community-comment-list article.is-reply {
+  position: relative;
+  margin-left: 22px;
+  padding-left: 16px;
+}
+
+.community-comment-list article.is-reply::before {
+  content: "";
+  position: absolute;
+  top: 22px;
+  left: 0;
+  width: 9px;
+  height: 9px;
+  border-bottom: 1.5px solid #cdd4e4;
+  border-left: 1.5px solid #cdd4e4;
+  border-bottom-left-radius: 4px;
+}
+
+/* 채택된 댓글은 배경 틴트로 한 번 더 눈에 띄게 한다. */
+.community-comment-list article.is-adopted {
+  margin: 0 -12px;
+  padding-right: 12px;
+  padding-left: 12px;
+  background: linear-gradient(90deg, rgba(23, 104, 79, 0.07), rgba(23, 104, 79, 0));
+  border-radius: 10px;
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────
+ * 웹 저장소 community.css 의 실제 버그 우회 (데모에서만)
+ *
+ * 증상: 폭 390px(아이폰)에서 커뮤니티 목록 페이지가 가로로 42px 넘쳐
+ *       페이지 전체에 가로 스크롤이 생긴다. 헤드리스 크롬 실측으로 확인.
+ *
+ * 원인: .community-popular-strip 은 grid, 그 안의 > div 도 grid, 그 안의 a 는 flex,
+ *       마지막에 a strong 이 white-space: nowrap 이다.
+ *       grid/flex 아이템의 기본 min-width 는 auto 라서 max-content 아래로 못 줄어든다.
+ *       @media (max-width: 760px) 에서 열을 1fr 로 접어도 트랙이 제목 길이만큼
+ *       벌어져 컨테이너를 밀어낸다. text-overflow: ellipsis 는 그래서 안 걸린다.
+ *
+ * 여기서 고치는 이유: 감독이 볼 목업이 가로로 흔들리면 디자인이 아니라 그 버그에
+ *       피드백이 몰린다. 그렇다고 그대로 베낀 community.css 를 손대면 웹 저장소와
+ *       달라져 다음 사람이 추적을 못 한다. 그래서 격리해서 덮는다.
+ *       → 웹 저장소에 같은 내용을 별도 보고했다. 상류에서 고쳐지면 이 블록은 지운다.
+ */
+.community-popular-strip > header,
+.community-popular-strip > div,
+.community-popular-strip a,
+.community-popular-strip a strong {
+  min-width: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .community-list-comments {
+    color: #8d95ab !important;
+  }
+
+  .community-comment-badge.author {
+    color: #9fb3ff;
+    background: #1d2547;
+  }
+
+  .community-comment-badge.adopted {
+    color: #7de3b8;
+    background: #10281f;
+  }
+
+  .community-comment-list article.is-reply::before {
+    border-bottom-color: #333b56;
+    border-left-color: #333b56;
+  }
+
+  .community-comment-list article.is-adopted {
+    background: linear-gradient(90deg, rgba(125, 227, 184, 0.09), rgba(125, 227, 184, 0));
+  }
+}
+
+@media (max-width: 760px) {
+  .community-comment-list article.is-reply {
+    margin-left: 12px;
+    padding-left: 14px;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   데모 전용 · 한글 두부(▯) 방지                                    [배선 단계 추가]
+
+   상류 matths-theme.css 의 body 폰트 스택 4번째 항목이 `-apple-system` 인데,
+   iPad 앱 웹뷰(WKWebView)에서 이 키워드로 잡히는 폰트가 한글 글리프를 찾지 못하고
+   본문 전체를 두부로 그린다. h1~h6 는 brand.css 의 다른 스택("Avenir Next" 자리)을
+   써서 멀쩡하기 때문에, 제목만 읽히고 본문·뱃지·댓글이 전부 ▯ 로 남는다.
+
+   실측(iOS 26 시뮬레이터 · 캔버스에 '가' 를 그려 칠해진 픽셀 수를 센 값):
+     -apple-system 649(두부)  ·  BlinkMacSystemFont 342  ·  "Avenir Next" 342
+     sans-serif 342           ·  본문 실제 해석 결과 649  ·  h1 실제 해석 결과 342
+
+   데모에서 이걸 그대로 두면 감독은 "게시판 글씨가 안 나온다" 를 폰트가 아니라
+   레이아웃·데이터 문제로 오해한다. 그래서 데모 레이어에서만 -apple-system 을 빼고
+   같은 계열의 한글 폰트로 다시 세운다(색·간격은 건드리지 않는다).
+
+   ⚠️ 상류에도 같은 결함이 있다 — 실서버 /community 를 앱 웹뷰로 열어도 똑같이
+      두부가 뜬다. 웹 저장소의 matths-theme.css 쪽 수정이 따로 필요하다.
+   ───────────────────────────────────────────────────────────────────────── */
+body,
+button,
+input,
+select,
+textarea {
+  font-family:
+    "SUIT Variable",
+    "Pretendard Variable",
+    Pretendard,
+    "Apple SD Gothic Neo",
+    "Noto Sans KR",
+    sans-serif;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   데모 전용 · 상태 이동줄 (.demo-state-bar)                       [상태 목업 단계]
+
+   왜 필요한가. 게시판 목업에는 앱에서 정상적으로 **닿을 수 없는 상태**가 여럿 있다.
+   빈 게시판, 비로그인 변형(추천 읽기전용·댓글 로그인 유도·학교 게시판 안내),
+   첨부 제한 계정, 작성 한도 소진, 검색 결과가 그렇다. 서버 없이는 그 상태를
+   만들 방법이 없어서 감독은 CSS 클래스만 있고 화면은 못 보는 상태였다.
+   그래서 목업끼리 서로 건너뛰는 줄을 하나 얹는다.
+
+   왜 이렇게 생겼나. 서버 템플릿에 **없는 것**이므로 제품 UI 로 오해되면 안 된다.
+   점선 테두리 + 모노스페이스 라벨로 "이건 데모 장치" 를 한눈에 알리고,
+   기존 커뮤니티 팔레트 안의 색만 쓴다(새 디자인 언어를 만들지 않는다).
+   좁은 폭에서는 가로 스크롤로 흘려서 페이지 전체가 옆으로 밀리지 않게 한다.
+   ───────────────────────────────────────────────────────────────────────── */
+.demo-state-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1120px;
+  margin: 12px auto 0;
+  padding: 8px 12px;
+  background: #f7f8fc;
+  border: 1px dashed #c3c9db;
+  border-radius: 11px;
+}
+
+.demo-state-bar > span {
+  flex: none;
+  color: #7b8399;
+  /* WHY 모노스페이스를 쓰지 않는가(실측): ui-monospace/Menlo 계열에는 한글 글리프가
+     없어서 앱 웹뷰(WKWebView)에서 "상태" 가 두부(▯)로 그려졌다. 라벨의 목적은
+     "이건 데모 장치" 를 알리는 것이므로, 글꼴 대신 자간과 대문자 라틴 표기로만
+     그 신호를 준다. 본문과 같은 한글 스택을 그대로 물려받는다. */
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+
+.demo-state-bar > div {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  /* 스크롤 막대가 칩을 가리지 않게 아래 여백을 준다(iOS 는 오버레이라 0 이어도 무방). */
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.demo-state-bar a {
+  flex: none;
+  padding: 6px 10px;
+  color: #4a5265;
+  background: #fff;
+  border: 1px solid #e1e5ee;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 750;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.demo-state-bar a.is-current {
+  color: #fff;
+  background: #3157f6;
+  border-color: #3157f6;
+}
+
+@media (max-width: 760px) {
+  .demo-state-bar {
+    margin: 10px 14px 0;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .demo-state-bar {
+    background: #14161f;
+    border-color: #333b56;
+  }
+
+  .demo-state-bar > span {
+    color: #8d95ab;
+  }
+
+  .demo-state-bar a {
+    color: #c3c9db;
+    background: #1b1e2a;
+    border-color: #333b56;
+  }
+
+  .demo-state-bar a.is-current {
+    color: #fff;
+    background: #3157f6;
+    border-color: #3157f6;
+  }
+}

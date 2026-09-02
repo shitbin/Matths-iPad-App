@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>chunk-29 미리보기</title>
+<link rel="stylesheet" href="katex.min.css">
+<link rel="stylesheet" href="brand.css">
+<script src="katex.min.js"></script>
+<style>
+  body { background:#eee; font-family:"Pretendard",system-ui,sans-serif; margin:0; padding:12px; }
+  h2 { font-size:16px; margin:16px 0 6px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; }
+  .cell { width:440px; }
+  .cap { font-size:10px; color:#444; padding:1px 0; height:26px; overflow:hidden; }
+  .frame { position:relative; width:440px; height:247px; overflow:hidden; background:#FDFCFA;
+           border:1px solid #bbb; }
+  .frame .sp-stage { transform:scale(0.229); }
+</style>
+</head>
+<body>
+<div id="out"></div>
+<script src="scenario-player.js"></script>
+<script>
+const ONE = location.hash.slice(1);
+const IDS = ONE ? [ONE] : ["vocational-math-02-03","vocational-math-02-04","vocational-math-02-05","vocational-math-03-01","vocational-math-03-02","vocational-math-03-03"];
+const out = document.getElementById("out");
+(async () => {
+  for (const id of IDS) {
+    const sc = await (await fetch("../../../curriculum-v2/scenes/"+id+".json")).json();
+    const h = document.createElement("h2");
+    h.textContent = id + " — " + sc.meta.title;
+    out.appendChild(h);
+    const row = document.createElement("div"); row.className="row"; out.appendChild(row);
+    const c = spCompile(sc);
+    sc.beats.forEach((b, bi) => {
+      const end = c.beatStarts[bi] + Math.round(b.dur*30) - 3;
+      const st = c.stateAt(Math.min(end, c.totalFrames-1));
+      const cell = document.createElement("div"); cell.className="cell";
+      cell.innerHTML = '<div class="frame"><div class="sp-stage">'
+        + '<svg class="sp-svg" viewBox="0 0 1920 1080" width="1920" height="1080"></svg>'
+        + '<div class="sp-html"></div></div></div>'
+        + '<div class="cap">b'+bi+' ('+b.dur+'s) '+b.subtitle.replace(/</g,"&lt;")+'</div>';
+      row.appendChild(cell);
+      spRender(st, cell.querySelector(".sp-svg"), cell.querySelector(".sp-html"), end);
+    });
+  }
+  document.title = "READY";
+})();
+</script>
+</body>
+</html>

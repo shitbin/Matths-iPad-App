@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- 잠금화면 배너 + 다이나믹 아일랜드(Live Activity). 이 키가 없으면
+	     Activity.request 가 항상 실패한다 — 코드가 멀쩡해도 아무것도 뜨지 않는다.
+	     표현은 위젯 확장(MatthsWidget/MatthsLiveActivity.swift), 시작·갱신·종료는
+	     Matths/LiveActivityController.swift 가 맡는다.
+	     푸시로 원격 갱신하지 않으므로 NSSupportsLiveActivitiesFrequentUpdates 는 켜지 않는다. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<!-- WindowGroup의 기본 생성값은 iPad 다중 창을 켠다. 앱은 Split View에는
+	     대응하지만 DataScope·SyncEngine이 프로세스 전역 단일 소유자라, 같은 계정
+	     슬롯을 두 창에서 동시에 쓰는 구성은 지원하지 않는다. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<!-- iOS가 현재 기기 해상도를 네이티브로 사용하도록 표준 빈 launch-screen
+	     사전을 직접 둔다. Xcode 26의 INFOPLIST_KEY_UILaunchScreen_Generation을
+	     실제 Info.plist와 함께 쓰면 UILaunchScreen 안에 같은 키를 한 번 더 넣는
+	     결과가 생기므로 project 쪽 자동 생성은 끈다. -->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>matths</string>
+			</array>
+		</dict>
+	</array>
+	<!-- 아래 두 문구는 project.pbxproj 의 INFOPLIST_KEY_NS*UsageDescription 과
+	     **글자까지 같아야 한다.** GENERATE_INFOPLIST_FILE 이 켜져 있으면 같은 키에
+	     대해 빌드 설정 값이 이 파일 값을 덮어쓸 수 있다. 사진은 평소 기기에서
+	     채점·튜터 기능에 쓰지만, 사용자가 풀이 증거 제출을 선택하면 서버에도
+	     전송된다. 권한 문구는 이 실제 경계를 숨기지 않는다. -->
+	<key>NSCameraUsageDescription</key>
+	<string>시험지와 풀이 증거를 촬영하는 데 사용합니다. 풀이 증거 제출을 선택하면 촬영한 사진이 검토를 위해 Matths 서버에 전송됩니다.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>시험지·AI 튜터 질문·프로필·풀이 증거 사진을 선택하는 데 사용합니다. AI 튜터 질문은 기기 안에서 처리하며, 프로필 저장 또는 풀이 증거 제출을 선택하면 해당 사진이 Matths 서버에 전송됩니다.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>AkiraExpanded-Bold.otf</string>
+		<string>AkiraExpanded-Outline.ttf</string>
+	</array>
+</dict>
+</plist>

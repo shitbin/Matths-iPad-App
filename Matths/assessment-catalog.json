@@ -1,0 +1,959 @@
+{
+ "version": 2,
+ "passScore": 80,
+ "paperPlans": {
+  "subunit": {
+   "count": 10,
+   "mix": {
+    "midHigh": 10,
+    "applied": 0,
+    "advanced": 0
+   }
+  },
+  "unit": {
+   "count": 20,
+   "mix": {
+    "midHigh": 7,
+    "applied": 8,
+    "advanced": 5
+   }
+  },
+  "course": {
+   "count": 40,
+   "mix": {
+    "midHigh": 14,
+    "applied": 16,
+    "advanced": 10
+   }
+  }
+ },
+ "advancedApproximation": "bank-4pt",
+ "gradeBands": [
+  {
+   "grade": 1,
+   "min": 90
+  },
+  {
+   "grade": 2,
+   "min": 80
+  },
+  {
+   "grade": 3,
+   "min": 70
+  },
+  {
+   "grade": 4,
+   "min": 55
+  },
+  {
+   "grade": 5,
+   "min": 0
+  }
+ ],
+ "courses": [
+  {
+   "courseId": "common-math-1",
+   "bankCourseId": "common-math-1",
+   "title": "공통수학Ⅰ",
+   "units": [
+    {
+     "unitId": "polynomials",
+     "bankUnitId": "cm1-polynomials",
+     "title": "다항식",
+     "numeral": "Ⅰ",
+     "subunits": [
+      {
+       "id": "polynomial-arithmetic",
+       "title": "다항식의 연산",
+       "conceptIds": [
+        "polynomial-arithmetic"
+       ],
+       "gens": []
+      },
+      {
+       "id": "identity-remainder",
+       "title": "항등식과 나머지정리",
+       "conceptIds": [
+        "identity-remainder-theorem"
+       ],
+       "gens": []
+      },
+      {
+       "id": "factorization",
+       "title": "인수분해",
+       "conceptIds": [
+        "polynomial-factorization"
+       ],
+       "gens": []
+      }
+     ]
+    },
+    {
+     "unitId": "equations-and-inequalities",
+     "bankUnitId": "cm1-equations",
+     "title": "방정식과 부등식",
+     "numeral": "Ⅱ",
+     "subunits": [
+      {
+       "id": "complex-quadratic",
+       "title": "복소수와 이차방정식",
+       "conceptIds": [
+        "complex-numbers",
+        "quadratic-discriminant",
+        "quadratic-roots-and-coefficients"
+       ],
+       "gens": []
+      },
+      {
+       "id": "quadratic-graph",
+       "title": "이차함수와 그래프",
+       "conceptIds": [
+        "quadratic-equation-and-function",
+        "parabola-and-line",
+        "quadratic-max-min-restricted"
+       ],
+       "gens": []
+      },
+      {
+       "id": "higher-equations",
+       "title": "여러 가지 방정식",
+       "conceptIds": [
+        "cubic-and-quartic-equations",
+        "simultaneous-quadratic-equations"
+       ],
+       "gens": []
+      },
+      {
+       "id": "inequalities",
+       "title": "여러 가지 부등식",
+       "conceptIds": [
+        "simultaneous-linear-inequalities",
+        "absolute-linear-inequalities",
+        "quadratic-inequalities"
+       ],
+       "gens": []
+      }
+     ]
+    },
+    {
+     "unitId": "counting",
+     "bankUnitId": "cm1-counting",
+     "title": "경우의 수",
+     "numeral": "Ⅲ",
+     "subunits": [
+      {
+       "id": "principles",
+       "title": "합의 법칙과 곱의 법칙",
+       "conceptIds": [
+        "addition-and-multiplication-principles"
+       ],
+       "gens": []
+      },
+      {
+       "id": "permutations",
+       "title": "순열",
+       "conceptIds": [
+        "permutations"
+       ],
+       "gens": []
+      },
+      {
+       "id": "combinations",
+       "title": "조합",
+       "conceptIds": [
+        "combinations"
+       ],
+       "gens": []
+      }
+     ]
+    },
+    {
+     "unitId": "matrices",
+     "bankUnitId": "cm1-matrices",
+     "title": "행렬",
+     "numeral": "Ⅳ",
+     "subunits": [
+      {
+       "id": "matrix-concept",
+       "title": "행렬의 뜻",
+       "conceptIds": [
+        "matrix-concept"
+       ],
+       "gens": []
+      },
+      {
+       "id": "matrix-operations",
+       "title": "행렬의 연산",
+       "conceptIds": [
+        "matrix-operations"
+       ],
+       "gens": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "courseId": "common-math-2",
+   "bankCourseId": "common-math-2",
+   "title": "공통수학Ⅱ",
+   "units": [
+    {
+     "unitId": "coordinate-geometry",
+     "bankUnitId": "cm2-coordinate",
+     "title": "도형의 방정식",
+     "numeral": "Ⅰ",
+     "subunits": [
+      {
+       "id": "coordinates",
+       "title": "좌표와 직선",
+       "conceptIds": [
+        "distance-and-internal-division",
+        "parallel-and-perpendicular-lines",
+        "point-line-distance"
+       ],
+       "gens": []
+      },
+      {
+       "id": "circle",
+       "title": "원의 방정식",
+       "conceptIds": [
+        "circle-equation",
+        "circle-line-position"
+       ],
+       "gens": []
+      },
+      {
+       "id": "transformations",
+       "title": "도형의 이동",
+       "conceptIds": [
+        "geometric-translation",
+        "geometric-reflection"
+       ],
+       "gens": []
+      }
+     ]
+    },
+    {
+     "unitId": "sets-and-propositions",
+     "bankUnitId": "cm2-sets",
+     "title": "집합과 명제",
+     "numeral": "Ⅱ",
+     "subunits": [
+      {
+       "id": "sets",
+       "title": "집합",
+       "conceptIds": [
+        "set-concept-and-representation",
+        "set-inclusion",
+        "set-operations"
+       ],
+       "gens": []
+      },
+      {
+       "id": "propositions",
+       "title": "명제와 조건",
+       "conceptIds": [
+        "proposition-and-condition",
+        "converse-and-contrapositive",
+        "sufficient-and-necessary-conditions"
+       ],
+       "gens": []
+      },
+      {
+       "id": "proof",
+       "title": "증명과 절대부등식",
+       "conceptIds": [
+        "proof-by-contrapositive-and-contradiction",
+        "absolute-inequality"
+       ],
+       "gens": []
+      }
+     ]
+    },
+    {
+     "unitId": "functions-and-graphs",
+     "bankUnitId": "cm2-functions",
+     "title": "함수와 그래프",
+     "numeral": "Ⅲ",
+     "subunits": [
+      {
+       "id": "functions",
+       "title": "함수·합성함수·역함수",
+       "conceptIds": [
+        "function-concept-and-graph",
+        "composite-function",
+        "inverse-function"
+       ],
+       "gens": []
+      },
+      {
+       "id": "special-functions",
+       "title": "유리함수와 무리함수",
+       "conceptIds": [
+        "rational-function",
+        "irrational-function"
+       ],
+       "gens": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "courseId": "algebra",
+   "bankCourseId": "algebra",
+   "title": "대수",
+   "units": [
+    {
+     "unitId": "exponential-logarithmic-functions",
+     "bankUnitId": "explog",
+     "title": "지수함수와 로그함수",
+     "numeral": "Ⅰ",
+     "subunits": [
+      {
+       "id": "radical",
+       "title": "지수의 확장과 거듭제곱근",
+       "conceptIds": [
+        "algebra-01-01",
+        "algebra-01-02",
+        "algebra-01-03"
+       ],
+       "gens": [
+        {
+         "id": "alg-radical-value",
+         "points": 3
+        },
+        {
+         "id": "alg-radical-nested",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "log",
+       "title": "로그의 뜻과 성질",
+       "conceptIds": [
+        "algebra-01-04",
+        "algebra-01-05"
+       ],
+       "gens": [
+        {
+         "id": "alg-log-chain",
+         "points": 3
+        },
+        {
+         "id": "alg-log-linear",
+         "points": 3
+        },
+        {
+         "id": "alg-log-digits",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "graph",
+       "title": "지수·로그함수의 그래프",
+       "conceptIds": [
+        "algebra-01-06",
+        "algebra-01-07"
+       ],
+       "gens": [
+        {
+         "id": "alg-graph-shift",
+         "points": 3
+        },
+        {
+         "id": "alg-graph-inverse",
+         "points": 3
+        },
+        {
+         "id": "alg-graph-expmax",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "eq",
+       "title": "지수·로그 방정식과 부등식",
+       "conceptIds": [
+        "algebra-01-08"
+       ],
+       "gens": [
+        {
+         "id": "alg-eq-expquad",
+         "points": 4
+        },
+        {
+         "id": "alg-eq-logquad",
+         "points": 4
+        },
+        {
+         "id": "alg-eq-expineq",
+         "points": 4
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "unitId": "trigonometric-functions",
+     "bankUnitId": "trig",
+     "title": "삼각함수",
+     "numeral": "Ⅱ",
+     "subunits": [
+      {
+       "id": "radian",
+       "title": "일반각과 호도법·부채꼴",
+       "conceptIds": [
+        "algebra-02-01"
+       ],
+       "gens": [
+        {
+         "id": "alg-sector-max",
+         "points": 4
+        },
+        {
+         "id": "alg-sector-inverse",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "trigfun",
+       "title": "삼각함수의 뜻과 그래프",
+       "conceptIds": [
+        "algebra-02-02"
+       ],
+       "gens": [
+        {
+         "id": "alg-trig-sincos",
+         "points": 3
+        },
+        {
+         "id": "alg-trig-graph",
+         "points": 3
+        },
+        {
+         "id": "alg-trig-tan",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "laws",
+       "title": "사인법칙과 코사인법칙",
+       "conceptIds": [
+        "algebra-02-03"
+       ],
+       "gens": [
+        {
+         "id": "alg-law-cos",
+         "points": 3
+        },
+        {
+         "id": "alg-law-sin",
+         "points": 3
+        },
+        {
+         "id": "alg-law-area",
+         "points": 4
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "unitId": "sequences",
+     "bankUnitId": "seq",
+     "title": "수열",
+     "numeral": "Ⅲ",
+     "subunits": [
+      {
+       "id": "arith",
+       "title": "등차수열",
+       "conceptIds": [
+        "algebra-03-01",
+        "algebra-03-02"
+       ],
+       "gens": [
+        {
+         "id": "alg-arith-term",
+         "points": 3
+        },
+        {
+         "id": "alg-arith-maxsum",
+         "points": 4
+        },
+        {
+         "id": "alg-arith-snformula",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "geom",
+       "title": "등비수열",
+       "conceptIds": [
+        "algebra-03-03"
+       ],
+       "gens": [
+        {
+         "id": "alg-geom-term",
+         "points": 3
+        },
+        {
+         "id": "alg-geom-blocksum",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "sigma",
+       "title": "수열의 합(Σ)",
+       "conceptIds": [
+        "algebra-03-04",
+        "algebra-03-05"
+       ],
+       "gens": [
+        {
+         "id": "alg-sigma-formula",
+         "points": 3
+        },
+        {
+         "id": "alg-sigma-sqrt",
+         "points": 4
+        },
+        {
+         "id": "alg-sigma-partial",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "recur",
+       "title": "수열의 귀납적 정의",
+       "conceptIds": [
+        "algebra-03-06",
+        "algebra-03-07"
+       ],
+       "gens": [
+        {
+         "id": "alg-recur-linear",
+         "points": 3
+        },
+        {
+         "id": "alg-recur-parity",
+         "points": 4
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "courseId": "calculus-1",
+   "bankCourseId": "calculus",
+   "title": "미적분Ⅰ",
+   "units": [
+    {
+     "unitId": "limits-and-continuity",
+     "bankUnitId": "limit",
+     "title": "함수의 극한과 연속",
+     "numeral": "Ⅰ",
+     "subunits": [
+      {
+       "id": "lim",
+       "title": "함수의 극한",
+       "conceptIds": [
+        "calculus-1-01-01",
+        "calculus-1-01-02"
+       ],
+       "gens": [
+        {
+         "id": "cal-lim-factor",
+         "points": 3
+        },
+        {
+         "id": "cal-lim-sqrt",
+         "points": 3
+        },
+        {
+         "id": "cal-lim-inverse",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "cont",
+       "title": "함수의 연속",
+       "conceptIds": [
+        "calculus-1-01-03",
+        "calculus-1-01-04"
+       ],
+       "gens": [
+        {
+         "id": "cal-cont-removable",
+         "points": 4
+        },
+        {
+         "id": "cal-cont-piecewise",
+         "points": 3
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "unitId": "differentiation",
+     "bankUnitId": "diff",
+     "title": "미분",
+     "numeral": "Ⅱ",
+     "subunits": [
+      {
+       "id": "deriv",
+       "title": "미분계수와 도함수",
+       "conceptIds": [
+        "calculus-1-02-01",
+        "calculus-1-02-02",
+        "calculus-1-02-03",
+        "calculus-1-02-04"
+       ],
+       "gens": [
+        {
+         "id": "cal-deriv-def",
+         "points": 4
+        },
+        {
+         "id": "cal-deriv-product",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "tangent",
+       "title": "접선의 방정식",
+       "conceptIds": [
+        "calculus-1-02-05",
+        "calculus-1-02-06"
+       ],
+       "gens": [
+        {
+         "id": "cal-tan-intercept",
+         "points": 4
+        },
+        {
+         "id": "cal-tan-point",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "extrema",
+       "title": "함수의 극대·극소",
+       "conceptIds": [
+        "calculus-1-02-07",
+        "calculus-1-02-08"
+       ],
+       "gens": [
+        {
+         "id": "cal-ext-inverse",
+         "points": 4
+        },
+        {
+         "id": "cal-ext-value",
+         "points": 3
+        },
+        {
+         "id": "cal-ext-threeroots",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "apply",
+       "title": "미분의 활용(방정식·운동)",
+       "conceptIds": [
+        "calculus-1-02-09",
+        "calculus-1-02-10"
+       ],
+       "gens": [
+        {
+         "id": "cal-app-motion",
+         "points": 3
+        },
+        {
+         "id": "cal-app-rootcount",
+         "points": 3
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "unitId": "integration",
+     "bankUnitId": "integral",
+     "title": "적분",
+     "numeral": "Ⅲ",
+     "subunits": [
+      {
+       "id": "antider",
+       "title": "부정적분",
+       "conceptIds": [
+        "calculus-1-03-01",
+        "calculus-1-03-02"
+       ],
+       "gens": [
+        {
+         "id": "cal-anti-value",
+         "points": 3
+        },
+        {
+         "id": "cal-anti-inverse",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "defint",
+       "title": "정적분",
+       "conceptIds": [
+        "calculus-1-03-03",
+        "calculus-1-03-04"
+       ],
+       "gens": [
+        {
+         "id": "cal-def-basic",
+         "points": 3
+        },
+        {
+         "id": "cal-def-symmetry",
+         "points": 3
+        },
+        {
+         "id": "cal-def-inverse",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "area",
+       "title": "정적분의 활용(넓이·거리)",
+       "conceptIds": [
+        "calculus-1-03-05",
+        "calculus-1-03-06"
+       ],
+       "gens": [
+        {
+         "id": "cal-area-xaxis",
+         "points": 4
+        },
+        {
+         "id": "cal-area-twocurves",
+         "points": 3
+        },
+        {
+         "id": "cal-area-velocity",
+         "points": 4
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "courseId": "probability-statistics",
+   "bankCourseId": "probstat",
+   "title": "확률과 통계",
+   "units": [
+    {
+     "unitId": "counting",
+     "bankUnitId": "counting",
+     "title": "경우의 수",
+     "numeral": "Ⅰ",
+     "subunits": [
+      {
+       "id": "perm",
+       "title": "여러 가지 순열",
+       "conceptIds": [
+        "probability-statistics-01-01"
+       ],
+       "gens": [
+        {
+         "id": "ps-perm-oddnat",
+         "points": 4
+        },
+        {
+         "id": "ps-perm-endsA",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "hcomb",
+       "title": "중복조합",
+       "conceptIds": [
+        "probability-statistics-01-02"
+       ],
+       "gens": [
+        {
+         "id": "ps-hcomb-lowerbound",
+         "points": 4
+        },
+        {
+         "id": "ps-hcomb-inequality",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "binom",
+       "title": "이항정리",
+       "conceptIds": [
+        "probability-statistics-01-03"
+       ],
+       "gens": [
+        {
+         "id": "ps-binom-constterm",
+         "points": 4
+        },
+        {
+         "id": "ps-binom-evensum",
+         "points": 4
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "unitId": "probability",
+     "bankUnitId": "probability",
+     "title": "확률",
+     "numeral": "Ⅱ",
+     "subunits": [
+      {
+       "id": "prob",
+       "title": "확률의 뜻과 덧셈정리",
+       "conceptIds": [
+        "probability-statistics-02-01",
+        "probability-statistics-02-02",
+        "probability-statistics-02-03"
+       ],
+       "gens": [
+        {
+         "id": "ps-prob-atleast",
+         "points": 3
+        },
+        {
+         "id": "ps-prob-addition",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "cond",
+       "title": "조건부확률",
+       "conceptIds": [
+        "probability-statistics-02-04"
+       ],
+       "gens": [
+        {
+         "id": "ps-cond-table",
+         "points": 3
+        },
+        {
+         "id": "ps-cond-bayes",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "indep",
+       "title": "독립과 곱셈정리",
+       "conceptIds": [
+        "probability-statistics-02-05",
+        "probability-statistics-02-06"
+       ],
+       "gens": [
+        {
+         "id": "ps-indep-union",
+         "points": 4
+        },
+        {
+         "id": "ps-indep-repeat",
+         "points": 3
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "unitId": "statistics",
+     "bankUnitId": "statistics",
+     "title": "통계",
+     "numeral": "Ⅲ",
+     "subunits": [
+      {
+       "id": "rv",
+       "title": "확률변수와 기댓값",
+       "conceptIds": [
+        "probability-statistics-03-01",
+        "probability-statistics-03-02"
+       ],
+       "gens": [
+        {
+         "id": "ps-rv-linear",
+         "points": 3
+        },
+        {
+         "id": "ps-rv-table",
+         "points": 3
+        }
+       ]
+      },
+      {
+       "id": "binorm",
+       "title": "이항분포와 정규분포",
+       "conceptIds": [
+        "probability-statistics-03-03",
+        "probability-statistics-03-04"
+       ],
+       "gens": [
+        {
+         "id": "ps-binorm-inverse",
+         "points": 4
+        },
+        {
+         "id": "ps-binorm-normal",
+         "points": 4
+        }
+       ]
+      },
+      {
+       "id": "sample",
+       "title": "표본평균과 추정",
+       "conceptIds": [
+        "probability-statistics-03-05",
+        "probability-statistics-03-06",
+        "probability-statistics-03-07"
+       ],
+       "gens": [
+        {
+         "id": "ps-sample-dist",
+         "points": 4
+        },
+        {
+         "id": "ps-sample-cin",
+         "points": 4
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

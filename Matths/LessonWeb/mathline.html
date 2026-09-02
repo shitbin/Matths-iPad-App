@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="katex.min.css">
+<style>
+/* 한 줄 수식 라벨 — 네이티브 카드 안에 얹히므로 배경도 여백도 없다.
+   주의: Xcode 동기화 그룹이 리소스를 번들 루트로 평탄화하므로 참조는 같은 디렉터리 기준. */
+@font-face {
+  font-family: "PretendardVar";
+  src: url("PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920; font-display: swap;
+}
+/* KaTeX 서브트리는 제외한다. 전역 * 로 폰트를 덮으면 KaTeX 글리프 스팬까지
+   Pretendard 가 되어 =, ≠, + 같은 관계 기호가 제자리를 벗어난다(lesson.html 과 같은 사고). */
+/* :where() 로 감싸는 이유 — :not() 만 쓰면 특이도가 (0,2,0)으로 올라가
+   .card 같은 클래스 규칙(0,1,0)의 padding·margin 까지 이 리셋이 덮는다.
+   실제로 설명 카드의 안쪽 여백이 통째로 사라졌다. :where() 는 특이도 0 이다. */
+*:where(:not(.katex, .katex *)) {
+  font-family: "PretendardVar", -apple-system, "Apple SD Gothic Neo", sans-serif;
+}
+:root { --content-scale: 1; font-size: calc(16px * var(--content-scale)); }
+html, body { margin: 0; padding: 0; background: transparent; }
+#line {
+  /* 색은 네이티브가 payload 로 넘긴다. 여기 있는 건 payload 를 못 받았을 때의 기본값이고,
+     그 기본값도 외관을 따라가야 한다. 예전에는 #111426 하나로 고정돼 있어서, 다크 모드에서
+     어두운 카드 위에 검정 글자가 찍혔다(MathLabel.swift 의 tokenHexForWeb 주석 참조). */
+  color: #111426;
+  line-height: 1.55;
+  word-break: keep-all;      /* 한국어는 어절 단위로 끊는다 */
+  overflow-wrap: anywhere;   /* 긴 수식이 가로로 삐져나가지 않게 */
+}
+@media (prefers-color-scheme: dark) { #line { color: #eef1fa; } }
+.katex { font-size: 1.05em; }
+</style>
+</head>
+<body>
+<div id="line" role="text"></div>
+<script src="katex.min.js"></script>
+<script>
+(function () {
+  const el = document.getElementById("line");
+  // color 를 여기서 기본값으로 채우지 않는다. 비워 두면 위 CSS(외관을 따라가는 기본값)가
+  // 남고, 네이티브가 색을 보내 준 경우에만 인라인으로 덮는다.
+  let data = { text: "", size: "17", color: "" };
+  try {
+    const bin = atob(window.MATTHS_MATH_B64 || "");
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    data = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+  } catch (e) {}
+
+  el.style.fontSize = ((parseFloat(data.size) || 17) / 16) + "rem";
+  if (data.color) el.style.color = data.color;
+  el.setAttribute("aria-label", data.accessibility || String(data.text || ""));
+
+  function normalizedFormula(value) {
+    return String(value || "")
+      .replace(/\bsqrt\(([^()]+)\)/g, "\\sqrt{$1}")
+      .replace(/\^\(([^()]+)\)/g, "^{$1}")
+      .replace(/<=/g, "\\le ")
+      .replace(/>=/g, "\\ge ")
+      .replace(/!=/g, "\\ne ")
+      .replace(/×/g, "\\times ")
+      .replace(/÷/g, "\\div ");
+  }
+
+  function appendFormula(value) {
+    const span = document.createElement("span");
+    try { katex.render(normalizedFormula(value), span, { throwOnError: false }); }
+    catch (e) { span.textContent = value; }
+    el.appendChild(span);
+  }
+
+  // 모델이 $ 구분자 없이 보내는 x^2·sqrt(2)·f(x)=3도 해당 구간만 조판한다.
+  // 날짜의 2026/8/11 같은 일반 슬래시는 수식으로 잡지 않는다.
+  const asciiMath = /(?:sqrt\([^\)\n]+\)|√[A-Za-z0-9()\[\]{}+\-*/^]+|[A-Za-z0-9()\[\]{}]+\s*\^\s*(?:\([^\)\n]+\)|[-+A-Za-z0-9.]+)(?:\s*(?:<=|>=|!=|[+\-*×÷=<>≤≥≠])\s*[A-Za-z0-9()\[\]{}]+(?:\s*\^\s*(?:\([^\)\n]+\)|[-+A-Za-z0-9.]+))?)*|[A-Za-z][A-Za-z0-9()]*\s*(?:<=|>=|!=|[=<>≤≥≠])\s*[-+A-Za-z0-9()\.]+)/g;
+  function appendTextWithAsciiMath(value) {
+    const text = String(value || "");
+    let cursor = 0;
+    for (const match of text.matchAll(asciiMath)) {
+      if (match.index > cursor) el.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+      appendFormula(match[0]);
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < text.length) el.appendChild(document.createTextNode(text.slice(cursor)));
+  }
+
+  // $…$ 를 갈라 수식만 KaTeX 로. 짝이 안 맞는 $가 남은 조각은 평문으로 둔다.
+  const parts = String(data.text || "").split(/\$([^$]+)\$/);
+  parts.forEach((part, i) => {
+    if (i % 2 === 0) {
+      appendTextWithAsciiMath(part);
+    } else {
+      appendFormula(part);
+    }
+  });
+
+  function report() {
+    const h = Math.ceil(document.body.getBoundingClientRect().height);
+    try { window.webkit.messageHandlers.mathHeight.postMessage(h); } catch (e) {}
+  }
+  // 조판 직후 · 폰트 적용 후 두 번, 그리고 회전·크기 변화도 따라간다
+  requestAnimationFrame(() => { report(); setTimeout(report, 200); });
+  new ResizeObserver(report).observe(document.body);
+})();
+</script>
+</body>
+</html>
