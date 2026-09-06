@@ -7,7 +7,7 @@
   "build": "17",
   "xcode": "26.6 (17F113)",
   "sdk": "26.5",
-  "sourceContentSHA256": "9cfde6a8961900236d3cfe969cea2ada08b216e0a5d771b6dc5cf97132f8a262",
+  "sourceContentSHA256": "76674790187e50868473ad05c687d7d41d62726d6f37d5a1ac127e38d7222cec",
   "sourceFileCount": 1153,
   "shellContracts": {
     "count": 126,
@@ -18,49 +18,49 @@
         "name": "run-accessibility-device-selftest-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 31
+        "elapsedMs": 28
       },
       {
         "name": "run-account-bound-arena-commands-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 87
+        "elapsedMs": 86
       },
       {
         "name": "run-account-bound-commerce-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 36
+        "elapsedMs": 35
       },
       {
         "name": "run-account-bound-exam-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 27
+        "elapsedMs": 26
       },
       {
         "name": "run-account-bound-server-cache-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 44
+        "elapsedMs": 46
       },
       {
         "name": "run-account-bound-server-screen-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 42
+        "elapsedMs": 40
       },
       {
         "name": "run-account-bound-weekly-mock-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 57
+        "elapsedMs": 55
       },
       {
         "name": "run-account-deletion-landscape-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 147
+        "elapsedMs": 145
       },
       {
         "name": "run-active-p1-remediation-contract.sh",
@@ -72,85 +72,85 @@
         "name": "run-app-store-assets-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 150
+        "elapsedMs": 146
       },
       {
         "name": "run-arena-matchmaking-landscape-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 123
+        "elapsedMs": 124
       },
       {
         "name": "run-arena-review-fixtures.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 202
+        "elapsedMs": 205
       },
       {
         "name": "run-arena-split-workspace-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 121
+        "elapsedMs": 104
       },
       {
         "name": "run-assessment-landscape-sheet-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 40
+        "elapsedMs": 30
       },
       {
         "name": "run-assessment-paper-landscape-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 68
+        "elapsedMs": 52
       },
       {
         "name": "run-assessment-sync-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 29
+        "elapsedMs": 26
       },
       {
         "name": "run-auth-landscape-form-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 163
+        "elapsedMs": 158
       },
       {
         "name": "run-auth-screen-protection-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 3404
+        "elapsedMs": 3436
       },
       {
         "name": "run-brand-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1611
+        "elapsedMs": 1609
       },
       {
         "name": "run-bundled-catalog-recovery-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 125
+        "elapsedMs": 127
       },
       {
         "name": "run-cheating-detection.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 2336
+        "elapsedMs": 2341
       },
       {
         "name": "run-coach-safety-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 2302
+        "elapsedMs": 2314
       },
       {
         "name": "run-commerce-hub-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 309
+        "elapsedMs": 295
       },
       {
         "name": "run-concept-learning-entry-contract.sh",
@@ -162,7 +162,7 @@
         "name": "run-concept-learning-presentation-state-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 29
+        "elapsedMs": 31
       },
       {
         "name": "run-concept-motion-responsive-layout-contract.sh",
@@ -174,7 +174,7 @@
         "name": "run-concept-motion-video-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 756
+        "elapsedMs": 768
       },
       {
         "name": "run-curriculum-editorial-audit.sh",
@@ -186,43 +186,43 @@
         "name": "run-curriculum-learning-tracks.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 56
+        "elapsedMs": 57
       },
       {
         "name": "run-curriculum-map-projection-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 44
+        "elapsedMs": 43
       },
       {
         "name": "run-curriculum-motion-coach-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 574
+        "elapsedMs": 578
       },
       {
         "name": "run-curriculum-narration-integrated-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 770
+        "elapsedMs": 773
       },
       {
         "name": "run-curriculum-practice-coverage.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 81
+        "elapsedMs": 83
       },
       {
         "name": "run-curriculum-story-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 3977
+        "elapsedMs": 4088
       },
       {
         "name": "run-curriculum-top-timeline-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 46
+        "elapsedMs": 48
       },
       {
         "name": "run-debug-model-selector-contract.sh",
@@ -234,31 +234,31 @@
         "name": "run-demo-mode-transport-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 316
+        "elapsedMs": 315
       },
       {
         "name": "run-demo-template-sunday-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 2331
+        "elapsedMs": 2318
       },
       {
         "name": "run-device-qa-evidence-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 152
+        "elapsedMs": 154
       },
       {
         "name": "run-eventlog.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 3079
+        "elapsedMs": 3094
       },
       {
         "name": "run-exam-timer-publish-rate-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 843
+        "elapsedMs": 847
       },
       {
         "name": "run-first-run-onboarding-contract.sh",
@@ -270,13 +270,13 @@
         "name": "run-goat-arena-local-review-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1269
+        "elapsedMs": 1278
       },
       {
         "name": "run-goat-arena-public-route-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 126
+        "elapsedMs": 129
       },
       {
         "name": "run-google-oauth-contract.sh",
@@ -288,37 +288,37 @@
         "name": "run-hosted-service-parity-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 788
+        "elapsedMs": 780
       },
       {
         "name": "run-ipad-arena-inline-evidence-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 53
+        "elapsedMs": 55
       },
       {
         "name": "run-iphone-landscape-browse-actions-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 169
+        "elapsedMs": 167
       },
       {
         "name": "run-iphone-landscape-solve-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 153
+        "elapsedMs": 146
       },
       {
         "name": "run-kakao-oauth-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 2078
+        "elapsedMs": 2124
       },
       {
         "name": "run-kice-landscape-omr-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 28
+        "elapsedMs": 29
       },
       {
         "name": "run-launch-screen-plist-contract.sh",
@@ -330,19 +330,19 @@
         "name": "run-learning-entry-state-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 719
+        "elapsedMs": 718
       },
       {
         "name": "run-learning-flow-cta-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 37
+        "elapsedMs": 33
       },
       {
         "name": "run-learning-snapshot-writer-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 5129
+        "elapsedMs": 5109
       },
       {
         "name": "run-learning-state-sync-contract.sh",
@@ -354,91 +354,91 @@
         "name": "run-ling3-candidate-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 987
+        "elapsedMs": 999
       },
       {
         "name": "run-local-ai-evaluation.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 116
+        "elapsedMs": 125
       },
       {
         "name": "run-local-ai-job-recovery.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1198
+        "elapsedMs": 1248
       },
       {
         "name": "run-local-ai-pilot-gate.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 305
+        "elapsedMs": 324
       },
       {
         "name": "run-local-ai-work-coordinator.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1096
+        "elapsedMs": 1165
       },
       {
         "name": "run-local-model-prompt.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 973
+        "elapsedMs": 964
       },
       {
         "name": "run-math-color-scheme-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 60
+        "elapsedMs": 61
       },
       {
         "name": "run-math-screen-render-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1350
+        "elapsedMs": 1341
       },
       {
         "name": "run-mathtext.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 3017
+        "elapsedMs": 3186
       },
       {
         "name": "run-model-download-resume-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 182
+        "elapsedMs": 189
       },
       {
         "name": "run-native-accessibility-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 172
+        "elapsedMs": 173
       },
       {
         "name": "run-native-admin-archive-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 53
+        "elapsedMs": 52
       },
       {
         "name": "run-native-admin-arena-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 66
+        "elapsedMs": 65
       },
       {
         "name": "run-native-admin-arena-policy-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 53
+        "elapsedMs": 55
       },
       {
         "name": "run-native-admin-community-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 88
+        "elapsedMs": 99
       },
       {
         "name": "run-native-admin-data-analysis-contract.sh",
@@ -450,13 +450,13 @@
         "name": "run-native-admin-finance-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 82
+        "elapsedMs": 83
       },
       {
         "name": "run-native-admin-operations-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 92
+        "elapsedMs": 97
       },
       {
         "name": "run-native-admin-operations-guide-contract.sh",
@@ -468,7 +468,7 @@
         "name": "run-native-admin-pdf-forensics-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 33
+        "elapsedMs": 34
       },
       {
         "name": "run-native-admin-problem-bank-contract.sh",
@@ -480,25 +480,25 @@
         "name": "run-native-admin-store-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 53
+        "elapsedMs": 52
       },
       {
         "name": "run-native-admin-users-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 139
+        "elapsedMs": 141
       },
       {
         "name": "run-native-admin-weekly-mock-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 59
+        "elapsedMs": 58
       },
       {
         "name": "run-native-arena-action-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 127
+        "elapsedMs": 126
       },
       {
         "name": "run-native-arena-friendly-contract.sh",
@@ -510,13 +510,13 @@
         "name": "run-native-arena-recovery-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 59
+        "elapsedMs": 60
       },
       {
         "name": "run-native-community-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 102
+        "elapsedMs": 106
       },
       {
         "name": "run-native-faq-contract.sh",
@@ -528,151 +528,151 @@
         "name": "run-native-profile-nickname-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 27
+        "elapsedMs": 28
       },
       {
         "name": "run-native-store-catalog-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 64
+        "elapsedMs": 67
       },
       {
         "name": "run-native-study-hall-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 70
+        "elapsedMs": 69
       },
       {
         "name": "run-native-tutorial-parity-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 176
+        "elapsedMs": 172
       },
       {
         "name": "run-notification-route-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 179
+        "elapsedMs": 187
       },
       {
         "name": "run-one-shot-observer-concurrency-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 22
+        "elapsedMs": 26
       },
       {
         "name": "run-pencil-tool-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 63
+        "elapsedMs": 66
       },
       {
         "name": "run-placement-review-fixture-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 59
+        "elapsedMs": 61
       },
       {
         "name": "run-platform-privacy-resource-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 148
+        "elapsedMs": 166
       },
       {
         "name": "run-privacy-required-reason-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 51
+        "elapsedMs": 49
       },
       {
         "name": "run-problem-difficulty-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 96
+        "elapsedMs": 95
       },
       {
         "name": "run-profile-school-sync-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 63
+        "elapsedMs": 65
       },
       {
         "name": "run-progress-authority-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1928
+        "elapsedMs": 1977
       },
       {
         "name": "run-quick-practice-stats-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 608
+        "elapsedMs": 635
       },
       {
         "name": "run-rank-promotion-device-evidence-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1085
+        "elapsedMs": 1158
       },
       {
         "name": "run-rank-promotion-performance-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 311
+        "elapsedMs": 335
       },
       {
         "name": "run-rank-promotion-provenance-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1743
+        "elapsedMs": 1840
       },
       {
         "name": "run-reasoning-evidence-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 170
+        "elapsedMs": 174
       },
       {
         "name": "run-release-audit-evidence-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 3840
+        "elapsedMs": 3885
       },
       {
         "name": "run-release-binary-scanner-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 2188
+        "elapsedMs": 2319
       },
       {
         "name": "run-release-signing-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 36
+        "elapsedMs": 34
       },
       {
         "name": "run-result-explanation-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 2346
+        "elapsedMs": 2595
       },
       {
         "name": "run-screenshot-protection-scope-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 20
+        "elapsedMs": 23
       },
       {
         "name": "run-server-authentication-ownership-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1088
+        "elapsedMs": 1107
       },
       {
         "name": "run-server-token-ownership-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 994
+        "elapsedMs": 991
       },
       {
         "name": "run-sheet-grader-cancellation-contract.sh",
@@ -684,91 +684,91 @@
         "name": "run-solution-analysis-floating-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 40
+        "elapsedMs": 39
       },
       {
         "name": "run-sync-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 9747
+        "elapsedMs": 9746
       },
       {
         "name": "run-third-party-attribution-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 52
+        "elapsedMs": 51
       },
       {
         "name": "run-tutor-conversation-store.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1089
+        "elapsedMs": 1115
       },
       {
         "name": "run-ui-copy-ast-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1031
+        "elapsedMs": 1034
       },
       {
         "name": "run-universal-device-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 907
+        "elapsedMs": 917
       },
       {
         "name": "run-vision-benchmark-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 84
+        "elapsedMs": 81
       },
       {
         "name": "run-vision-evidence-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 121
+        "elapsedMs": 120
       },
       {
         "name": "run-web-curriculum-parity.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 1334
+        "elapsedMs": 1365
       },
       {
         "name": "run-web-derived-assets-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 527
+        "elapsedMs": 516
       },
       {
         "name": "run-webcontent-accessibility.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 287
+        "elapsedMs": 294
       },
       {
         "name": "run-webview-lifecycle-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 125
+        "elapsedMs": 127
       },
       {
         "name": "run-weekly-mock-draft-sync-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 963
+        "elapsedMs": 973
       },
       {
         "name": "run-weekly-mock-landscape-omr-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 57
+        "elapsedMs": 60
       },
       {
         "name": "run-window-environment-selftest-contract.sh",
         "status": "PASS",
         "exitCode": 0,
-        "elapsedMs": 27
+        "elapsedMs": 26
       }
     ]
   },

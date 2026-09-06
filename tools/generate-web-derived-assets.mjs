@@ -15,7 +15,9 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((pairs, arg, i, all
 }, []));
 const expected = args['web-commit'] || 'e3cc06360415a4c60460895b01f06a3248dae665';
 if (!args['web-root']) throw Error('BLOCKED_WEB_SOURCE_REQUIRED: --web-root must identify the exact Web checkout');
-const webRoot = path.resolve(args['web-root']);
+// esbuild resolves module symlinks. Canonicalize its working directory too, or
+// macOS /tmp → /private/tmp leaks a machine-specific entry key into the bundle.
+const webRoot = fs.realpathSync(path.resolve(args['web-root']));
 const outputRoot = path.resolve(args['output-root'] || path.join(appRoot, 'Matths'));
 const git = (...a) => execFileSync('git', ['-C', webRoot, ...a], { encoding: 'utf8' }).trim();
 if (git('rev-parse', 'HEAD') !== expected || git('status', '--porcelain', '--untracked-files=no')) throw Error('Exact clean Web commit required');

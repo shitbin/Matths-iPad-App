@@ -28,6 +28,10 @@ jobs:
       - name: Install pinned generation tools
         working-directory: ios
         run: npm ci --prefix tools --ignore-scripts --no-audit --no-fund
+      - name: Install contract search dependency
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: command -v rg >/dev/null || brew install ripgrep
       - name: Contracts and cross-repository drift
         working-directory: ios
         env:

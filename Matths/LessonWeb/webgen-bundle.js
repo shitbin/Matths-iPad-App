@@ -14402,9 +14402,9 @@ ${inlineMath(`x=${point}`)}에서 연속이 되게 하는 k는?`, value, "양쪽
     }
   });
 
-  // ../../../tmp/matths-web-reference-0907/ios-webgen-entry.cjs
+  // ios-webgen-entry.cjs
   var require_ios_webgen_entry = __commonJS({
-    "../../../tmp/matths-web-reference-0907/ios-webgen-entry.cjs"() {
+    "ios-webgen-entry.cjs"() {
       var templates = require_assessmentTemplates();
       var { getProblemGenerator } = require_problemGenerators();
       var { generateValidProblem } = require_utils();

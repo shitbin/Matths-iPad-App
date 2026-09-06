@@ -17,6 +17,8 @@
 
 ## 실기기용 컴파일
 
+Xcode와 Node.js 24 이상이 필요합니다. 계약 검사를 실행하려면 ripgrep(`rg`)도 설치되어 있어야 합니다. Xcode 빌드 단계에서도 Node 경로를 찾을 수 있어야 하며, 필요한 경우 `NODE_BINARY` 빌드 설정으로 지정할 수 있습니다.
+
 Xcode에서 Matths.xcodeproj를 열고 Matths 스킴, 실제 iPhone/iPad 또는 Any iOS Device (arm64)를 선택합니다. 배포 타깃은 iOS/iPadOS 17+, 번들 ID는 kr.matths.app, 위젯은 kr.matths.app.widget, 서버는 https://www.matths.kr입니다.
 
 ```bash

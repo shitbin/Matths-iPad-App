@@ -9,10 +9,13 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const web=process.argv[2]||process.env.MATTHS_WEB_REPO;
 if(!web)throw Error('MATTHS_WEB_REPO or first argument must point to exact Web source');
 const stage=fs.mkdtempSync(path.join(os.tmpdir(),'matths-assets-parity-'));
+const linkedWeb=path.join(stage,'linked-web');
+fs.symlinkSync(fs.realpathSync(web),linkedWeb,'dir');
 const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
 for(const [name,tz] of [['first','UTC'],['second','America/Los_Angeles']]) {
  const dir=path.join(stage,name);fs.mkdirSync(dir);
- const result=spawnSync(process.execPath,[path.join(root,'tools/generate-web-derived-assets.mjs'),'--web-root',web,
+ const inputRoot=name==='first'?fs.realpathSync(web):linkedWeb;
+ const result=spawnSync(process.execPath,[path.join(root,'tools/generate-web-derived-assets.mjs'),'--web-root',inputRoot,
   '--output-root',path.join(dir,'Matths'),'--manifest',path.join(dir,'manifest.json')],{env:{...process.env,TZ:tz,LANG:'C'},encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);
 }
