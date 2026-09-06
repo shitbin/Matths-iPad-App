@@ -28,6 +28,8 @@
 
 최초 GitHub Actions 실행에서 ripgrep 미설치 2건과 macOS `/tmp` 심볼릭 경로가 번들 entry key에 섞인 차이를 발견했다. CI 의존성을 명시하고 Web 원본 경로를 realpath로 정규화했다. 생성 검사는 실제 경로와 별도 심볼릭 링크 경로를 각각 입력으로 사용한다. 이 보정은 수학 생성기나 서버 정책을 변경하지 않는다.
 
+이어 GitHub의 Xcode 16.4에서 기존 승급·개념 모션의 CGFloat/Double 추론 오류를 확인했다. 각도에는 Double을 명시하고 좌표 배열에는 CGFloat을 명시해 값과 화면 동작을 보존하면서 구형 컴파일러의 모호성을 제거했다.
+
 ## 롤백
 
 화면 구조만 되돌릴 때는 `matths.productFlow.v2.enabled=false` 후 재실행한다. 서버 정합성·평가 경계 수정은 계속 적용된다. 전체 코드 롤백은 이 변경 커밋을 기준으로 판단한다. 새로운 progress 필드는 optional Codable이고 legacy practice 원본을 보존하므로 이전 데이터를 삭제하는 migration은 없다. 잠금 격리 기록은 과목 공개만으로 자동 replay하지 않는다.

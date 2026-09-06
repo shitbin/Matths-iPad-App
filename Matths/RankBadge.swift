@@ -859,7 +859,7 @@ private struct ChallengerAscensionUnderlay: View {
                 .offset(
                     x: -90 * (1 - outerReveal),
                     y: planeSize.height * 0.58 * (1 - outerReveal))
-                .rotationEffect(.degrees(-7 * (1 - outerReveal)))
+                .rotationEffect(.degrees(-7 * Double(1 - outerReveal)))
                 .opacity(0.54 * outerReveal)
 
                 RelativePolygon(points: [
@@ -872,7 +872,7 @@ private struct ChallengerAscensionUnderlay: View {
                 .offset(
                     x: 90 * (1 - outerReveal),
                     y: planeSize.height * 0.58 * (1 - outerReveal))
-                .rotationEffect(.degrees(7 * (1 - outerReveal)))
+                .rotationEffect(.degrees(7 * Double(1 - outerReveal)))
                 .opacity(0.54 * outerReveal)
 
                 RelativePolygon(points: [
@@ -1128,7 +1128,7 @@ private struct StandardTierPromotionUnderlay: View {
                     colors: [tier.promotionSecondary.opacity(0.22), tier.accentColor.opacity(0.56), tier.promotionSecondary.opacity(0.08)],
                     startPoint: .topLeading, endPoint: .bottomTrailing))
                 .offset(x: -80 * (1 - sideReveal), y: plane.height * 0.5 * (1 - sideReveal))
-                .rotationEffect(.degrees(-8 * (1 - sideReveal)))
+                .rotationEffect(.degrees(-8 * Double(1 - sideReveal)))
 
                 RelativePolygon(points: [
                     CGPoint(x: 0.67, y: 0), CGPoint(x: 0.98, y: 0),
@@ -1138,7 +1138,7 @@ private struct StandardTierPromotionUnderlay: View {
                     colors: [tier.promotionSecondary.opacity(0.08), tier.accentColor.opacity(0.56), tier.promotionSecondary.opacity(0.22)],
                     startPoint: .topTrailing, endPoint: .bottomLeading))
                 .offset(x: 80 * (1 - sideReveal), y: plane.height * 0.5 * (1 - sideReveal))
-                .rotationEffect(.degrees(8 * (1 - sideReveal)))
+                .rotationEffect(.degrees(8 * Double(1 - sideReveal)))
 
                 ForEach(0..<tier.promotionRayCount, id: \.self) { index in
                     let count = max(1, tier.promotionRayCount - 1)
@@ -1337,7 +1337,7 @@ private struct StandardTierPromotionBadge: View {
             if !hasSegmentedFrame {
                 mechanicalArtwork("back-frame", fallbackLayer: "back")
                     .scaleEffect(0.16 + backReveal * 0.84)
-                    .rotationEffect(.degrees(Double(tier.promotionLevel * 18) * (1 - backReveal)))
+                    .rotationEffect(.degrees(Double(tier.promotionLevel * 18) * Double(1 - backReveal)))
                     .opacity(backReveal * (hasV5Assets ? 1 : (1 - rearWingReveal)))
                     .shadow(
                         color: tier.accentColor.opacity(0.38 + Double(tier.promotionLevel) * 0.035),
@@ -1360,7 +1360,7 @@ private struct StandardTierPromotionBadge: View {
                 .offset(
                     x: -size * 0.18 * (1 - leftProngReveal),
                     y: size * 0.32 * (1 - leftProngReveal))
-                .rotationEffect(.degrees(-24 * (1 - leftProngReveal)), anchor: .bottom)
+                .rotationEffect(.degrees(-24 * Double(1 - leftProngReveal)), anchor: .bottom)
                 .scaleEffect(0.76 + leftProngReveal * 0.24)
                     .opacity(leftProngReveal)
 
@@ -1368,7 +1368,7 @@ private struct StandardTierPromotionBadge: View {
                 .offset(
                     x: size * 0.18 * (1 - rightProngReveal),
                     y: size * 0.32 * (1 - rightProngReveal))
-                .rotationEffect(.degrees(24 * (1 - rightProngReveal)), anchor: .bottom)
+                .rotationEffect(.degrees(24 * Double(1 - rightProngReveal)), anchor: .bottom)
                 .scaleEffect(0.76 + rightProngReveal * 0.24)
                     .opacity(rightProngReveal)
             }
@@ -1379,7 +1379,7 @@ private struct StandardTierPromotionBadge: View {
                     x: -size * 0.54 * (1 - leftWingReveal),
                     y: size * 0.1 * (1 - leftWingReveal))
                 .rotationEffect(
-                    .degrees(Double(-38 - tier.promotionLevel * 2) * (1 - leftWingReveal)),
+                    .degrees(Double(-38 - tier.promotionLevel * 2) * Double(1 - leftWingReveal)),
                     anchor: .bottom)
                 .scaleEffect(0.78 + leftWingReveal * 0.22)
                 .opacity(leftWingReveal)
@@ -1390,7 +1390,7 @@ private struct StandardTierPromotionBadge: View {
                     x: size * 0.54 * (1 - rightWingReveal),
                     y: size * 0.1 * (1 - rightWingReveal))
                 .rotationEffect(
-                    .degrees(Double(38 + tier.promotionLevel * 2) * (1 - rightWingReveal)),
+                    .degrees(Double(38 + tier.promotionLevel * 2) * Double(1 - rightWingReveal)),
                     anchor: .bottom)
                 .scaleEffect(0.78 + rightWingReveal * 0.22)
                 .opacity(rightWingReveal)
@@ -1400,7 +1400,7 @@ private struct StandardTierPromotionBadge: View {
             if !hasV5Assets || tier.promotionLevel >= 7 {
                 pieceArtwork("crown", fallbackLayer: "mid", fallbackPiece: .crown)
                 .offset(y: -size * 0.42 * (1 - crownReveal))
-                .rotationEffect(.degrees(Double(tier.promotionLevel * 8) * (1 - crownReveal)))
+                .rotationEffect(.degrees(Double(tier.promotionLevel * 8) * Double(1 - crownReveal)))
                 .scaleEffect(x: 0.42 + crownReveal * 0.58, y: 0.72 + crownReveal * 0.28)
                 .opacity(crownReveal)
                     .shadow(color: tier.promotionHighlight.opacity(0.56), radius: size * 0.06)
@@ -1420,7 +1420,7 @@ private struct StandardTierPromotionBadge: View {
             mechanicalArtwork("core", fallbackLayer: "front")
                 .offset(y: size * 0.28 * (1 - coreReveal))
                 .scaleEffect(0.06 + coreReveal * 0.94)
-                .rotationEffect(.degrees(Double(-tier.promotionLevel * 5) * (1 - coreReveal)))
+                .rotationEffect(.degrees(Double(-tier.promotionLevel * 5) * Double(1 - coreReveal)))
                 .opacity(coreReveal)
                 .shadow(color: tier.accentColor.opacity(0.9), radius: size * 0.08)
 
@@ -1536,7 +1536,7 @@ private struct StandardTierPromotionBadge: View {
                 x: revealScale,
                 y: revealHeight,
                 anchor: .center)
-            .rotationEffect(.degrees(foldedAngle * (1 - rearWingReveal)))
+            .rotationEffect(.degrees(foldedAngle * Double(1 - rearWingReveal)))
             .opacity(rearWingReveal)
             .shadow(color: tier.accentColor.opacity(0.66), radius: size * 0.1)
     }

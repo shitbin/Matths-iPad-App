@@ -151,7 +151,7 @@ final class MatthsIAPStore: ObservableObject {
         guard updatesTask == nil else { return }
         updatesTask = Task { [weak self] in
             for await update in Transaction.updates {
-                await self?.redeem(update, source: .listener)
+                _ = await self?.redeem(update, source: .listener)
             }
         }
         Task { await reconcileUnfinished() }

@@ -3952,11 +3952,16 @@ private struct CurriculumMotionCanvas: View {
         }
         if sceneID.contains("perspective") || sceneID.contains("distance") || sceneID.contains("ratio") || sceneID.contains("tile") || sceneID.contains("geometry") {
             let vanishing = CGPoint(x: size.width * 0.5, y: size.height * 0.18)
-            [0.10, 0.28, 0.72, 0.90].forEach { fraction in
+            let rays: [CGFloat] = [0.10, 0.28, 0.72, 0.90]
+            rays.forEach { fraction in
                 geometryLine([CGPoint(x: size.width * fraction, y: size.height * 0.84), vanishing], color: Tokens.text3, context: &context)
             }
-            [0.34, 0.49, 0.65, 0.80].forEach { fraction in
-                geometryLine([CGPoint(x: size.width * (0.16 + fraction * 0.20), y: size.height * fraction), CGPoint(x: size.width * (0.84 - fraction * 0.20), y: size.height * fraction)], color: Tokens.progressBlue, context: &context)
+            let rows: [CGFloat] = [0.34, 0.49, 0.65, 0.80]
+            rows.forEach { fraction in
+                let y = size.height * fraction
+                let left = CGPoint(x: size.width * (0.16 + fraction * 0.20), y: y)
+                let right = CGPoint(x: size.width * (0.84 - fraction * 0.20), y: y)
+                geometryLine([left, right], color: Tokens.progressBlue, context: &context)
             }
             geometryLabel("소실점 · 비례 · 반복 타일", at: CGPoint(x: size.width * 0.5, y: size.height * 0.91), color: Tokens.progressBlue, context: &context)
             return
