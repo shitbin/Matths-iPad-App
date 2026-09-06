@@ -23,7 +23,7 @@ const concepts = catalog.courses.flatMap((course) =>
 assert.equal(catalog.courses.length, 13, "13과목 정본을 유지해야 합니다.");
 assert.equal(concepts.length, 220, "220개념 정본을 유지해야 합니다.");
 
-assert.match(map, /store\.progressV2\.continueConcept\(\)/,
+assert.match(map, /store\.nextLearningConcept/,
   "기존 이어학습 우선순위를 그대로 사용해야 합니다.");
 assert.equal(
   (map.match(/CurriculumStoryCatalog\.resolve\(/g) || []).length,

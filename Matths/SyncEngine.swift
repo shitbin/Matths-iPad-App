@@ -54,6 +54,8 @@ struct SyncOp: Codable, Identifiable, Sendable {
     /// 독성 op 하나가 FIFO 맨 앞에서 뒤의 모든 기록 전송을 영원히 막지 않게 (B-09).
     /// 옵셔널인 이유: slot 과 같다(구 큐 파일 호환).
     var attemptCount: Int?
+    /// Never automatically replay a mutation created while its course was locked.
+    var heldCourseLocked: Bool?
 }
 
 /// JSON 한 겹만 담으면 되므로 최소 타입만 지원한다 (Codable 을 위해 필요)
@@ -427,6 +429,12 @@ final class SyncEngine: ObservableObject {
     /// 서버 진도 수신부 — AppStore 가 합친다(덮지 않는다).
     /// 오답과 같은 규약: 받는 쪽이 걸려 있을 때만 pull 한다.
     var onRemoteProgress: (([ServerAPI.RemoteConceptProgress], SyncAccountOwner) -> Void)?
+    var onCanonicalLearning: ((CanonicalLearningSnapshot, SyncAccountOwner) -> Void)?
+    private var progressResetEpoch: UInt64 = 0
+    private var needsProgressRefresh = false
+    private var lastProgressReadUptime: TimeInterval = 0
+    var hasPendingProgressReset: Bool { queue.contains { $0.kind == .progressReset } }
+    func beginProgressReset() { progressResetEpoch &+= 1 }
     var onRemoteStuckPoints: (([ServerAPI.RemoteStuckPoint], SyncAccountOwner) -> Void)?
 
     /// AppStore가 가진 성공 세션 generation의 단일 진실 공급자. SyncEngine init 시점에는
@@ -627,15 +635,32 @@ final class SyncEngine: ObservableObject {
         // canReachServer: 게스트 슬롯 + 잔존 토큰 조합으로 이전 계정의 진도를
         // 게스트 슬롯에 붓는 경로를 막는다 (S-02).
         guard canReachServer, !progressPulling else { return }
+        guard needsProgressRefresh || ProcessInfo.processInfo.systemUptime - lastProgressReadUptime >= 1 else { return }
+        guard !hasPendingProgressReset else { return }
+        let resetEpoch = progressResetEpoch
         guard let owner = currentAccountOwner(),
               let authorization = ServerAPI.captureAuthorization() else { return }
         progressPulling = true
-        defer { progressPulling = false }
+        needsProgressRefresh = false
+        defer {
+            progressPulling = false
+            if needsProgressRefresh { Task { await pullProgress() } }
+        }
         do {
+            await CurriculumAvailabilityStore.shared.refresh()
+            guard isCurrentAccountOwner(owner) else { return }
             let rows = try await ServerAPI.getLearning(authorization: authorization)
             // 응답을 기다리는 사이 계정이 바뀌었으면 다른 사람 진도를 합치지 않는다.
-            guard isCurrentAccountOwner(owner) else { return }
+            guard isCurrentAccountOwner(owner), resetEpoch == progressResetEpoch,
+                  !hasPendingProgressReset, !needsProgressRefresh else { return }
             if !rows.isEmpty { handler(rows, owner) }
+            if let receive = onCanonicalLearning {
+                let official = try await ServerAPI.getCanonicalLearning(authorization: authorization)
+                guard isCurrentAccountOwner(owner), resetEpoch == progressResetEpoch,
+                      !hasPendingProgressReset, !needsProgressRefresh else { return }
+                receive(official, owner)
+            }
+            lastProgressReadUptime = ProcessInfo.processInfo.systemUptime
             lastSyncedAt = Date()
             lastError = nil
         } catch {
@@ -867,6 +892,7 @@ final class SyncEngine: ObservableObject {
         syncSlotIfNeeded()                          // 계정이 바뀌었으면 여기서 갈아끼운다
         var op = op
         op.slot = loadedSlot                        // 누구 것인지 새겨 둔다
+        op.heldCourseLocked = curriculumMutationIsLocked(op) ? true : op.heldCourseLocked
         queue.append(op)
         pending = queue.count
         scheduleJournalAppend([op], for: loadedSlot)
@@ -1031,6 +1057,7 @@ final class SyncEngine: ObservableObject {
         guard let owner = currentAccountOwner(),
               loadedSessionGeneration == owner.sessionGeneration else { return }
         flushing = true
+        var sentLearningMutation = false
         defer { flushing = false }
 
         // 오프라인·토큰 만료여도 로컬 journal ack는 끝낸다. background/계정 전환이
@@ -1045,6 +1072,9 @@ final class SyncEngine: ObservableObject {
               let authorization = ServerAPI.captureAuthorization(),
               isCurrentAccountOwner(owner) else { return }
 
+        await CurriculumAvailabilityStore.shared.refresh()
+        guard isCurrentAccountOwner(owner) else { return }
+
         while true {
             // network await 중 들어온 tail도 actor disk ack를 받은 뒤에만 head 후보가 된다.
             guard await ensureJournalDurable(for: owner) else {
@@ -1053,9 +1083,28 @@ final class SyncEngine: ObservableObject {
                 }
                 return
             }
-            guard let op = queue.first else { return }
+            guard let op = queue.first else {
+                if sentLearningMutation {
+                    needsProgressRefresh = true
+                    await pullProgress()
+                }
+                return
+            }
             // 앞 계정 op 를 뒷 계정 토큰으로 올리면 남의 기록이 된다 — 어긋나면 멈춘다
             guard belongsToCurrentAccount(op) else { return }
+            if op.heldCourseLocked == true || curriculumMutationIsLocked(op) {
+                var held = op
+                held.heldCourseLocked = true
+                let persisted = await scheduleJournalQuarantine(
+                    held, statusCode: 423, remainingQueue: Array(queue.dropFirst()),
+                    for: owner.slot).task.value
+                guard isCurrentAccountOwner(owner), queue.first?.id == op.id else { return }
+                guard persisted else { lastError = "학습 기록을 기기에 보관하지 못했습니다."; return }
+                queue.removeFirst()
+                deadLettered += 1
+                pending = queue.count
+                continue
+            }
             do {
                 try await send(op, owner: owner, authorization: authorization)
                 // 응답을 기다리는 사이 로그아웃·계정 전환이 있었을 수 있다. 그러면
@@ -1082,6 +1131,9 @@ final class SyncEngine: ObservableObject {
                 pending = queue.count
                 lastSyncedAt = Date()
                 lastError = nil
+                if [.mastery, .topic, .progressSnapshot, .progressReset].contains(op.kind) {
+                    sentLearningMutation = true
+                }
             } catch {
                 // 전송 성공 경로와 같은 이유로, 응답 대기 중 계정이 바뀌었으면
                 // 큐를 건드리지 않는다.
@@ -1095,7 +1147,8 @@ final class SyncEngine: ObservableObject {
                       status != 401, status != 408, status != 429 else { return }
                 // ② — 독성 4xx. 횟수를 큐 파일에도 남겨 재시작 후에도 이어 센다.
                 var poisoned = op
-                let attempts = (op.attemptCount ?? 0) + 1
+                let attempts = status == 423 ? Self.maxToxicAttempts + 1 : (op.attemptCount ?? 0) + 1
+                if status == 423 { poisoned.heldCourseLocked = true }
                 poisoned.attemptCount = attempts
                 if attempts > Self.maxToxicAttempts {
                     // 격리 = 큐에서 빼되 지우지 않는다. 학생 학습 기록의 마지막
@@ -1319,11 +1372,22 @@ final class SyncEngine: ObservableObject {
         let stamped = operations.map { source -> SyncOp in
             var op = source
             op.slot = loadedSlot
+            op.heldCourseLocked = curriculumMutationIsLocked(op) ? true : op.heldCourseLocked
             return op
         }
         queue.append(contentsOf: stamped)
         pending = queue.count
         scheduleJournalAppend(stamped, for: loadedSlot)
+    }
+
+    private func curriculumMutationIsLocked(_ op: SyncOp) -> Bool {
+        if case .s(let courseID)? = op.payload["courseId"] {
+            return !CurriculumPolicy.isAvailable(courseID)
+        }
+        if case .s(let conceptID)? = op.payload["conceptId"], !conceptID.isEmpty {
+            return !CurriculumV2.canStudy(conceptID)
+        }
+        return false
     }
 
     // MARK: 서버 → 로컬 (pull)

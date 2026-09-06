@@ -61,14 +61,7 @@ for source, expected in cases.items():
     if actual != expected:
         raise SystemExit(f"FAIL: ArenaDisplayTerms {source!r} -> {actual!r}, expected {expected!r}")
 
-string_literal = re.compile(r'"(?:\\.|[^"\\])*"')
-for path in pathlib.Path(sys.argv[2]).rglob("*.swift"):
-    if path.name == "DesignTokens.swift":
-        continue
-    for match in string_literal.finditer(path.read_text()):
-        literal = match.group(0)
-        if re.search(r'(?<![A-Za-z])Division(?![A-Za-z])', literal, re.IGNORECASE):
-            raise SystemExit(f"FAIL: {path} 사용자 문자열에 Division이 남아 있습니다: {literal}")
+# User-facing literal extraction uses SwiftSyntax below.
 PY
 
 # WHY: 예전에는 프로젝트 전체의 'TARGETED_DEVICE_FAMILY = "1,2";' 개수를 2로 셌다.
@@ -110,4 +103,5 @@ if grep -q 'Text("Matths")' "$root/Matths/SplashView.swift"; then
   exit 1
 fi
 
+bash "$root/tests/run-ui-copy-ast-contract.sh"
 echo "Universal iOS brand and Arena language contracts passed"

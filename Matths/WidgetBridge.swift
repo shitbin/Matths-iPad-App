@@ -44,7 +44,7 @@ enum WidgetBridge {
     static func makeSnapshot(from store: AppStore) -> MatthsWidgetSnapshot {
         let dashboard = EventLog.dashboardSnapshot()
         let studiedToday = store.activityDays.contains(ActivityLog.dayString())
-        let next = store.progressV2.continueConcept()
+        let next = store.nextLearningConcept
         // 홈의 isPreStart 와 같은 조건(표시 소스 분기만 뺀다) — 위젯이 "지금 시작하기" 인데
         // 홈이 "이어서 풀기" 면 둘 중 하나는 거짓말이다.
         let preStart = dashboard.weeklyStudyMinutes == 0
@@ -55,7 +55,22 @@ enum WidgetBridge {
 
         var kind: MatthsWidgetSnapshot.MissionKind
         var title: String, eyebrow: String, cta: String, url: String
-        if preStart, let (course, _, concept) = next {
+        if ProductExperience.enabled, let action = store.resolvedTodayAction {
+            title = action.title; eyebrow = action.reason; cta = action.action
+            switch action.kind {
+            case .timedWork:
+                kind = .nextConcept; url = "matths://home"
+            case .academy:
+                kind = .nextConcept; url = "matths://home"
+            case .review:
+                kind = .review; url = "matths://review"
+            case .curriculum:
+                kind = preStart ? .firstConcept : .nextConcept
+                url = "matths://concept/\(action.id)"
+            case .explore:
+                kind = .nextConcept; url = "matths://curriculum"
+            }
+        } else if preStart, let (course, _, concept) = next {
             kind = .firstConcept
             title = concept.title; eyebrow = course.title; cta = "지금 시작하기"
             url = "matths://concept/\(concept.id)"
@@ -69,7 +84,7 @@ enum WidgetBridge {
             url = "matths://concept/\(concept.id)"
         } else {
             kind = .allDone
-            title = "전 과목 완료"; eyebrow = "오늘의 미션"; cta = "홈 열기"
+            title = "공개된 과정 학습 완료"; eyebrow = "오늘의 미션"; cta = "홈 열기"
             url = "matths://home"
         }
 

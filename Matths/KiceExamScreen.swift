@@ -77,11 +77,10 @@ struct KiceExamScreen: View {
                     // OMR 352pt는 compact 행 292 + 카드 좌우 24 + 스크롤 좌우 32 +
                     // Divider 여유 4를 모두 포함한 최소값이다. 선택지마다 44pt 히트 영역을
                     // 유지하면서도 852pt 화면에서 문제지에 약 499pt를 남긴다.
-                    if geo.size.width >= 900 || usesLandscapeSplitWorkspace {
+                    if (geo.size.width >= 900 || usesLandscapeSplitWorkspace) && !dynamicTypeSize.isAccessibilitySize {
                         let omrWidth = min(max(geo.size.width * 0.36, 352), 420)
-                        HStack(spacing: 0) {
+                        ResponsiveProblemWorkspace(spacing: 1, trailingWidth: omrWidth) {
                             pdfPane(exam)
-                            Divider().overlay(Tokens.line)
                             omrPane(exam).frame(width: omrWidth)
                         }
                     } else {

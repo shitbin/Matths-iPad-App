@@ -18,6 +18,9 @@ enum MatthsLayoutClass: String, Sendable {
 }
 
 enum UniversalLayoutPolicy {
+    static func usesProblemSplit(width: CGFloat, height: CGFloat, accessibilityText: Bool) -> Bool {
+        width >= 620 && height >= 240 && !accessibilityText
+    }
     /// Apple Pencil이 없는 iPhone은 손가락 입력이 꺼진 채 시작하면 풀이를 쓸 수 없다.
     /// iPad는 기존 Pencil 우선·팜 리젝션 동작을 그대로 유지한다.
     static func defaultsToFingerDrawing(on device: MatthsDeviceClass) -> Bool {

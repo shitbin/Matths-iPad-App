@@ -153,6 +153,7 @@ struct ConceptScreenV2: View {
 
     var body: some View {
         if let id = store.selectedConceptV2ID,
+           CurriculumV2.canStudy(id),
            let (course, unit, concept) = CurriculumV2.concept(id) {
             content(course: course, unit: unit, concept: concept)
                 .id(id)
@@ -181,7 +182,7 @@ struct ConceptScreenV2: View {
     /// 보여 주고, 과목·단원·예상 시간·진도라는 선택 근거를 함께 준다.
     @ViewBuilder
     private var conceptStart: some View {
-        if let (course, unit, concept) = store.progressV2.continueConcept() {
+        if let (course, unit, concept) = store.nextLearningConcept {
             let percent = store.progressV2.percent(for: concept)
             let minutes = concept.lesson?.estimatedMinutes ?? 15
 

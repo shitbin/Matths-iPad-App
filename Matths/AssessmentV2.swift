@@ -187,6 +187,21 @@ struct AttemptStoreV2 {
         if let data = try? Data(contentsOf: fileURL),
            let list = try? JSONDecoder().decode([AssessmentAttemptV2].self, from: data) {
             s.attempts = list
+            let legacy = list.filter { $0.serverBacked != true }
+            if !legacy.isEmpty {
+                let backup = DataScope.url("legacy-practice-assessments.json")
+                do {
+                    var preserved = (try? JSONDecoder().decode([AssessmentAttemptV2].self, from: Data(contentsOf: backup))) ?? []
+                    var ids = Set(preserved.map(\.id))
+                    for item in legacy where ids.insert(item.id).inserted { preserved.append(item) }
+                    try JSONEncoder().encode(preserved).write(to: backup, options: .atomic)
+                    s.attempts = list.filter { $0.serverBacked == true }
+                } catch {
+                    // Keep the source file intact if preservation fails. Official
+                    // query methods below still filter by serverBacked.
+                    NSLog("Legacy practice preservation deferred")
+                }
+            }
         }
         return s
     }
@@ -225,7 +240,7 @@ struct AttemptStoreV2 {
 
     // ── 웹 상태 계산과 동일한 조회들 ──────────────────────────────
     func submitted(scopeKey: String) -> [AssessmentAttemptV2] {
-        attempts.filter { $0.scopeKey == scopeKey && $0.submittedAt != nil }
+        attempts.filter { $0.serverBacked == true && $0.scopeKey == scopeKey && $0.submittedAt != nil }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
@@ -237,7 +252,7 @@ struct AttemptStoreV2 {
     /// 생겼을 수 있어 답이 가장 많이 적힌 회차를 우선하고, 동률이면 최신 회차를 연다.
     func openAttempt(scopeKey: String) -> AssessmentAttemptV2? {
         attempts
-            .filter { $0.scopeKey == scopeKey && $0.submittedAt == nil }
+            .filter { $0.serverBacked == true && $0.scopeKey == scopeKey && $0.submittedAt == nil }
             .max { lhs, rhs in
                 let lhsAnswered = lhs.answers.filter {
                     !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -324,14 +339,19 @@ enum PaperFactory {
         // 중복 제거 후에도 계약 수를 채울 만큼 계산형 후보를 미리 요청한다.
         let generatedPerConcept = max(
             3,
-            Int(ceil(Double(plan.count * 2) / Double(max(1, conceptSubs.count))))
+            Int(ceil(Double(plan.count * 8) / Double(max(1, conceptSubs.count))))
         )
         for (ci, pair) in conceptSubs.enumerated() {
             for (cj, conceptId) in pair.1.conceptIds.enumerated() {
-                pool += WebGen.practiceProblems(
-                    courseId: course.courseId, unitId: pair.0.unitId, conceptId: conceptId,
-                    count: generatedPerConcept,
-                    seed: seed &+ UInt64(4000 + ci * 37 + cj))
+                // Local practice only: bounded retries diversify a thin pool without
+                // accepting a shortened paper or inventing non-Web questions.
+                for round in 0..<3 {
+                    pool += WebGen.practiceProblems(
+                        courseId: course.courseId, unitId: pair.0.unitId, conceptId: conceptId,
+                        count: generatedPerConcept,
+                        seed: seed &+ UInt64(4000 + ci * 37 + cj + round * 811))
+                    if Set(pool.map(\.statement)).count >= plan.count { break }
+                }
             }
         }
 
@@ -406,6 +426,7 @@ enum PaperFactory {
 
         // 심화는 시험지 뒤쪽에 (웹 시험지 관례: 뒤로 갈수록 어렵다)
         let ordered = picked.prefix(bankTarget) + advancedPicked
+        guard ordered.count == plan.count else { return [] }
         return ordered.enumerated().map { i, p in
             let isAdvanced = p.typeKey.hasPrefix("adv-")
             return PaperQuestion(no: i + 1, typeKey: p.typeKey, prompt: p.statement,

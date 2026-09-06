@@ -43,6 +43,7 @@ struct RootView: View {
     @Environment(\.colorScheme) private var systemColorScheme
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.dynamicTypeSize) private var navigationTypeSize
 
     /// 두 바가 지금 접혀 있는지 (사파리형 자동 숨김).
     @State private var chromeHidden = false
@@ -71,6 +72,10 @@ struct RootView: View {
     }
 
     var body: some View {
+        GeometryReader { viewport in rootContent(width: viewport.size.width) }
+    }
+
+    private func rootContent(width: CGFloat) -> some View {
         Group {
             if store.isSessionMode {
                 sessionContent
@@ -86,7 +91,10 @@ struct RootView: View {
                         if !(keyboardVisible && verticalSizeClass == .compact) { topChrome }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if !keyboardVisible { bottomChrome }
+                        if !keyboardVisible && !usesSidebar(width: width) { bottomChrome }
+                    }
+                    .safeAreaInset(edge: .leading, spacing: 0) {
+                        if usesSidebar(width: width) { LearningFlowSidebar() }
                     }
             }
         }
@@ -102,6 +110,7 @@ struct RootView: View {
         // 화면이 바뀌면 접힘을 푼다. 새 화면의 스크롤 위치와 무관하게, 도착하자마자
         // 탭바가 없는 화면을 만나면 "메뉴가 어디 갔지" 가 된다.
         .onChange(of: store.route) { _, _ in resetChrome() }
+        .onChange(of: store.serverProfile?.role) { _, _ in store.validateWorkspace() }
         #if DEBUG
         .onAppear {
             if DemoMode.isOn,
@@ -199,10 +208,11 @@ struct RootView: View {
     /// Stage Manager 납작창에서 두 규칙이 어긋난다.
     /// iPad 전체화면·Split View(세로 regular)는 종전 그대로 언제나 두 바를 세운다.
     private var autoHidesChrome: Bool {
-        guard !voiceOverEnabled else { return false }
-        return UniversalLayoutPolicy.usesCompactTopChrome(
-            on: deviceClass,
-            vertical: verticalLayoutClass)
+        false
+    }
+
+    private func usesSidebar(width: CGFloat) -> Bool {
+        ProductExperience.enabled && width >= 900 && !navigationTypeSize.isAccessibilitySize
     }
 
     /// 두 바가 깔고 앉는 면. 바 자신의 배경과 **같은 색**이어야 한다 —
@@ -227,7 +237,9 @@ struct RootView: View {
 
     @ViewBuilder private var topChrome: some View {
         Group {
-            if autoHidesChrome {
+            if ProductExperience.enabled {
+                LearningFlowTopBar()
+            } else if autoHidesChrome {
                 AppTopBar().modifier(CollapsibleChrome(hidden: chromeHidden, anchor: .bottom))
             } else {
                 AppTopBar()
@@ -378,7 +390,11 @@ struct RootView: View {
             ScrollView {
                 Group {
                     switch store.route {
-                    case .home:       HomeScreen()
+                    case .home:
+                        if ProductExperience.enabled { TodayLearningScreen() } else { HomeScreen() }
+                    case .learn: LearningHubScreen()
+                    case .records: LearningRecordsScreen()
+                    case .me: MeHubScreen()
                     case .curriculum: CurriculumV2MapScreen()   // 특례 분기가 먼저 잡는다 — 방어용
                     case .concept:    ConceptScreenV2()
                     case .assess:     AssessmentScreen()
@@ -1467,12 +1483,13 @@ struct NativeTutorialOverlay: View {
     @MainActor
     private func settle(on route: AppStore.Route) async {
         spotlightVisible = false
-        store.route = route
-        if !reduceMotion && store.motionOn {
-            try? await Task.sleep(for: .milliseconds(380))
+        withAnimation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.2),
+                      completionCriteria: .logicallyComplete) {
+            store.route = route
+        } completion: {
+            guard run != nil, store.route == route else { return }
+            spotlightVisible = true
         }
-        guard run != nil else { return }
-        spotlightVisible = true
     }
 
     private func advance() {
@@ -1546,7 +1563,20 @@ struct MainTabBar: View {
     // 채점 Pro(도구)는 평가센터의 진입 카드로, AI 튜터(도구)는 상단바 버튼으로 —
     // Route enum 과 두 화면은 그대로라 기존 라우팅(.pro/.chat)은 계속 동작한다.
     private var items: [Item] {
-        [
+        if ProductExperience.enabled {
+            if store.workspace != .student {
+                return [
+                    .init(route: .academy, title: store.workspace.title, icon: "building.2"),
+                    .init(route: .notifications, title: "알림", icon: "bell"),
+                    .init(route: .me, title: "나", icon: "person.crop.circle"),
+                ]
+            }
+            return StudentDestination.allCases.map {
+                .init(route: $0.route, title: $0.title, icon: $0.icon,
+                      badge: $0 == .records ? store.dueReviewCount : nil)
+            }
+        }
+        return [
             .init(route: .home,       title: "홈",       icon: "house.fill"),
             .init(route: .curriculum, title: "커리큘럼", icon: "square.grid.2x2.fill"),
             .init(route: .assess,     title: "평가센터", icon: "flag.fill"),
@@ -1583,7 +1613,7 @@ struct MainTabBar: View {
                 // 여섯 칸 기준. 350pt 면 한 칸 58pt 라 네 글자 한글 이름(약 44pt)이
                 // 좌우 여백과 0.8 축소를 포함해 들어간다. 320pt Slide Over(가용 312pt)는
                 // 이 문턱을 못 넘어 아이콘 전용으로 떨어진다.
-                .frame(minWidth: 350)
+                .frame(minWidth: ProductExperience.enabled ? 300 : 350)
             tabRow(showTitles: false)
         }
         .adaptiveBarPadding()
@@ -2298,7 +2328,7 @@ private enum DashboardActivityCache {
 /// 홈 제목(stateTitle)과 미션 히어로가 이 하나를 같이 쓴다.
 @MainActor
 private func nextMission(in store: AppStore) -> (course: CourseV2, concept: ConceptV2)? {
-    guard let (course, _, concept) = store.progressV2.continueConcept() else { return nil }
+    guard let (course, _, concept) = store.nextLearningConcept else { return nil }
     return (course, concept)
 }
 

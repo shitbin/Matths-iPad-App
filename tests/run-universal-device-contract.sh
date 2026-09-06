@@ -51,7 +51,8 @@ grep -Fq 'ViewThatFits(in: .horizontal)' "$root_view"
 grep -Fq 'tabRow(showTitles: true)' "$root_view"
 grep -Fq 'tabRow(showTitles: false)' "$root_view"
 grep -Fq 'accessibilityLabel(accessibilityLabel(for: item))' "$root_view"
-grep -Fq 'if !keyboardVisible { bottomChrome }' "$root_view"
+grep -Fq 'if !keyboardVisible && !usesSidebar(width: width) { bottomChrome }' "$root_view"
+grep -Fq 'width >= 900 && !navigationTypeSize.isAccessibilitySize' "$root_view"
 grep -Fq 'keyboardVisible && verticalSizeClass == .compact' "$root_view"
 
 # 퀵 연습 가로 화면은 문제/메모/답/제출을 한 화면에 두되, 메모판을 단순 장식처럼

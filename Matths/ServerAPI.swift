@@ -288,6 +288,22 @@ enum ServerAPI {
         return AuthorizationSnapshot(token: token)
     }
 
+    static func isCurrentAuthorization(_ snapshot: AuthorizationSnapshot) -> Bool {
+        #if DEBUG
+        if DemoMode.isOn { return snapshot.token == nil }
+        #endif
+        return snapshot.token != nil && TokenBox.load() == snapshot.token
+    }
+
+    /// Default arguments are evaluated by the caller before an async executor hop.
+    /// A missing token is captured too, so absence cannot turn into another account's token.
+    static func authorizationForCurrentRequest() -> AuthorizationSnapshot {
+        #if DEBUG
+        if DemoMode.isOn { return AuthorizationSnapshot(token: nil) }
+        #endif
+        return AuthorizationSnapshot(token: TokenBox.load())
+    }
+
     static func me() async throws -> ServerUser {
         let res: MeResponse = try await request("GET", "/api/v1/me", body: nil, authed: true)
         return res.user
@@ -1298,8 +1314,8 @@ enum ServerAPI {
         var attendance: AcademyAttendanceDashboard.Record
     }
 
-    static func academyDashboard() async throws -> AcademyDashboard {
-        try await request("GET", "/api/v1/academy/student", body: nil, authed: true)
+    static func academyDashboard(authorization: AuthorizationSnapshot? = nil) async throws -> AcademyDashboard {
+        try await request("GET", "/api/v1/academy/student", body: nil, authed: true, authorization: authorization)
     }
 
     static func academyWeek(_ weekID: String) async throws -> AcademyWeekResponse {
@@ -4253,6 +4269,9 @@ enum ServerAPI {
         }
         var req = URLRequest(url: url)
         req.httpMethod = method
+        if path == "/api/v1/curriculum" || path == "/api/v1/learning" {
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+        }
         req.timeoutInterval = 15
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(clientBuildVersion, forHTTPHeaderField: "X-Matths-Client-Version")
@@ -4285,9 +4304,21 @@ enum ServerAPI {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         let (data, resp) = try await URLSession.shared.data(for: req)
+        if authed, TokenBox.load() != requestToken { throw CancellationError() }
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             let decoded = try? JSONDecoder().decode(ServerAPIError.self, from: data)
+            if status == 423, decoded?.code == "COURSE_IN_DEVELOPMENT" {
+                let parts = path.split(separator: "/")
+                let course = parts.firstIndex(of: "learning").flatMap { index in
+                    parts.indices.contains(index + 1) ? String(parts[index + 1]) : nil
+                } ?? (body?["courseId"] as? String)
+                #if canImport(UIKit)
+                if let course { await CurriculumAvailabilityStore.shared.deny(course) }
+                #else
+                _ = course
+                #endif
+            }
             // 401 이라도 세션 만료가 아닌 경우가 있다 — 탈퇴 비밀번호 오류는 서버가
             // HTTP_401 로 돌려준다. 미들웨어가 내는 UNAUTHORIZED / TOKEN_REVOKED
             // (또는 본문 없음)만 토큰을 지우고 로그아웃한다.

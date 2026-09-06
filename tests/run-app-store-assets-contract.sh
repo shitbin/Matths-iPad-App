@@ -20,7 +20,12 @@ done
 grep -q '^| 음성 명령 | 표준' "$ROOT/appstore/accessibility-ko.md"
 grep -q '^| 자막 | 개념' "$ROOT/appstore/accessibility-ko.md"
 grep -q '^| 오디오 설명 | 시각' "$ROOT/appstore/accessibility-ko.md"
-[ "$(grep -c 'CURRENT_PROJECT_VERSION = 16;' "$ROOT/Matths.xcodeproj/project.pbxproj")" -eq 4 ]
+# Build 16 submission records remain historical evidence. New development builds
+# must use one consistent app/extension number without rewriting that evidence.
+versions=$(sed -n 's/.*CURRENT_PROJECT_VERSION = \([0-9]*\);/\1/p' "$ROOT/Matths.xcodeproj/project.pbxproj")
+[ "$(printf '%s\n' "$versions" | wc -l | tr -d ' ')" -eq 4 ]
+[ "$(printf '%s\n' "$versions" | sort -u | wc -l | tr -d ' ')" -eq 1 ]
+[ "$(printf '%s\n' "$versions" | head -n 1)" -ge 16 ]
 grep -q '^# App Review 메모 — build 16$' "$ROOT/appstore/review-notes-ko.md"
 grep -q '^# App Store Connect 개인정보 응답 — build 16$' "$ROOT/appstore/app-privacy-ko.md"
 grep -q '^# App Store Connect 입력 기준 — build 16$' "$ROOT/appstore/app-store-connect-inputs-ko.md"

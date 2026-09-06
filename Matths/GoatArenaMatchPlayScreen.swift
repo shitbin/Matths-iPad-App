@@ -1140,7 +1140,7 @@ struct GoatArenaMatchPlayScreen: View {
             workspaceStatusBar
                 .frame(height: statusHeight)
 
-            HStack(alignment: .top, spacing: gap) {
+            ResponsiveProblemWorkspace(spacing: gap, leadingWidth: problemWidth) {
                 workspaceQuestionColumn(height: workspaceHeight)
                     .frame(width: problemWidth, height: workspaceHeight)
 

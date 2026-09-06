@@ -1,74 +1,55 @@
-# Matths iOS / iPadOS 앱 — TestFlight Build 16 기준
+# Matths iPhone·iPad — 2026-09-07 검수 개선본
 
-이 저장소는 App Store Connect/TestFlight에 제출한 Matths 네이티브 앱의 현재 소스 스냅샷입니다.
-별도 iPad 검토용 저장소이지만, 실제 배포 앱과 동작 조건을 맞추기 위해 iPad 전용으로 타깃을
-변형하지 않고 iPhone+iPad 유니버설 설정(`TARGETED_DEVICE_FAMILY = "1,2"`)을 그대로 보존했습니다.
+현재 main은 기존 전달 소스 2cee63b를 수정한 **1.0 (17)** 개발본입니다. 기존 TestFlight 빌드와 코드가 달라졌으며, 이 개선본을 TestFlight/App Store에 업로드한 상태는 아닙니다.
 
-## 기준 상태
+공개 과목·공식 평가·진도 정합성, 학생의 오늘/학습/Arena/기록/나 흐름, 적응형 문제·메모 작업대, 비밀번호 변경 및 웹 파생 자산 생성 도구를 포함합니다.
 
-- 원본 소스 커밋: `2cee63b217f6bdeaa51bdd5a2a8751a48b1f1f38`
-- 앱 버전: `1.0 (16)`
-- 앱 번들 ID: `kr.matths.app`
-- 위젯 번들 ID: `kr.matths.app.widget`
-- 지원 OS: iOS/iPadOS 17.0 이상
-- 운영 서버: `https://www.matths.kr`
-- 포함 타깃: `Matths`, `MatthsWidget`
+## 먼저 읽기
 
-전체 화면·기능·서버 통신·로컬 AI 구성은
-[`PACKAGE-FEATURE-INVENTORY.md`](PACKAGE-FEATURE-INVENTORY.md)에 정리되어 있습니다.
-포함/제외 파일과 검증 내역은 [`PACKAGE-MANIFEST.md`](PACKAGE-MANIFEST.md)를 보세요.
+- [검증 결과와 남은 출시 조건](docs/RELEASE_PARITY_VERDICT.md)
+- [화면·학습 흐름 변경](docs/UX_CHANGES_0907.md)
+- [웹 정본과 iOS 소유권](docs/BUSINESS_AUTHORITY_MAP.md)
+- [공개 과목 계약](docs/COURSE_AVAILABILITY_CONTRACT.md)
+- [공식 평가·연습·메모 경계](docs/ASSESSMENT_OFFICIAL_PRACTICE_BOUNDARY.md)
+- [실제 StoreKit 거래 증거 상태](docs/STOREKIT_SANDBOX_EVIDENCE.md)
+- [웹 생성 자산 manifest](WEB_DERIVED_ASSET_MANIFEST.json)
+- [기존 전체 기능 목록](PACKAGE-FEATURE-INVENTORY.md)
 
-## 바로 컴파일하기
+## 실기기용 컴파일
 
-1. 저장소를 clone합니다.
-2. Xcode에서 `Matths.xcodeproj`를 엽니다.
-3. `Matths` 스킴을 선택합니다.
-4. 실제 iPhone/iPad 또는 `Any iOS Device (arm64)`를 선택합니다.
-5. 로컬 실행은 Run, 배포 검증은 Product > Archive를 실행합니다.
-
-서명 없이 컴파일·링크만 확인하려면 저장소 루트에서 실행합니다.
+Xcode에서 Matths.xcodeproj를 열고 Matths 스킴, 실제 iPhone/iPad 또는 Any iOS Device (arm64)를 선택합니다. 배포 타깃은 iOS/iPadOS 17+, 번들 ID는 kr.matths.app, 위젯은 kr.matths.app.widget, 서버는 https://www.matths.kr입니다.
 
 ```bash
-xcodebuild \
-  -project Matths.xcodeproj \
-  -scheme Matths \
-  -configuration Release \
-  -sdk iphoneos \
-  -destination 'generic/platform=iOS' \
-  CODE_SIGNING_ALLOWED=NO \
-  build
+xcodebuild -project Matths.xcodeproj -scheme Matths -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
 ```
 
-실기기 설치나 Archive 업로드에는 Apple Developer 팀 권한과 해당 번들 ID의 서명 자산이
-필요합니다. 프로젝트에는 현재 배포 설정이 보존돼 있으므로, 같은 Apple 팀 권한이 있는
-개발자는 Automatic Signing으로 빌드할 수 있습니다.
+Release는 clean Git checkout을 요구합니다. 실제 설치·Archive 업로드에는 원래 Apple Developer 팀의 서명 권한이 필요합니다. 서명·거래·서버·실기 검증은 컴파일 성공과 별개입니다.
 
-## 로컬 AI와 llama 프레임워크
+## llama와 모델
 
-`Frameworks/llama.xcframework`에는 실제 iPhone/iPad 배포 앱에 필요한 `ios-arm64` 슬라이스만
-포함되어 있습니다. 전체 개발용 857MB XCFramework를 넣지 않았고, 앱이 사용하지 않는
-시뮬레이터·macOS·tvOS·visionOS 슬라이스와 dSYM도 제외했습니다.
+저장소에는 배포용 ios-arm64 llama 프레임워크만 포함합니다. 전체 개발용 XCFramework, GGUF, 인증서, 프로비저닝 프로필, 운영 비밀번호는 포함하지 않습니다. GGUF는 앱의 모델 준비 흐름에서 검증 후 내려받습니다.
 
-GGUF 모델 가중치는 저장소와 앱 번들에 포함하지 않습니다. 앱에서 로컬 AI 기능을 처음
-준비할 때 지정된 HTTPS 주소에서 내려받고 크기·헤더·SHA-256을 검증합니다.
+배포 바이너리에서 확인된 llama 원본은 db4480bc802dda303627830833e0e6c2a7c47297입니다. 시뮬레이터 QA는 해당 원본에서 별도로 빌드한 arm64-simulator 프레임워크와 tools/prepare-uiqa-project.mjs로 생성하는 무시된 QA 프로젝트를 사용합니다. 배포 프로젝트의 라이브러리와 번들 ID를 변경하지 않습니다.
 
-따라서 이 저장소 상태 그대로 실제 arm64 iPhone/iPad 및 App Store/TestFlight용 빌드가
-가능합니다. Apple Silicon/Xcode 시뮬레이터용 llama 슬라이스는 의도적으로 없으므로 로컬 AI가
-링크되는 전체 앱을 시뮬레이터 대상으로 빌드하려면 별도 시뮬레이터 프레임워크가 필요합니다.
+## 검증·웹 자산 재생성
 
-## 검증
+웹 원본은 is4553807/Matths-Official의 e3cc06360415a4c60460895b01f06a3248dae665를 읽기 전용으로 사용합니다.
 
 ```bash
-for test in tests/run-*.sh; do bash "$test"; done
+npm ci --prefix tools --ignore-scripts --no-audit --no-fund
+node tools/verify-web-derived-assets.mjs /path/to/exact-web-checkout
+MATTHS_WEB_REPO=/path/to/exact-web-checkout node scripts/run-contract-suite.mjs /tmp/matths-test-results
 ```
 
-패키징 시점에 Release/iphoneos Swift 컴파일, 링크, 앱 번들 생성, llama 임베드가 통과했습니다.
-원본 Git 추적 파일 663개와 패키지 파일의 byte 비교도 일치했고, 인증서·프로비저닝 프로필·
-운영 비밀번호·`.env`·GGUF·DerivedData·IPA는 포함하지 않았습니다.
+원본에서 자산을 갱신할 때:
 
-## 동일성 범위
+```bash
+node tools/generate-web-derived-assets.mjs --web-root /path/to/exact-web-checkout
+node scripts/auditCurriculumEditorial.js
+```
 
-소스, 프로젝트 설정, 앱 자산, 위젯, StoreKit 구성, App Store 자료, 검증 스크립트 및 실제
-배포용 llama arm64 코드를 기준 스냅샷과 동일하게 제공합니다. 다만 각 개발자가 새로 만든
-아카이브는 Apple 서명, 빌드 시각, 새 Git 커밋 정보 때문에 기존 TestFlight 바이너리와
-바이트 단위로 동일하지는 않습니다. 사용자에게 보이는 기능과 실행 코드는 같은 기준입니다.
+생성기는 실제 Web YAML·정책·문제 생성기를 입력으로 쓰고, 앱의 강의 설명·레거시 연결은 별도 native-curriculum-overlay.json으로 보존합니다. 동일 입력의 두 번 생성 결과와 hash를 검증하며 웹 저장소에는 쓰지 않습니다.
+
+## 이전 전달본
+
+원본 소스 기준은 2cee63b217f6bdeaa51bdd5a2a8751a48b1f1f38이고, 최초 GitHub 전달 커밋은 726762f7b13614932ccaac866752b5538ed0bba2입니다. PACKAGE-MANIFEST.md는 그 원본 ZIP의 역사적 기록입니다. 현재 소스의 출시 판단에는 위 최신 검증 문서를 사용하세요.

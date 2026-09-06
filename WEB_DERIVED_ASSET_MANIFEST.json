@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "webCommit": "e3cc06360415a4c60460895b01f06a3248dae665",
+  "sourceDateEpoch": "1788349307",
+  "generatorVersion": "cf0445deaab71ff4b2a97894d7149b06394ae5730186924493261303d600539f",
+  "inputs": [
+    {
+      "path": "curriculum_folder/kr-2022-ai-math.yaml",
+      "sha256": "f1d1ee21ec6a3c5c585bd73110e7ae53d0b345e3e123208c1dfd4f519caceb77"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-algebra.yaml",
+      "sha256": "66e524e726d723d99ed72c104e1c65f3872b38890d57446743e2d147a0a8b21c"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-calculus-1.yaml",
+      "sha256": "fec520408b9e5b38b6f0e0e74a29a898b57331090927b97d56f46c1cfa2dcb9c"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-calculus-2.yaml",
+      "sha256": "8f24fa915563eb9e964288d54957910efb3a8170135bb05cec473caa0581a68f"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-economics-math.yaml",
+      "sha256": "05b380472d87312e5d3855541fc049204159008530a71600678f6ca452e10309"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-g10-math-curri.yaml",
+      "sha256": "77df369ffa30e3a8086be55320a5de10314d03071c471a3475f137c0b242eff4"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-geometry.yaml",
+      "sha256": "7fd39ac411742f1bdf4ec4c4f3d5c940aece0754234bee30a4892bb1a325719b"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-math-and-culture.yaml",
+      "sha256": "3781f55a43039c0527b5650cfbcb6e6c9f02ec5f97d34884bc9add93515b981e"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-math-research-project.yaml",
+      "sha256": "d172d3e1fd3762bd88b031c83c775838bd5e706a5924b7df06c044f6a8cde49e"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-practical-statistics.yaml",
+      "sha256": "c52a1c5d55b1f49450c3c21b87ba41536a21768c9e64554c17cf367d69eb77a1"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-probability-statistics.yaml",
+      "sha256": "76f2ed2b8d8e6af48e37280ab83e7a45b019b5ec6b8490c27a640074dc971166"
+    },
+    {
+      "path": "curriculum_folder/kr-2022-vocational-math.yaml",
+      "sha256": "30cec0228cce3c5eee7f9722b36d27291592aa898bdffd30c94cb5734d3e6eed"
+    },
+    {
+      "path": "services/assessmentReferences/mockExamCatalog.js",
+      "sha256": "434a42030726699d1c056df099e3fd9f0e7ee3d3bac3186bfc8041697caf58f6"
+    },
+    {
+      "path": "services/assessmentService.js",
+      "sha256": "b7bbaee9028da3e3a829b324f75e42d9936c45e3bc212e051feca89082f7fe26"
+    },
+    {
+      "path": "services/assessmentTemplates/algebra/exponentialLogarithmicFunctions.js",
+      "sha256": "b47083cfce075420aae921c3ac99454069e339d304a96b40732e76cf99023e87"
+    },
+    {
+      "path": "services/assessmentTemplates/algebra/sequences.js",
+      "sha256": "b353a380cb28bdd19c6bd336beaca4355a95793c61d44dc649e488c830ed2a2b"
+    },
+    {
+      "path": "services/assessmentTemplates/algebra/trigonometricFunctions.js",
+      "sha256": "4bcc20d5138707104654905df982ff1a6019e277aeed1e8cfd1a597ae5e2f9fb"
+    },
+    {
+      "path": "services/assessmentTemplates/calculus1/differentiation.js",
+      "sha256": "a2baa391020e45d7ea7339eb25bba471108219d46b993857338669d06bc7ceb8"
+    },
+    {
+      "path": "services/assessmentTemplates/calculus1/integration.js",
+      "sha256": "0bcda6fe72664504b7b389153cf668ca89611b2d3f2ce15edc441af821a72141"
+    },
+    {
+      "path": "services/assessmentTemplates/calculus1/limitsAndContinuity.js",
+      "sha256": "f337b96b9900d3b101d4256dec09305fa70abbc8573a34c82aee8f34c8582e04"
+    },
+    {
+      "path": "services/assessmentTemplates/commonMath/index.js",
+      "sha256": "cd5a4694dddde42d7cf87af33cd076377333106f177b580b2999179187637f95"
+    },
+    {
+      "path": "services/assessmentTemplates/index.js",
+      "sha256": "629d9e06287efe021c6df71b2518cfe2d8bb240d1c621fade4a5259c05e4cfa9"
+    },
+    {
+      "path": "services/assessmentTemplates/probabilityStatistics/counting.js",
+      "sha256": "9f8e3879824354e2f5ebde147c6ecfce780e0d752d6a1c0f72da47086cdfcbba"
+    },
+    {
+      "path": "services/assessmentTemplates/probabilityStatistics/probability.js",
+      "sha256": "705e39a4062910d33e7e5c66a40693bfe589a714e2aca43700366622beb5521f"
+    },
+    {
+      "path": "services/assessmentTemplates/probabilityStatistics/statistics.js",
+      "sha256": "1319c392a29936202cced600d679469468faed2630dc6487caa117f9ad5b4875"
+    },
+    {
+      "path": "services/assessmentTemplates/shared.js",
+      "sha256": "77ab0fd03fc9275d8e454046bc2e48fb52ff08c81b684d0b353adb2173a456d4"
+    },
+    {
+      "path": "services/commonMathLearningCatalog.js",
+      "sha256": "a6ff412ec6fc2ffc3693e3e9ed758c334dc04d11e8d76e8c8bd968d4198b4449"
+    },
+    {
+      "path": "services/curriculumService.js",
+      "sha256": "08abe58aeac13d5f73677a63a6e1fa8fedc0a34c769934d507d98ac8a22639ae"
+    },
+    {
+      "path": "services/examBankSource.js",
+      "sha256": "9526c1048286eda6785afeb3c5ce48ad88abdddc79a4bb1ec83691a0724b2a58"
+    },
+    {
+      "path": "services/mathAnswerService.js",
+      "sha256": "3ddb852089756c6e912cfdf5ffc4c2893a0064a38121884fa20cadf70069ca49"
+    },
+    {
+      "path": "services/mathTextService.js",
+      "sha256": "113465e26d508786843a79b93b14eb5c15d025d0147e752c5409a8e20d2904da"
+    },
+    {
+      "path": "services/problemGenerators/algebra/arithmeticSequences.js",
+      "sha256": "3e5a72638997aa9f470ec7f10b914ef1eec05d733b43e597adec93d13ba16857"
+    },
+    {
+      "path": "services/problemGenerators/algebra/commonLogarithmApplications.js",
+      "sha256": "022c6ec944edc5a80a3846880a43b7c9c41ae6b1f5a7792d23ae02542c19829b"
+    },
+    {
+      "path": "services/problemGenerators/algebra/exponentLaws.js",
+      "sha256": "c975902e322d526c2d7d18c9a75e654e923766d75ce22163cd9a97473c3cc99a"
+    },
+    {
+      "path": "services/problemGenerators/algebra/exponentialAndLogarithmicApplications.js",
+      "sha256": "b87791fa8b9f181b15d35c7ce5ea644da542055565b324036ffd2fe523e41935"
+    },
+    {
+      "path": "services/problemGenerators/algebra/exponentialAndLogarithmicFunctions.js",
+      "sha256": "3427e675c8a55c3b68f15470eb98ac3d1ae3b9b1a7e58ddfb79cf7579a595a43"
+    },
+    {
+      "path": "services/problemGenerators/algebra/exponentialAndLogarithmicGraphs.js",
+      "sha256": "48e1418f75ce50edf127b11ddcaa14d74e22bfbc4b13b962a79ce63f0aec624b"
+    },
+    {
+      "path": "services/problemGenerators/algebra/generalAnglesAndRadians.js",
+      "sha256": "7d894e6949838c818f9595052c1a078be1e12d57487af4685f2d2309b41d2ce6"
+    },
+    {
+      "path": "services/problemGenerators/algebra/geometricSequences.js",
+      "sha256": "73f1f9f332f9dab9d179f3c22f4c540d51b3a38b7bcaee343e26771a45c2ecd7"
+    },
+    {
+      "path": "services/problemGenerators/algebra/helpers.js",
+      "sha256": "da71ec16fec424b90c6a35c44a318b4cf2e8bca31c0b3a1e489a75ecf78c1a04"
+    },
+    {
+      "path": "services/problemGenerators/algebra/logarithmDefinitionAndProperties.js",
+      "sha256": "fa822338a4aaebf7259637accda3f0af88da5ac5f9b0dd2c8c71b2ac9ee8173e"
+    },
+    {
+      "path": "services/problemGenerators/algebra/mathematicalInduction.js",
+      "sha256": "37d17654c7fdf921258fa7a5ce56b8f083677ffa2e9ed65bf7527f692af07c25"
+    },
+    {
+      "path": "services/problemGenerators/algebra/powersAndRoots.js",
+      "sha256": "991789dc4b2f93c535938579a8ed46e001de77b50a5833ce9489f8ee04196139"
+    },
+    {
+      "path": "services/problemGenerators/algebra/rationalAndRealExponents.js",
+      "sha256": "b2a1a86f7dd642d5e9b567902dbe10563b9e90da4a349d8627639d34a55a6a16"
+    },
+    {
+      "path": "services/problemGenerators/algebra/recursiveSequences.js",
+      "sha256": "18d9aaa8d207a9ff92908180a179514dcaafd96b219309b840b2939c59e1d582"
+    },
+    {
+      "path": "services/problemGenerators/algebra/sequenceBasics.js",
+      "sha256": "35fc85face6b058e3125c5d92a2ff3a3b1e9f3241a4fd171f31d69ef04be087a"
+    },
+    {
+      "path": "services/problemGenerators/algebra/sigmaDefinitionAndProperties.js",
+      "sha256": "bfe109a80e8f4c7cebbeb5a698922b80b06007405c81948a238baca577a27297"
+    },
+    {
+      "path": "services/problemGenerators/algebra/sineAndCosineLaws.js",
+      "sha256": "7efa7ceb988427cb018613e48578391377d8d98e262e234c3df80e3a5fd3f42d"
+    },
+    {
+      "path": "services/problemGenerators/algebra/sumsOfVariousSequences.js",
+      "sha256": "8f265c1cf63f599f61acb1190d0da96e86dfaa1e2f5bb35c8e89f833dbf0d122"
+    },
+    {
+      "path": "services/problemGenerators/algebra/trigonometricFunctionsAndGraphs.js",
+      "sha256": "24686d17e06961ee2402d24551d678774b5373466a9cd2ac3a16d70370d5c4d3"
+    },
+    {
+      "path": "services/problemGenerators/calculus1/advancedCalculus.js",
+      "sha256": "87d032a9788d643f3e249578cb1a7fced0b815052316b7a6ae9dce39cb65be06"
+    },
+    {
+      "path": "services/problemGenerators/calculus1/continuousFunctionProperties.js",
+      "sha256": "dfb8820bae226ed8c46798e7dd0562a136ced1475b3a29ef2e8cc8043e16e23a"
+    },
+    {
+      "path": "services/problemGenerators/calculus1/functionContinuity.js",
+      "sha256": "69ed4424a452d7a9922ec960fb79761693f96718463d839ed55ac808e8343ff5"
+    },
+    {
+      "path": "services/problemGenerators/calculus1/functionLimit.js",
+      "sha256": "6fff28ad3afd824dc292b2d368cb83307d955e8d8a435ab7fe2f736a2a181820"
+    },
+    {
+      "path": "services/problemGenerators/calculus1/helpers.js",
+      "sha256": "9677c3a9ed1c481259f8165c008a3fdee47b32221d85b01a07d9279a6a0f872d"
+    },
+    {
+      "path": "services/problemGenerators/calculus1/limitPropertiesAndCalculation.js",
+      "sha256": "4fa41d06538f319a3b9b3c32c6f0e13b664f9902ab592192bdf5da3f96aaea34"
+    },
+    {
+      "path": "services/problemGenerators/commonMath/generators.js",
+      "sha256": "1bb2413bb6dd88ce06017176cff33c278830b5159f9298f2f43e7f0d2018f393"
+    },
+    {
+      "path": "services/problemGenerators/index.js",
+      "sha256": "a1fd7d8b618ecc0ab419d62e264b2e21f63e2939a42ea2827b30e623d3eec08a"
+    },
+    {
+      "path": "services/problemGenerators/probabilityStatistics/generators.js",
+      "sha256": "93686cb36639cc0fbd9fd2cba4b47a429cf5b280544391d6c2a2bc09e775e4df"
+    },
+    {
+      "path": "services/problemGenerators/probabilityStatistics/helpers.js",
+      "sha256": "316fdedd061248a250a28da93aa3edc59b54e5b87095c150d7c4811341f667de"
+    },
+    {
+      "path": "services/problemGenerators/utils.js",
+      "sha256": "991857dbe6b28c7e9dd735a32339c72699ea00a0ea148729d3e9386e1f610c8c"
+    }
+  ],
+  "nativeInputs": [
+    {
+      "path": "tools/native-curriculum-overlay.json",
+      "sha256": "87f05e8f836edc5d59d95b11decf8a72b6da6fe6d50eac64bcf954a8d74963df"
+    },
+    {
+      "path": "tools/webgen-entry.cjs",
+      "sha256": "edb8f894e00ae1dc7a669c6e575920089a39ecb8938e5006e0a332a3a2e389c0"
+    },
+    {
+      "path": "tools/package-lock.json",
+      "sha256": "ed61923be7bd00798ad465e36a48a90087fd30c295e7c0b0e51aee52c35ce48b"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "Matths/curriculum-v2.json",
+      "bytes": 607114,
+      "sha256": "e1bd9b2fb5afc217b615273813a7564aa7df97d90acbf02689907fb5ce6b63f5"
+    },
+    {
+      "path": "Matths/assessment-catalog.json",
+      "bytes": 18806,
+      "sha256": "40dc971c6c757bf984a0ad8e4aa0189b26877246422d20a92a4ffbd06c6f7660"
+    },
+    {
+      "path": "Matths/LessonWeb/exam-bank.js",
+      "bytes": 63293,
+      "sha256": "e950c7754c79175f3a20b299e9c1b6090e9c9b32b039aa138d23270ba0d32d4d"
+    },
+    {
+      "path": "Matths/LessonWeb/webgen-bundle.js",
+      "bytes": 1075346,
+      "sha256": "bea286f587bf294f71df74fde43be26877b82ac49ab3513ed2412020de30ab0c"
+    }
+  ],
+  "semanticCounts": {
+    "courseIDs": [
+      "common-math-1",
+      "common-math-2",
+      "algebra",
+      "calculus-1",
+      "probability-statistics",
+      "calculus-2",
+      "geometry",
+      "economics-math",
+      "ai-math",
+      "vocational-math",
+      "math-and-culture",
+      "practical-statistics",
+      "math-research-project"
+    ],
+    "courseCount": 13,
+    "unitCount": 46,
+    "conceptCount": 220,
+    "availableCourseIDs": [
+      "common-math-1",
+      "common-math-2",
+      "algebra",
+      "calculus-1",
+      "probability-statistics"
+    ],
+    "bankProblemTypeCount": 69
+  }
+}

@@ -272,16 +272,14 @@ struct ProfileScreen: View {
         #endif
     }()
     @State private var nicknameDraft = ""
+    @State private var showsPasswordChange = false
     @State private var nicknameSaving = false
     @State private var nicknameError: String?
     @State private var applyingServerProfile = false
 
-    private let totalConcepts = CurriculumV2.data.courses.reduce(0) { $0 + $1.allConcepts.count }
+    private var totalConcepts: Int { store.learningSummary.total }
     private var completedConceptCount: Int {
-        CurriculumV2.data.courses
-            .flatMap(\.allConcepts)
-            .filter { store.progressV2.percent(for: $0) >= 100 }
-            .count
+        store.learningSummary.done
     }
 
     private var compactWidth: Bool { horizontalSizeClass == .compact }
@@ -692,6 +690,13 @@ struct ProfileScreen: View {
                 // 동작인데 "탈퇴하면 다 지워진다" 고 오해하게 두면 안 된다.
                 if store.authProvider == "server" {
                     DottedRule()
+                    Button { showsPasswordChange = true } label: {
+                        dataRow("비밀번호 변경", tint: Tokens.ink,
+                                caption: "이메일 인증으로 변경합니다")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.progressResetInFlight)
+                    DottedRule()
                     Button { showWithdraw = true } label: {
                         dataRow("회원 탈퇴",
                                 tint: Tokens.dangerInk,
@@ -708,6 +713,10 @@ struct ProfileScreen: View {
             // 충돌하면 안 된다. iPhone 가로에서도 끝의 동의/삭제 버튼까지 확실히
             // 도달하도록 독립된 전체 화면 흐름으로 연다.
             .fullScreenCover(isPresented: $showWithdraw) { WithdrawSheet() }
+            .fullScreenCover(isPresented: $showsPasswordChange) {
+                PasswordResetSheet(prefillEmail: store.userEmail, isPasswordChange: true)
+                    .environmentObject(store)
+            }
 
             // 정보
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {

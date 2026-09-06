@@ -13,9 +13,7 @@ grep -Fq 'verticalSizeClass == .compact' "$layout"
 grep -Fq 'content.fullScreenCover(' "$layout"
 grep -Fq 'content.sheet(' "$layout"
 
-for state in showsRulebook showsLeaderboard showsArenaWebMenu showsMainMatchMaker; do
-  grep -Fq ".compactHeightSheet(isPresented: \$$state" "$arena"
-done
+node "$root/tests/verify-adaptive-presentation.mjs"
 
 # 연결 실패·로그인 필요 상태도 가로에서 안내문 아래에 복구 버튼을 밀어 내지 않는다.
 # 상태/제목과 설명/행동을 남는 가로 폭에 나눠 첫 화면에서 다시 시도할 수 있어야 한다.

@@ -23,6 +23,7 @@ func hintCoreCanDraw(_ json: String?) -> Bool {
 }
 
 struct SolveScreen: View {
+    @Environment(\.dynamicTypeSize) private var workspaceTypeSize
     /// 좌우 분할이 가능한 폭인지. 답 입력 위치를 이걸로 가른다.
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -118,7 +119,7 @@ struct SolveScreen: View {
     /// 각 칸의 이상적인 너비 때문에 세로 적층으로 물러나고, 학생이 문제와 노트를
     /// 오가며 스크롤해야 했다. 이 문맥은 책을 펼친 것처럼 좌우 고정 작업대를 쓴다.
     private var usesPhoneLandscapeWorkspace: Bool {
-        UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass == .compact
+        verticalSizeClass == .compact && !workspaceTypeSize.isAccessibilitySize
     }
 
     private var standardScrollableWorkspace: some View {
@@ -129,13 +130,13 @@ struct SolveScreen: View {
                 // 화면 맨 아래 고정하면 iPad 가로에서 문제와 입력창 사이에
                 // 빈 공간이 크게 남고, 학생 시선이 위아래로 길게 왕복한다
                 // (사용자가 "위로 이동" 이라고 표시한 그 거리다).
-                if store.leftHandedOn {
-                    HStack(alignment: .top, spacing: Tokens.Space.s6) {
+                if store.leftHandedOn && !workspaceTypeSize.isAccessibilitySize {
+                    ResponsiveProblemWorkspace(spacing: Tokens.Space.s6, leadingFraction: 0.58) {
                         right
                         VStack(alignment: .leading, spacing: Tokens.Space.s4) { left; gradeBar }
                     }
-                } else {
-                    HStack(alignment: .top, spacing: Tokens.Space.s6) {
+                } else if !workspaceTypeSize.isAccessibilitySize {
+                    ResponsiveProblemWorkspace(spacing: Tokens.Space.s6) {
                         VStack(alignment: .leading, spacing: Tokens.Space.s4) { left; gradeBar }
                         right
                     }
@@ -174,13 +175,13 @@ struct SolveScreen: View {
                     landscapeKeyboardProblemPane
                         .frame(width: usableWidth, height: paneHeight)
                 } else if store.leftHandedOn {
-                    HStack(spacing: gutter) {
+                    ResponsiveProblemWorkspace(spacing: gutter, trailingWidth: problemWidth) {
                         landscapeNotePane(height: paneHeight)
                         landscapeProblemPane
                             .frame(width: problemWidth, height: paneHeight)
                     }
                 } else {
-                    HStack(spacing: gutter) {
+                    ResponsiveProblemWorkspace(spacing: gutter, leadingWidth: problemWidth) {
                         landscapeProblemPane
                             .frame(width: problemWidth, height: paneHeight)
                         landscapeNotePane(height: paneHeight)
@@ -190,7 +191,6 @@ struct SolveScreen: View {
             // 접근성 최대 단계는 393pt 높이에서 도구 아이콘과 글자가 서로
             // 겹쳐 조작 자체가 불가능해진다. iPhone 가로 작업대만 표준 최대
             // 단계까지 제한하고, 세로 화면과 iPad의 큰 글자 지원은 건드리지 않는다.
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .padding(outer)
         }
     }

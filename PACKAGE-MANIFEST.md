@@ -1,5 +1,7 @@
 # Matths iOS current source package
 
+> 이 문서는 2026-09-02 원본 ZIP의 역사적 기록입니다. 현재 main의 1.0 (17) 검수 개선본에는 추가 변경이 있습니다. 최신 상태는 README.md와 docs/RELEASE_PARITY_VERDICT.md를 확인하세요.
+
 ## 기준 상태
 
 - 생성일: 2026-09-02 (Asia/Seoul)

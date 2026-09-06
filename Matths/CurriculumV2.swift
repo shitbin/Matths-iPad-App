@@ -135,6 +135,18 @@ enum CurriculumV2 {
     static let data = loaded.data
     static let loadError = loaded.error
 
+    static var availableCourses: [CourseV2] {
+        let policy = CurriculumPolicy.snapshot
+        return policy.orderedCourseIDs.compactMap { id in
+            policy.isAvailable(id) ? course(id) : nil
+        }
+    }
+
+    static func canStudy(_ conceptID: String) -> Bool {
+        guard let (course, _, _) = concept(conceptID) else { return false }
+        return CurriculumPolicy.isAvailable(course.id)
+    }
+
     static func course(_ id: String) -> CourseV2? {
         data.courses.first { $0.id == id }
     }
@@ -170,6 +182,12 @@ struct ConceptProgressV2: Codable, Sendable {
     // 개념별 정오 신호 (웹 signals) — 취약 개념 랭킹의 근거. 구파일 호환 옵셔널.
     var totalAttempts: Int?
     var correctAttempts: Int?
+    /// Server projection is displayed as official progress. Unsynced local work
+    /// remains durable below, but cannot fabricate an official completion.
+    var serverPercent: Int?
+    var serverRequiredDistinctTypes: Int?
+    var serverCorrectTypeIDs: Set<String>?
+    var serverHasActivity: Bool?
 }
 
 enum ConceptStatusV2: String {
@@ -182,6 +200,7 @@ struct ProgressV2Store {
     // ── 웹 공식 그대로 ──────────────────────────────────────────
     func percent(for concept: ConceptV2) -> Int {
         let p = byConcept[concept.id] ?? ConceptProgressV2()
+        if let percent = p.serverPercent { return max(0, min(100, percent)) }
         if p.userCompleted && masteryUnlocked(for: concept) { return 100 }
         let topicPart: Double = concept.topics.isEmpty ? 0
             : Double(p.completedTopicIndexes.count) / Double(concept.topics.count) * 30
@@ -211,6 +230,7 @@ struct ProgressV2Store {
     /// 그래서 웹 생성기 정보를 **먼저** 보고, 그 개념은 출제도 웹 경로로 보낸다
     /// (`usesWebGenerator`). 둘의 근거를 같은 곳에 둔다.
     func requiredDistinctTypes(for concept: ConceptV2) -> Int {
+        if let required = byConcept[concept.id]?.serverRequiredDistinctTypes { return max(0, required) }
         if let info = webGenInfo(for: concept) {
             return min(info.requiredDistinctTypes, info.typeIds.count)
         }
@@ -241,7 +261,10 @@ struct ProgressV2Store {
         // 토픽 몫을 최대 30%로 두고 게이트를 따로 요구한다.
         // 생성기가 없으면 그 개념은 아직 완료할 수 없는 것이 맞다.
         guard required > 0 else { return false }
-        return (byConcept[concept.id]?.correctTypeIds.count ?? 0) >= required
+        let progress = byConcept[concept.id]
+        let confirmed = progress?.serverCorrectTypeIDs?.count
+            ?? (progress?.serverPercent == 0 ? 0 : progress?.correctTypeIds.count ?? 0)
+        return confirmed >= required
     }
 
     // ── 변경 ────────────────────────────────────────────────────
@@ -273,7 +296,7 @@ struct ProgressV2Store {
     /// 취약 개념 — 정확도 낮은 순 (웹: accuracy<50 urgent, <70 복습 필요)
     func weakConcepts(top: Int) -> [(concept: ConceptV2, accuracy: Int, attempts: Int)] {
         var rows: [(ConceptV2, Int, Int)] = []
-        for course in CurriculumV2.data.courses {
+        for course in CurriculumV2.availableCourses {
             for unit in course.units {
                 for con in unit.concepts {
                     guard let p = byConcept[con.id],
@@ -296,32 +319,51 @@ struct ProgressV2Store {
 
     // ── 과목/전체 집계 (웹 스코핑 규칙: 공통 + 활동 있는 선택과목) ──
     func coursePercent(_ course: CourseV2) -> Int {
+        guard CurriculumPolicy.isAvailable(course.id) else { return 0 }
         let all = course.allConcepts
         guard !all.isEmpty else { return 0 }
         let sum = all.reduce(0) { $0 + percent(for: $1) }
-        return sum / all.count
+        return Int((Double(sum) / Double(all.count)).rounded())
     }
 
     func hasActivity(_ course: CourseV2) -> Bool {
-        course.allConcepts.contains { byConcept[$0.id] != nil }
+        let records = course.allConcepts.compactMap { byConcept[$0.id] }
+        let confirmed = records.compactMap(\.serverHasActivity)
+        if !confirmed.isEmpty { return confirmed.contains(true) }
+        return !records.isEmpty
+    }
+
+    mutating func applyCanonical(_ snapshot: CanonicalLearningSnapshot) {
+        for course in snapshot.courses {
+            for unit in course.units {
+                for concept in unit.concepts {
+                    guard byConcept[concept.id] != nil || concept.progress > 0 else { continue }
+                    var record = byConcept[concept.id] ?? ConceptProgressV2()
+                    record.serverPercent = concept.progress
+                    record.serverHasActivity = course.hasActivity
+                    if !course.hasActivity || concept.progress == 0 { record.serverCorrectTypeIDs = [] }
+                    byConcept[concept.id] = record
+                }
+            }
+        }
     }
 
     func overallScoped() -> (percent: Int, done: Int, total: Int) {
-        let scoped = CurriculumV2.data.courses.filter {
+        let scoped = CurriculumV2.availableCourses.filter {
             $0.category == "common" || hasActivity($0)
         }
         let concepts = scoped.flatMap(\.allConcepts)
         guard !concepts.isEmpty else { return (0, 0, 0) }
         let sum = concepts.reduce(0) { $0 + percent(for: $1) }
         let done = concepts.filter { percent(for: $0) >= 100 }.count
-        return (sum / concepts.count, done, concepts.count)
+        return (Int((Double(sum) / Double(concepts.count)).rounded()), done, concepts.count)
     }
 
     /// 이어서 학습 — 웹 우선순위: ①진행 중 → ②공통 과목 첫 미완료 → ③아무 미완료
     func continueConcept() -> (CourseV2, UnitV2, ConceptV2)? {
         var firstCommonIncomplete: (CourseV2, UnitV2, ConceptV2)?
         var anyIncomplete: (CourseV2, UnitV2, ConceptV2)?
-        for course in CurriculumV2.data.courses {
+        for course in CurriculumV2.availableCourses {
             for unit in course.units {
                 for con in unit.concepts {
                     switch status(for: con) {
@@ -389,7 +431,10 @@ struct ProgressV2Store {
                               topicIndexes: [Int],
                               correctTypeIds: [String],
                               userCompleted: Bool,
-                              lastStudiedAt: Date?) {
+                              lastStudiedAt: Date?,
+                              serverPercent: Int? = nil,
+                              serverRequiredDistinctTypes: Int? = nil,
+                              serverCorrectTypeIDs: [String]? = nil) {
         var p = byConcept[conceptId] ?? ConceptProgressV2()
         p.completedTopicIndexes.formUnion(topicIndexes)
         p.correctTypeIds.formUnion(correctTypeIds.map(Self.canonicalTypeId))
@@ -397,6 +442,9 @@ struct ProgressV2Store {
         if let remote = lastStudiedAt {
             p.lastStudiedAt = max(p.lastStudiedAt ?? remote, remote)
         }
+        if let serverPercent { p.serverPercent = max(0, min(100, serverPercent)) }
+        if let serverRequiredDistinctTypes { p.serverRequiredDistinctTypes = max(0, serverRequiredDistinctTypes) }
+        if let serverCorrectTypeIDs { p.serverCorrectTypeIDs = Set(serverCorrectTypeIDs.map(Self.canonicalTypeId)) }
         byConcept[conceptId] = p
     }
 

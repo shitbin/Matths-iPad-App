@@ -484,11 +484,15 @@ for marker, network_call, handler_call, label in [
             "guard let owner = currentAccountOwner()",
             "let authorization = ServerAPI.captureAuthorization() else { return }",
             network_call,
-            "guard isCurrentAccountOwner(owner) else { return }",
+            "guard isCurrentAccountOwner(owner)",
             handler_call,
         ],
         f"{label}이 시작 시점 session owner를 캡처하고 post-await 검증 뒤 callback에 전달하지 않습니다",
     )
+    if marker == "func pullProgress() async":
+        for guard_term in ("resetEpoch == progressResetEpoch", "!hasPendingProgressReset", "!needsProgressRefresh"):
+            if guard_term not in pull:
+                fail("공식 진도 pull에 초기화/쓰기 경합 가드가 없습니다: " + guard_term)
 
 # stale session의 실패도 새 세션 UI에 쓰지 않는다. 모든 pull catch와 wrong-note
 # durable-ack 실패 분기는 lastError보다 먼저 캡처 owner를 다시 확인해야 한다.
@@ -731,19 +735,17 @@ start_server_paper = body(app, "private func startServerPaper(")
 pull_assessments = body(app, "func pullServerAssessments() async")
 flush_draft = body(app, "func flushAssessmentDraft() async")
 submit_server_paper = body(app, "private func submitServerPaper(")
-submit_local_paper = body(app, "private func submitLocalPaper(")
+practice_source = (root / "Matths/OfflinePracticeScreen.swift").read_text()
 schedule_draft = body(app, "private func scheduleAssessmentDraft(")
 
-require_in_order(
-    submit_local_paper,
-    [
-        "guard var a = currentAttempt",
-        "assessmentPersistenceTransactionInFlight = true",
-        "defer { assessmentPersistenceTransactionInFlight = false }",
-        "await persistLearningImmediately(",
-    ],
-    "로컬 평가 제출이 첫 파일 await 전에 stable-flush 직렬화 게이트를 소유하지 않습니다",
-)
+# Offline practice has its own record and persistence namespace, with no official side effects.
+if "private func submitLocalPaper(" in app:
+    fail("Official AppStore still owns a local submission fallback")
+for forbidden in ("SyncEngine", "EventLog", "passed:", "progressV2"):
+    if forbidden in practice_source:
+        fail("Offline practice leaks into official state: " + forbidden)
+if "matths.practice-assessments.v1." not in practice_source:
+    fail("Offline practice must use independent storage")
 
 for function_body, slot, label in [
     (start_server_paper, "account", "서버 평가 시작"),
@@ -752,61 +754,7 @@ for function_body, slot, label in [
     (submit_server_paper, "account", "서버 평가 제출"),
 ]:
     require_assessment_persist_gates(function_body, slot, label)
-require_assessment_persist_gates(
-    submit_local_paper,
-    "account",
-    "로컬 평가 제출",
-    "ownsLocalAssessmentPersistenceTransaction(account)",
-)
-if submit_local_paper.count("ownsLocalAssessmentPersistenceTransaction(account)") != 4:
-    fail("로컬 평가 제출의 snapshot 세 경계와 side-effect journal 경계가 트랜잭션 owner를 검사해야 합니다")
-
-# 로컬 제출은 제출 완료 회차만 먼저 저장하고 오답을 debounce하면 안 된다. 오답 정본을
-# 먼저 내구 저장하고 assessment까지 성공한 뒤에만 submitted 메모리와 통계/동기 부작용을
-# 공개해야, 두 파일 사이 종료에서도 재제출 가능 상태가 남는다.
-require_in_order(
-    submit_local_paper,
-    [
-        "var updatedAttempts = attemptsV2",
-        "var updatedWrongNotes = wrongNotes",
-        "let wrongNotesPersisted = await persistLearningImmediately(",
-        ".wrongNotes(updatedWrongNotes)",
-        "ownsLocalAssessmentPersistenceTransaction(account)",
-        "guard wrongNotesPersisted else",
-        "let assessmentPersisted = await persistLearningImmediately(",
-        ".assessments(updatedAttempts.attempts)",
-        "ownsLocalAssessmentPersistenceTransaction(account)",
-        "guard assessmentPersisted else",
-        "attemptsV2 = updatedAttempts",
-        "wrongNotes = updatedWrongNotes",
-        "EventLog.appendGrading(",
-        "SyncEngine.shared.enqueueGradingEvents(",
-    ],
-    "로컬 평가 제출이 오답→회차 내구 저장을 닫기 전에 submitted 상태나 통계·동기 부작용을 공개합니다",
-)
-wrong_failure = body(submit_local_paper, "guard wrongNotesPersisted else")
-if "attemptsV2 = updatedAttempts" in wrong_failure or "wrongNotes = updatedWrongNotes" in wrong_failure:
-    fail("오답 저장 실패인데 로컬 평가 제출 상태를 메모리에 공개합니다")
-assessment_failure = body(submit_local_paper, "guard assessmentPersisted else")
-if "wrongNotes = updatedWrongNotes" not in assessment_failure or "attemptsV2 = updatedAttempts" in assessment_failure:
-    fail("회차 저장 실패 시 이미 내구 저장된 오답만 유지하고 submitted 회차는 공개하지 않아야 합니다")
-if "saveWrongNotes()" in submit_local_paper:
-    fail("로컬 평가 제출의 파생 오답을 성공 경계 뒤 debounce 저장하면 종료 시 영구 누락됩니다")
-require_in_order(
-    submit_local_paper,
-    [
-        "if let existing = updatedWrongNotes.firstIndex",
-        "updatedWrongNotes[existing].serverAttemptId == nil",
-        "wrongNotesToSync.append(updatedWrongNotes[existing])",
-        "guard assessmentPersisted else",
-        "for note in wrongNotesToSync",
-        "SyncEngine.shared.enqueueWrongNote(note)",
-        "await EventLog.flushPendingWrites(for: account.slot)",
-        "await SyncEngine.shared.flushLocalQueuePersistence()",
-        "ownsLocalAssessmentPersistenceTransaction(account)",
-    ],
-    "회차 저장 실패 뒤 재시도한 기존 오답이나 제출 side effect journal이 영구 누락될 수 있습니다",
-)
+# The removed local→official pipeline is replaced by the independent practice checks above.
 
 require_in_order(
     start_server_paper,

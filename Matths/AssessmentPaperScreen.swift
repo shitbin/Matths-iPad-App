@@ -8,6 +8,7 @@
 
 import SwiftUI
 import WebKit
+import PencilKit
 
 struct AssessmentPaperScreen: View {
     @EnvironmentObject private var store: AppStore
@@ -15,12 +16,105 @@ struct AssessmentPaperScreen: View {
     @StateObject private var timer = ExamTimer()
     @State private var paperHeight: CGFloat = 600
     @State private var confirmSubmit = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var scratchpad = AssessmentScratchpadModel()
+    @State private var scratchTool: SolutionCanvasTool = .pen
+    @State private var scratchFinger = UIDevice.current.userInterfaceIdiom == .phone
+    @State private var showsScratchpad = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
             if let attempt = store.currentAttempt {
+                GeometryReader { viewport in
+                    if UniversalLayoutPolicy.usesProblemSplit(width: viewport.size.width, height: viewport.size.height, accessibilityText: typeSize.isAccessibilitySize) {
+                        ResponsiveProblemWorkspace(spacing: Tokens.Space.s3) {
+                            paperDocument(attempt)
+                            scratchpadPanel(height: max(120, viewport.size.height - 120))
+                                .padding(Tokens.Space.s3)
+                        }
+                    } else {
+                        paperDocument(attempt)
+                            .safeAreaInset(edge: .bottom) {
+                                Button("풀이 메모 열기") { showsScratchpad = true }
+                                    .buttonStyle(SecondaryButtonStyle()).padding(Tokens.Space.s3)
+                            }
+                    }
+                }
+            } else {
+                VStack(spacing: Tokens.Space.s4) {
+                    Image(systemName: "doc.questionmark")
+                        .font(.system(size: 42, weight: .medium))
+                        .foregroundStyle(Tokens.text4)
+                        .accessibilityHidden(true)
+                    Text("응시 정보를 찾을 수 없습니다")
+                        .font(.mHeading)
+                        .foregroundStyle(Tokens.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("다른 기기에서 종료됐거나 저장된 응시 정보가 갱신됐을 수 있습니다.")
+                        .font(.mCallout)
+                        .foregroundStyle(Tokens.text2)
+                        .multilineTextAlignment(.center)
+                    Button("평가센터로 돌아가기") { store.route = .assess }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .frame(maxWidth: 280)
+                }
+                .padding(Tokens.Space.s6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(Tokens.paper)
+        .onAppear { syncTimerState() }
+        .task(id: store.currentAttemptID) {
+            if let id = store.currentAttemptID {
+                await scratchpad.open(attemptID: id, store: store)
+                #if DEBUG
+                scratchpad.seedIfRequested()
+                #endif
+            }
+        }
+        .onChange(of: scenePhase) { _, value in if value != .active { Task { _ = await scratchpad.flush() } } }
+        .onDisappear { Task { _ = await scratchpad.flush() } }
+        .fullScreenCover(isPresented: $showsScratchpad) {
+            NavigationStack {
+                GeometryReader { viewport in
+                    ScrollView {
+                        scratchpadPanel(height: max(140, viewport.size.height - (typeSize.isAccessibilitySize ? 260 : 130)))
+                            .padding(Tokens.Space.s3)
+                    }.scrollBounceBehavior(.basedOnSize)
+                }
+                    .navigationTitle("풀이 메모").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("저장하고 닫기") {
+                        Task { if await scratchpad.flush() { showsScratchpad = false } }
+                    } } }
+            }
+        }
+        .onChange(of: hasActiveAttempt) { _, _ in syncTimerState() }
+        // 시간이 다 되면 **자동 제출**한다. 화면을 켜 둔 채 방치해도 실격 처리된다.
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+            guard let a = store.currentAttempt, a.submittedAt == nil else { return }
+            if a.remainingSeconds(monotonicElapsed: Double(timer.elapsedSeconds)) <= 0 { submit() }
+        }
+        .alert("아직 답하지 않은 문항이 있습니다. 제출할까요?",
+               isPresented: $confirmSubmit) {
+            Button("제출", role: .destructive) { submit() }
+            Button("계속 풀기", role: .cancel) {}
+        } message: {
+            Text("답하지 않은 문항은 오답으로 처리됩니다. 제출은 한 번만 할 수 있습니다.")
+        }
+        .alert("평가 기록을 동기화하지 못했습니다", isPresented: Binding(
+            get: { store.assessmentSyncError != nil },
+            set: { if !$0 { store.assessmentSyncError = nil } }
+        )) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(store.assessmentSyncError ?? "")
+        }
+    }
+
+    private func paperDocument(_ attempt: AssessmentAttemptV2) -> some View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
@@ -54,50 +148,18 @@ struct AssessmentPaperScreen: View {
                         proxy.scrollTo(Self.paperTopAnchor, anchor: .top)
                     }
                 }
-            } else {
-                VStack(spacing: Tokens.Space.s4) {
-                    Image(systemName: "doc.questionmark")
-                        .font(.system(size: 42, weight: .medium))
-                        .foregroundStyle(Tokens.text4)
-                        .accessibilityHidden(true)
-                    Text("응시 정보를 찾을 수 없습니다")
-                        .font(.mHeading)
-                        .foregroundStyle(Tokens.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text("다른 기기에서 종료됐거나 저장된 응시 정보가 갱신됐을 수 있습니다.")
-                        .font(.mCallout)
-                        .foregroundStyle(Tokens.text2)
-                        .multilineTextAlignment(.center)
-                    Button("평가센터로 돌아가기") { store.route = .assess }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .frame(maxWidth: 280)
-                }
-                .padding(Tokens.Space.s6)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .background(Tokens.paper)
-        .onAppear { syncTimerState() }
-        .onChange(of: hasActiveAttempt) { _, _ in syncTimerState() }
-        // 시간이 다 되면 **자동 제출**한다. 화면을 켜 둔 채 방치해도 실격 처리된다.
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-            guard let a = store.currentAttempt, a.submittedAt == nil else { return }
-            if a.remainingSeconds(monotonicElapsed: Double(timer.elapsedSeconds)) <= 0 { submit() }
-        }
-        .alert("아직 답하지 않은 문항이 있습니다. 제출할까요?",
-               isPresented: $confirmSubmit) {
-            Button("제출", role: .destructive) { submit() }
-            Button("계속 풀기", role: .cancel) {}
-        } message: {
-            Text("답하지 않은 문항은 오답으로 처리됩니다. 제출은 한 번만 할 수 있습니다.")
-        }
-        .alert("평가 기록을 동기화하지 못했습니다", isPresented: Binding(
-            get: { store.assessmentSyncError != nil },
-            set: { if !$0 { store.assessmentSyncError = nil } }
-        )) {
-            Button("확인", role: .cancel) {}
-        } message: {
-            Text(store.assessmentSyncError ?? "")
+    }
+
+    private func scratchpadPanel(height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            Text("평가 메모 · 이 기기에 자동 저장").font(.mCaption).foregroundStyle(Tokens.text2)
+            if let error = scratchpad.error { Text(error).font(.mCaption).foregroundStyle(Tokens.dangerInk) }
+            QuickSolutionNote(drawing: $scratchpad.drawing, tool: $scratchTool, allowsFinger: $scratchFinger,
+                              height: height, toolbarTitle: "풀이 메모", showsToolTitles: false,
+                              showsFingerToggle: UIDevice.current.userInterfaceIdiom == .pad,
+                              showsHelper: height >= 240, canUndo: !scratchpad.undoStack.isEmpty,
+                              onUndo: { scratchpad.undo() },
+                              helperText: "메모는 채점에 제출되지 않습니다. 문제지로 돌아가 답안을 입력해 주세요.")
         }
     }
 
@@ -106,6 +168,7 @@ struct AssessmentPaperScreen: View {
             Button {
                 // 나가도 답안은 저장 — 웹 AssessmentAttempt 처럼 이어서 풀 수 있다
                 Task {
+                    guard await scratchpad.flush() else { return }
                     await store.flushAssessmentDraft()
                     store.route = .assess
                 }

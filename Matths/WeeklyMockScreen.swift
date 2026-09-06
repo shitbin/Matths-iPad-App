@@ -712,10 +712,9 @@ private struct WeeklyMockAttemptScreen: View {
 
     private func takingView(_ value: ServerAPI.WeeklyMockAttempt) -> some View {
         GeometryReader { geometry in
-            if geometry.size.width >= 900 || usesLandscapeSplitWorkspace {
-                HStack(spacing: 0) {
+            if (geometry.size.width >= 900 || usesLandscapeSplitWorkspace) && !dynamicTypeSize.isAccessibilitySize {
+                ResponsiveProblemWorkspace(spacing: 1, trailingWidth: min(390, max(300, geometry.size.width * 0.36))) {
                     paperPane.frame(maxWidth: .infinity)
-                    Divider().overlay(Tokens.line)
                     // 667pt급 가로 iPhone에서도 선지 5개의 44pt 터치 영역이 들어갈
                     // 최소 300pt를 답안지에 보장한다. 큰 화면에서는 종전 36%/390pt
                     // 상한을 그대로 유지해 문제지를 과도하게 좁히지 않는다.

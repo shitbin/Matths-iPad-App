@@ -506,7 +506,7 @@ struct QuickPracticeScreen: View {
     @ViewBuilder private var solvingCard: some View {
         if let a = attempt {
             if usesLandscapeSolvingLayout {
-                HStack(alignment: .top, spacing: Tokens.Space.s4) {
+                ResponsiveProblemWorkspace(spacing: Tokens.Space.s4) {
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                         setProgress
                         topicAndTimer(a)
@@ -516,8 +516,6 @@ struct QuickPracticeScreen: View {
                             height: $promptHeight)
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                    Divider()
 
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                         if !answerFocused {
@@ -1166,7 +1164,7 @@ private struct QuickTimerBar: View {
 // 다만 도구는 채점 화면의 전체 도구막대(선 굵기·올가미·확대·다시 실행)를 그대로
 // 가져오지 않는다. 40초 안에 실제로 쓰는 것은 펜·지우개·되돌리기·전체 지우기뿐이고,
 // 나머지는 좁은 화면에서 캔버스 높이만 빼앗는다.
-private struct QuickSolutionNote: View {
+struct QuickSolutionNote: View {
     @Binding var drawing: PKDrawing
     @Binding var tool: SolutionCanvasTool
     @Binding var allowsFinger: Bool
@@ -1179,6 +1177,7 @@ private struct QuickSolutionNote: View {
     let showsHelper: Bool
     let canUndo: Bool
     let onUndo: () -> Void
+    var helperText: String = "여기 쓴 내용은 제출되지 않습니다. 답은 아래 칸에 적어 주세요."
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -1201,7 +1200,7 @@ private struct QuickSolutionNote: View {
             // 무엇으로 쓰는지는 캔버스가 읽어 준다. 여기서는 학생이 직접 겪기 전에는
             // 알 수 없는 두 가지만 적는다.
             if showsHelper {
-                Text("여기 쓴 내용은 제출되지 않습니다. 답은 아래 칸에 적어 주세요.")
+                Text(helperText)
                     .font(.mMicro).foregroundStyle(Tokens.text3)
                     .fixedSize(horizontal: false, vertical: true)
             }

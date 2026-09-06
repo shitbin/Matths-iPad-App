@@ -654,6 +654,8 @@ struct CommerceHubScreen: View {
             await load()
         case .pendingApproval:
             pendingApprovalMessage = item.rawValue
+        case .pendingVerification:
+            break
         case .cancelled:
             break
         }

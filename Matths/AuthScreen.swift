@@ -14,6 +14,7 @@ import SwiftUI
 struct AuthScreen: View {
     @EnvironmentObject private var store: AppStore
     @State private var showEmailAuth = false
+    @State private var showsSampleLesson = false
     @StateObject private var googleSignIn = GoogleSignInCoordinator()
     @State private var googleBusy = false
     @State private var googleError: String?
@@ -105,6 +106,7 @@ struct AuthScreen: View {
         // 버튼을 그릴지 말지는 서버가 정한다. .task 는 진입에서 한 번 돌고
         // 화면을 벗어나면 스스로 취소된다.
         .task { await refreshSocialAvailability() }
+        .fullScreenCover(isPresented: $showsSampleLesson) { SampleLessonScreen() }
     }
 
     // 인증 면은 CI Primary Identity 전체 락업을 원본 그대로 쓴다.
@@ -119,6 +121,8 @@ struct AuthScreen: View {
             Text("풀이 과정까지 채점하는 수학").font(.mCallout)
                 .foregroundStyle(Tokens.text3)
                 .multilineTextAlignment(.center)
+            Button("로그인 전에 30초 체험하기") { showsSampleLesson = true }
+                .font(.mCallout).frame(minHeight: 44)
         }
         .padding(.horizontal, Tokens.Space.s6)
     }
@@ -1096,21 +1100,25 @@ struct APISchoolPickerSheet: View {
 // 갖지 않는 것이 다층 방어다.
 
 struct PasswordResetSheet: View {
+    @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     let prefillEmail: String
+    var isPasswordChange = false
 
     enum Step { case email, code, newPassword, done }
     @State private var step: Step = .email
     @State private var email = ""
     @State private var code = ""
     @State private var newPassword = ""
+    @State private var confirmPassword = ""
+    @State private var requestTask: Task<Void, Never>?
     @State private var previewCode: String?
     @State private var authz: ServerAPI.ResetAuthorization?
     @State private var busy = false
     @State private var errorText: String?
     @State private var keyboardVisible = false
-    private enum FocusedField { case email, code, newPassword }
+    private enum FocusedField { case email, code, newPassword, confirmPassword }
     @FocusState private var focusedField: FocusedField?
     private var compactHeight: Bool { verticalSizeClass == .compact }
 
@@ -1123,7 +1131,7 @@ struct PasswordResetSheet: View {
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                     switch step {
                     case .email:
-                        Text("가입한 이메일로 인증코드를 보냅니다.")
+                        Text("이메일 인증으로 비밀번호를 변경합니다. 가입한 이메일로 인증코드를 보냅니다.")
                             .font(.mCallout).foregroundStyle(Tokens.text2)
                             .fixedSize(horizontal: false, vertical: true)
                         TextField("이메일", text: $email)
@@ -1153,15 +1161,29 @@ struct PasswordResetSheet: View {
                             .textContentType(.oneTimeCode)
                             .focused($focusedField, equals: .code)
                     case .newPassword:
-                        Text("새 비밀번호를 정하세요 (8자 이상).")
+                        Text("새 비밀번호는 영문과 숫자를 포함해 8자 이상, 72바이트 이하로 입력해 주세요.")
                             .font(.mCallout).foregroundStyle(Tokens.text2)
                             .fixedSize(horizontal: false, vertical: true)
                         SecureField("새 비밀번호", text: $newPassword)
                             .textFieldStyle(.roundedBorder)
                             .textContentType(.newPassword)
                             .focused($focusedField, equals: .newPassword)
+                            .submitLabel(.next)
+                            .onSubmit { focusedField = .confirmPassword }
+                        SecureField("새 비밀번호 확인", text: $confirmPassword)
+                            .textFieldStyle(.roundedBorder)
+                            .textContentType(.newPassword)
+                            .focused($focusedField, equals: .confirmPassword)
                             .submitLabel(.done)
                             .onSubmit { focusedField = nil }
+                        if !confirmPassword.isEmpty && !confirmPassword.utf8.elementsEqual(newPassword.utf8) {
+                            Text("새 비밀번호와 확인 입력이 일치하지 않습니다.")
+                                .font(.mCaption).foregroundStyle(Tokens.dangerInk)
+                        }
+                        if newPassword.utf8.count > 72 {
+                            Text("비밀번호가 너무 깁니다. 한글이나 이모지가 포함됐다면 글자 수를 줄여 주세요.")
+                                .font(.mCaption).foregroundStyle(Tokens.dangerInk)
+                        }
                     case .done:
                         Label("비밀번호가 변경되었습니다. 새 비밀번호로 로그인하세요.",
                               systemImage: "checkmark.circle.fill")
@@ -1182,7 +1204,7 @@ struct PasswordResetSheet: View {
             .scrollBounceBehavior(.basedOnSize)
             // 좁은 화면에서는 키보드가 폼의 절반을 덮는다. 스크롤로 걷어낼 수 있게 한다.
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("비밀번호 재설정")
+            .navigationTitle(isPasswordChange ? "비밀번호 변경" : "비밀번호 재설정")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } }
@@ -1202,7 +1224,11 @@ struct PasswordResetSheet: View {
                 for: UIResponder.keyboardWillHideNotification)) { _ in
                     keyboardVisible = false
                 }
-            .onDisappear { keyboardVisible = false }
+            .onDisappear {
+                keyboardVisible = false
+                requestTask?.cancel()
+                code = ""; newPassword = ""; confirmPassword = ""; authz = nil; previewCode = nil
+            }
             .onChange(of: step) { _, newStep in
                 // 다음 단계가 열린 사실을 키보드까지 이어 준다. 코드 입력은 숫자
                 // 키보드라 Return이 없으므로 위의 "완료"도 항상 함께 제공한다.
@@ -1246,8 +1272,8 @@ struct PasswordResetSheet: View {
     private var stepValid: Bool {
         switch step {
         case .email: return email.contains("@")
-        case .code: return code.count >= 4
-        case .newPassword: return newPassword.count >= 8
+        case .code: return code.count == 6 && code.allSatisfy { $0.isASCII && $0.isNumber }
+        case .newPassword: return PasswordChangeValidation.isValid(newPassword, confirmation: confirmPassword)
         case .done: return true
         }
     }
@@ -1256,11 +1282,13 @@ struct PasswordResetSheet: View {
         if step == .done { dismiss(); return }
         busy = true
         errorText = nil
-        Task {
+        let account = store.captureAccountSessionBoundary()
+        requestTask = Task { @MainActor in
             do {
                 switch step {
                 case .email:
                     let res = try await ServerAPI.passwordResetRequest(email: email)
+                    try Task.checkCancellation()
                     await MainActor.run {
                         #if DEBUG
                         // 서버가 실어 준 미리보기 코드는 DEBUG 에서만 받는다 —
@@ -1273,15 +1301,23 @@ struct PasswordResetSheet: View {
                     }
                 case .code:
                     let a = try await ServerAPI.passwordResetVerify(email: email, code: code)
+                    try Task.checkCancellation()
                     await MainActor.run { authz = a; step = .newPassword }
                 case .newPassword:
                     guard let a = authz else { throw ServerAPIError(message: "인증이 만료됐습니다. 처음부터 다시 진행해 주세요.", code: nil) }
                     try await ServerAPI.passwordResetComplete(auth: a, newPassword: newPassword)
+                    // The password is already changed on the server. Never retain reset secrets.
+                    code = ""; newPassword = ""; confirmPassword = ""; authz = nil; previewCode = nil
+                    if isPasswordChange, store.ownsCurrentAccountSession(account) {
+                        await store.finishPasswordChange(for: account)
+                    }
+                    try Task.checkCancellation()
                     await MainActor.run { step = .done }
                 case .done: break
                 }
                 await MainActor.run { busy = false }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     errorText = (error as? ServerAPIError)?.errorDescription ?? "요청 실패"
                     busy = false

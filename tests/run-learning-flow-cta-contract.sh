@@ -49,8 +49,10 @@ assert 'store.startReview(ids: [note.id], includingMastered: true)' in screens
 # 기존 미제출 회차를 확인하기 전에 PaperFactory.make를 호출하면 답안을 잃는다.
 paper = section(app, "func startPaper(scope:", "func setPaperAnswer(")
 resume_index = paper.index("attemptsV2.openAttempt(scopeKey: scopeKey)")
-make_index = paper.index("PaperFactory.make(")
+make_index = paper.index("ServerAPI.startAssessment(")
 assert resume_index < make_index
+assert "startLocalPaper(" not in paper
+assert "PaperFactory.make(" not in paper
 assert "currentAttemptID = open.id" in paper
 assert "route = .paper" in paper
 

@@ -127,8 +127,8 @@ struct CurriculumV2MapScreen: View {
 
     private var courses: [CourseV2] { CurriculumV2.data.courses }
     private var selectedCourse: CourseV2 {
-        courses.first { $0.id == store.selectedCourseV2ID }
-            ?? courses.first
+        courses.first { $0.id == store.selectedCourseV2ID && CurriculumPolicy.isAvailable($0.id) }
+            ?? CurriculumV2.availableCourses.first
             ?? CourseV2(id: "empty", title: "과목 없음", category: "common",
                         order: 0, prerequisites: [], recommendedGrades: [], units: [])
     }
@@ -196,9 +196,14 @@ struct CurriculumV2MapScreen: View {
             }
         }
         .background(Tokens.paper)
+        .alert("과목 안내", isPresented: Binding(
+            get: { store.curriculumAccessNotice != nil },
+            set: { if !$0 { store.curriculumAccessNotice = nil } })) {
+                Button("확인") { store.curriculumAccessNotice = nil }
+            } message: { Text(store.curriculumAccessNotice ?? "") }
         .onAppear {
-            if store.selectedCourseV2ID == nil {
-                store.selectedCourseV2ID = courses.first?.id
+            if !CurriculumPolicy.isAvailable(store.selectedCourseV2ID ?? "") {
+                store.selectedCourseV2ID = CurriculumV2.availableCourses.first?.id
             }
         }
         // 반복 모션은 없으며, 시스템/앱 모션 설정이 꺼진 경우 상위에서
@@ -245,6 +250,7 @@ struct CurriculumV2MapScreen: View {
 
     private func courseButton(_ course: CourseV2) -> some View {
         let selected = course.id == selectedCourse.id
+        let available = CurriculumPolicy.isAvailable(course.id)
         let percent = store.progressV2.coursePercent(course)
         return Button {
             store.selectedCourseV2ID = course.id
@@ -257,13 +263,13 @@ struct CurriculumV2MapScreen: View {
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: Tokens.Space.s2)
-                    Text("\(percent)%")
+                    Text(available ? "\(percent)%" : "준비 중")
                         .font(.mCaption.monospacedDigit())
                         .foregroundStyle(selected ? Tokens.actionPrimary : Tokens.text3)
                 }
-                ProgressBar(value: Double(percent) / 100,
+                if available { ProgressBar(value: Double(percent) / 100,
                             tint: selected ? Tokens.actionPrimary : Tokens.progressBlue)
-                    .frame(height: 4)
+                    .frame(height: 4) }
             }
             .padding(.horizontal, Tokens.Space.s3)
             .padding(.vertical, Tokens.Space.s3)
@@ -273,7 +279,8 @@ struct CurriculumV2MapScreen: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(course.title), 진도 \(percent)퍼센트")
+        .disabled(!available)
+        .accessibilityLabel(available ? "\(course.title), 진도 \(percent)퍼센트" : "\(course.title), 준비 중, 현재 학습할 수 없음")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
@@ -343,7 +350,7 @@ struct CurriculumV2MapScreen: View {
                 .font(shortHeight ? .mHeading : .mTitle)
                 .foregroundStyle(Tokens.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("2022 개정 교육과정의 13과목 220개념을 자유롭게 선택해 학습합니다.")
+            Text("2022 개정 교육과정에서 현재 공개된 과목을 선택해 학습합니다. 준비 중인 과목은 공개 후 이용할 수 있어요.")
                 .font(.mCallout)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -364,9 +371,10 @@ struct CurriculumV2MapScreen: View {
                                 if course.id == selectedCourse.id {
                                     Label(course.title, systemImage: "checkmark")
                                 } else {
-                                    Text(course.title)
+                                    Text(CurriculumPolicy.isAvailable(course.id) ? course.title : "\(course.title) · 준비 중")
                                 }
                             }
+                            .disabled(!CurriculumPolicy.isAvailable(course.id))
                         }
                     }
                 }
@@ -901,7 +909,10 @@ struct CurriculumV2MapScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(concept.title), \(state.label), 예상 \(concept.lesson?.estimatedMinutes ?? 15)분, 학습 가능, 잠금 없음")
+        .disabled(!CurriculumV2.canStudy(concept.id))
+        .accessibilityLabel(CurriculumV2.canStudy(concept.id)
+            ? "\(concept.title), \(state.label), 예상 \(concept.lesson?.estimatedMinutes ?? 15)분"
+            : "\(concept.title), 준비 중, 현재 학습할 수 없음")
         .accessibilityHint("개념 강의 화면을 엽니다")
     }
 
@@ -963,7 +974,7 @@ struct CurriculumV2MapScreen: View {
     /// 웹과 같은 ProgressV2 이어학습 우선순위에서 target 한 개만 고르고,
     /// 그 한 개의 story만 resolve한다. 과목/개념 목록을 story 뷰로 확장하지 않는다.
     private var topTimelinePreview: CurriculumStoryCompactPreviewModel {
-        guard let (course, unit, concept) = store.progressV2.continueConcept() else {
+        guard let (course, unit, concept) = store.nextLearningConcept else {
             let hasConcepts = courses.contains { !$0.allConcepts.isEmpty }
             return CurriculumStoryCompactPreviewModel(
                 state: hasConcepts ? .completed : .empty,

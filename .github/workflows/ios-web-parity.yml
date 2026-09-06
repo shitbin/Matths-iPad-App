@@ -1,0 +1,43 @@
+name: iOS and Web parity
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract-and-build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ios
+      - uses: actions/checkout@v4
+        with:
+          repository: is4553807/Matths-Official
+          ref: e3cc06360415a4c60460895b01f06a3248dae665
+          path: web-reference
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: ios/tools/package-lock.json
+      - name: Install pinned generation tools
+        working-directory: ios
+        run: npm ci --prefix tools --ignore-scripts --no-audit --no-fund
+      - name: Contracts and cross-repository drift
+        working-directory: ios
+        env:
+          MATTHS_WEB_REPO: ${{ github.workspace }}/web-reference
+        run: node scripts/run-contract-suite.mjs "$RUNNER_TEMP/matths-parity-results"
+      - name: Release iPhone and iPad compile
+        working-directory: ios
+        run: xcodebuild -quiet -project Matths.xcodeproj -scheme Matths -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/MatthsDerived" CODE_SIGNING_ALLOWED=NO build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-contract-results
+          path: ${{ runner.temp }}/matths-parity-results

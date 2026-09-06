@@ -81,15 +81,16 @@ extension ServerAPI {
         var draft: Draft
     }
 
-    static func assessmentSnapshot() async throws -> [RemoteAssessment] {
+    static func assessmentSnapshot(authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> [RemoteAssessment] {
         let value: AssessmentsEnvelope = try await request(
-            "GET", "/api/v1/assessments", body: nil, authed: true)
+            "GET", "/api/v1/assessments", body: nil, authed: true, authorization: authorization)
         return value.assessments
     }
 
     static func startAssessment(scope: PaperScope, courseId: String,
                                 unitId: String?, subunitId: String?,
-                                clientStartId: String) async throws -> RemoteAssessment {
+                                clientStartId: String,
+                                authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> RemoteAssessment {
         var body: [String: Any] = [
             "scopeType": scope.rawValue,
             "courseId": courseId,
@@ -98,33 +99,33 @@ extension ServerAPI {
         if let unitId { body["unitId"] = unitId }
         if let subunitId { body["subunitId"] = subunitId }
         let value: AssessmentEnvelope = try await request(
-            "POST", "/api/v1/assessments/start", body: body, authed: true)
+            "POST", "/api/v1/assessments/start", body: body, authed: true, authorization: authorization)
         return value.assessment
     }
 
-    static func assessmentAttempt(_ id: String) async throws -> RemoteAssessment {
+    static func assessmentAttempt(_ id: String, authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> RemoteAssessment {
         let value: AssessmentEnvelope = try await request(
-            "GET", "/api/v1/assessments/\(id)", body: nil, authed: true)
+            "GET", "/api/v1/assessments/\(id)", body: nil, authed: true, authorization: authorization)
         return value.assessment
     }
 
-    static func saveAssessmentDraft(id: String, answers: [String: String]) async throws {
+    static func saveAssessmentDraft(id: String, answers: [String: String], authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws {
         let _: AssessmentDraftEnvelope = try await request(
             "PATCH", "/api/v1/assessments/\(id)/draft",
-            body: ["answers": answers], authed: true)
+            body: ["answers": answers], authed: true, authorization: authorization)
     }
 
-    static func submitAssessment(id: String, answers: [String: String]) async throws -> RemoteAssessment {
+    static func submitAssessment(id: String, answers: [String: String], authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> RemoteAssessment {
         let value: AssessmentEnvelope = try await request(
             "POST", "/api/v1/assessments/\(id)/submit",
-            body: ["answers": answers], authed: true)
+            body: ["answers": answers], authed: true, authorization: authorization)
         return value.assessment
     }
 
-    static func expireAssessment(id: String, answers: [String: String]) async throws -> RemoteAssessment {
+    static func expireAssessment(id: String, answers: [String: String], authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> RemoteAssessment {
         let value: AssessmentEnvelope = try await request(
             "POST", "/api/v1/assessments/\(id)/expire",
-            body: ["answers": answers], authed: true)
+            body: ["answers": answers], authed: true, authorization: authorization)
         return value.assessment
     }
 }

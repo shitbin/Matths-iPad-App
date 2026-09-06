@@ -14,7 +14,7 @@ awk '/private var phoneLandscapeWorkspace:/,/private var landscapeProblemPane:/'
 # iPhone 가로만 고정 작업대를 사용한다. compact width만 보면 iPhone 세로와
 # iPad Split View까지 섞이므로 기기군과 vertical compact를 함께 확인해야 한다.
 grep -Fq '@Environment(\.verticalSizeClass) private var verticalSizeClass' "$solve"
-grep -Fq 'UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass == .compact' "$solve"
+grep -Fq 'verticalSizeClass == .compact && !workspaceTypeSize.isAccessibilitySize' "$solve"
 grep -Fq 'if usesPhoneLandscapeWorkspace' "$solve"
 
 # 이 분기 안에는 바깥 ScrollView가 없어야 문제와 노트가 한 화면에서 고정된다.
@@ -24,14 +24,17 @@ if grep -Fq 'ScrollView' "$work/workspace"; then
   echo "FAIL: iPhone landscape solve workspace must not use an outer ScrollView" >&2
   exit 1
 fi
-grep -Fq 'HStack(spacing: gutter)' "$work/workspace"
+grep -Fq 'ResponsiveProblemWorkspace(spacing: gutter' "$work/workspace"
 grep -Fq 'usableWidth * 0.44' "$work/workspace"
 grep -Fq 'landscapeProblemPane' "$work/workspace"
 grep -Fq 'landscapeNotePane(height: paneHeight)' "$work/workspace"
 grep -Fq 'if keyboardVisible {' "$work/workspace"
 grep -Fq '.frame(width: usableWidth, height: paneHeight)' "$work/workspace"
 grep -Fq 'landscapeKeyboardProblemPane' "$work/workspace"
-grep -Fq '.dynamicTypeSize(...DynamicTypeSize.xxxLarge)' "$work/workspace"
+if grep -Fq '.dynamicTypeSize(...DynamicTypeSize.xxxLarge)' "$work/workspace"; then
+  echo 'FAIL: workspace must not clamp accessibility text' >&2
+  exit 1
+fi
 awk '/private var landscapeProblemPane:/,/private func landscapeNotePane/' \
   "$solve" > "$work/problem-pane"
 grep -Fq 'ScrollView(.vertical)' "$work/problem-pane"

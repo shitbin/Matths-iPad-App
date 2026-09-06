@@ -43,7 +43,7 @@ for (const contract of [
   "현재 학습",
   "학습 완료",
   "학습 가능",
-  "잠금 없음",
+  "준비 중",
   "권장 선수 과목",
   "권장 선수 개념",
   "평가 잠김",
@@ -64,7 +64,7 @@ const rowEnd = map.indexOf("private func conceptCopy(", rowStart);
 assert.ok(rowStart >= 0 && rowEnd > rowStart, "개념 행 구현을 찾을 수 없습니다.");
 const conceptRow = map.slice(rowStart, rowEnd);
 assert.match(conceptRow, /store\.openConceptV2\(concept\.id\)/);
-assert.doesNotMatch(conceptRow, /\.disabled\(/, "개념 학습을 UI에서 잠그면 안 됩니다.");
+assert.match(conceptRow, /\.disabled\(!CurriculumV2\.canStudy\(concept\.id\)\)/, "서버 공개 정책이 개념 진입에도 적용되어야 합니다.");
 assert.match(conceptRow, /minHeight:\s*72/, "개념 행 터치 목표가 44pt보다 커야 합니다.");
 
 console.log("Curriculum map projection contract passed: 13 courses, 220 concepts, unlocked learning, adaptive states");

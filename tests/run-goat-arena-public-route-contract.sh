@@ -137,7 +137,12 @@ if grep -Fq '앱 API에 없어' "$arena" \
   echo "GOAT Arena 사용자 문구에 내부 API/서버 구현 설명이 남아 있습니다." >&2
   exit 1
 fi
-grep -Fq '일부 기능은 앱 안의 웹 GOAT Arena 화면에서 이어집니다.' "$arena"
-grep -Fq '현재 경기의 풀이 사진은 아래 버튼을 눌러 앱 안의 웹 경기 화면에서 제출해 주세요.' "$evidence"
+grep -Fq 'ArenaWebPresenter.open' "$arena"
+grep -Fq 'ArenaWebPresenter.open' "$evidence"
+grep -Eq 'handoff|Handoff' "$root/Matths/ArenaWeb/ArenaWebModel.swift"
+if grep -Eq 'UIApplication.shared.open|SFSafariViewController' "$rank" "$main_match" "$match_play" "$evidence"; then
+  echo "Arena continuation must preserve the in-app session" >&2
+  exit 1
+fi
 
 echo "iPad GOAT Arena public route contract passed"

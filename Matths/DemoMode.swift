@@ -128,6 +128,9 @@ enum DemoMode {
     }
 
     private static func purgeDemoSlotFiles() {
+        // Opt-in QA only: permits cold-relaunch durability checks in the isolated
+        // demo slot. Default demo launches still start from clean fixtures.
+        if ProcessInfo.processInfo.arguments.contains("-preserveDemoState") { return }
         let manager = FileManager.default
         let directory = DataScope.directory(for: slotName)
         let contents = (try? manager.contentsOfDirectory(
@@ -434,6 +437,10 @@ enum DemoRouter {
             return DemoAccountFixtures.withdrawResult
 
         // 학습 동기화
+        case "GET /api/v1/curriculum":
+            return DemoCurriculumAuthority.availability
+        case "GET /api/v1/learning":
+            return DemoCurriculumAuthority.learning
         case "GET /api/v1/learning/progress":
             return DemoAccountFixtures.learningProgress
         case "POST /api/v1/learning/progress/reset":

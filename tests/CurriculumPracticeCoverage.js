@@ -131,7 +131,7 @@ assert.doesNotMatch(
 );
 for (const contract of [
   "다음 학습",
-  "store.progressV2.continueConcept()",
+  "store.nextLearningConcept",
   "concept.lesson?.estimatedMinutes ?? 15",
   "이번에 잡을 핵심",
   "13과목 학습 지도 보기",
@@ -146,11 +146,12 @@ assert.doesNotMatch(
   /includeCurriculumChecks:\s*true/,
   "개념 확인 문제를 평가시험의 계산 숙련도 문항으로 섞으면 안 됩니다.",
 );
-assert.match(
-  assessmentSource,
-  /generatedPerConcept[\s\S]*plan\.count \* 2[\s\S]*count: generatedPerConcept/,
-  "얇은 문제은행 범위도 계산형 후보를 충분히 요청해 10·20·40문항을 채워야 합니다.",
-);
+const poolMultiplier = assessmentSource.match(/generatedPerConcept[\s\S]*?plan\.count\s*\*\s*(\d+)/);
+assert.ok(poolMultiplier && Number(poolMultiplier[1]) >= 2,
+  "얇은 문제은행 범위도 충분한 허용 후보를 준비해야 합니다.");
+assert.match(assessmentSource, /count: generatedPerConcept/);
+assert.match(assessmentSource, /guard ordered\.count == plan\.count else \{ return \[\] \}/,
+  "목표 문항 수를 채우지 못하면 짧은 시험지 대신 시작을 거절해야 합니다.");
 assert.match(
   rootViewSource,
   /CurriculumV2MapScreen\(\)/,
@@ -188,7 +189,7 @@ assert.match(
 assert.match(mapSource, /CurriculumV2\.data\.courses/);
 assert.match(mapSource, /geometry\.size\.width >= 760/);
 assert.match(mapSource, /dynamicTypeSize\.isAccessibilitySize/);
-assert.match(profileSource, /CurriculumV2\.data\.courses/);
+assert.match(profileSource, /store\.learningSummary/);
 assert.doesNotMatch(
   profileSource,
   /completedConceptIDs\.count/,

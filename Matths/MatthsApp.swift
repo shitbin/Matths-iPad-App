@@ -2,6 +2,7 @@
 //  Matths — iPadOS 앱 진입점
 
 import SwiftUI
+import Combine
 import UserNotifications
 import UIKit
 
@@ -172,8 +173,11 @@ struct MatthsApp: App {
                         .environmentObject(store)
                 }
                 .overlay {
-                    FirstRunOnboardingOverlay()
-                        .environmentObject(store)
+                    if ProductExperience.enabled && !["teacher", "admin"].contains(store.serverProfile?.role?.lowercased() ?? "student") {
+                        FirstSuccessOnboardingOverlay().environmentObject(store)
+                    } else {
+                        FirstRunOnboardingOverlay().environmentObject(store)
+                    }
                 }
                 .overlay {
                     NativeTutorialOverlay()
@@ -249,6 +253,10 @@ struct MatthsApp: App {
                         Task {
                             await store.refreshNotificationAuthorization()
                             await store.refreshServerProfile()
+                            await store.refreshAcademyLearningContext()
+                            await CurriculumAvailabilityStore.shared.refresh()
+                            await SyncEngine.shared.syncNow()
+                            await MatthsIAPStore.shared.reconcileForCurrentAccount()
                             await GoatArenaClientReviewOutbox.flush()
                         }
                     }
@@ -277,6 +285,7 @@ struct MatthsApp: App {
                     NotificationInboxStore.shared.refresh()
                     GoatArenaClientReviewOutbox.recoverCompleted(store.cheatingReviews)
                     await store.refreshServerProfile()
+                    await store.refreshAcademyLearningContext()
                     await GoatArenaClientReviewOutbox.flush()
                 }
                 // 보호 범위는 "문제 푸는 동안"이다. 레이아웃 모드(isSessionMode)가
@@ -474,6 +483,8 @@ final class AppStore: ObservableObject {
     func flushLearningPersistence() async -> Bool {
         let slot = DataScope.slot
         guard !disabledLearningPersistenceSlots.contains(slot) else { return false }
+        guard await AssessmentScratchpadRepository.flush(slot: slot), DataScope.slot == slot,
+              !disabledLearningPersistenceSlots.contains(slot) else { return false }
 
         // 로컬 평가 제출은 wrongNotes → assessments 두 파일을 순서대로 확정한다.
         // 그 사이 background/account flush가 아직 공개하지 않은 옛 메모리를 더 높은
@@ -532,6 +543,7 @@ final class AppStore: ObservableObject {
         // await 전에 닫는다. actor 장벽을 기다리는 동안 scenePhase/sync 콜백이
         // 재진입하더라도 cutoff보다 큰 새 명령을 만들 수 없어야 한다.
         disabledLearningPersistenceSlots.insert(slot)
+        await AssessmentScratchpadRepository.invalidate(slot: slot)
         let cutoff = nextLearningPersistenceRevision()
         // snapshot 외의 append-only writer도 같은 owner 슬롯을 먼저 tombstone한다.
         // 탈퇴 응답을 기다리는 동안 다른 계정으로 전환됐을 수 있으므로 current slot을
@@ -547,6 +559,14 @@ final class AppStore: ObservableObject {
         // didSet 은 뷰 갱신 전에 돌므로 트랜지션이 항상 올바른 방향을 읽는다.
         didSet {
             navDirection = route.navOrder >= oldValue.navOrder ? 1 : -1
+            if route == .notifications, oldValue != .notifications { notificationOrigin = oldValue }
+            if oldValue == .academy && route != .academy {
+                Task { await refreshAcademyLearningContext() }
+            }
+            if route == .academy, workspace == .student {
+                if serverProfile?.role?.lowercased() == "teacher" { workspace = .teacher }
+                if serverProfile?.role?.lowercased() == "admin" { workspace = .administrator }
+            }
             // 이용권·상점은 이제 홈·프로필·Arena 세 곳에서 들어온다. 어디서 왔는지
             // 기억해 두지 않으면 나갈 때 항상 한 곳으로 뱉어내고, 하단 탭도 엉뚱한
             // 자리에 불이 켜진다(홈에서 들어갔는데 GOAT Arena 가 켜지던 문제).
@@ -558,8 +578,23 @@ final class AppStore: ObservableObject {
         }
     }
 
+    @Published private(set) var workspace: AppWorkspace = .student
+    var allowedWorkspaces: [AppWorkspace] {
+        let role = serverProfile?.role?.lowercased() ?? "student"
+        return AppWorkspace.allCases.filter { $0.allowed(role: role) }
+    }
+    func selectWorkspace(_ value: AppWorkspace) {
+        guard allowedWorkspaces.contains(value), !isSessionMode else { return }
+        workspace = value
+        route = value == .student ? .home : .academy
+    }
+    func validateWorkspace() {
+        if !allowedWorkspaces.contains(workspace) { workspace = .student; route = .home }
+    }
+
     /// 이용권·상점 화면에 들어오기 직전의 화면. 나갈 곳과 하단 탭 표시를 여기에 맞춘다.
     private(set) var commerceOrigin: Route = .profile
+    private(set) var notificationOrigin: Route = .home
 
     /// 학원·서비스 허브에 들어오기 직전 화면. 홈과 프로필 어느 쪽에서 열어도 닫을 때
     /// 사용자가 있던 문맥으로 돌아간다.
@@ -777,6 +812,7 @@ final class AppStore: ObservableObject {
     @Published var wrongNoteStorageAlert: String?
 
     enum Route: Hashable, CaseIterable {
+        case learn, records, me
         case home, curriculum, concept, solve, result, assess, weeklyMock, wrongNotes, rank, arenaShop, commerce, placement, pro, profile, kice, paper, chat, quickPractice
         /// 학원·자료·지원·이용권을 역할별로 정리한 허브와, 서버 세션 기능을 여는 포털.
         case services, academy, coachSuggestions, support, archive, studyHall, storeCatalog, faq, hostedPortal
@@ -788,6 +824,7 @@ final class AppStore: ObservableObject {
 
         /// 하단 탭바에 실제로 칸이 있는 화면인지. MainTabBar 의 items 와 같은 집합이다.
         var isTab: Bool {
+            if ProductExperience.enabled { return [.home, .learn, .rank, .records, .me].contains(self) }
             switch self {
             case .home, .curriculum, .assess, .wrongNotes, .rank, .community: return true
             default: return false
@@ -1155,6 +1192,10 @@ final class AppStore: ObservableObject {
     /// 파일에 저장하지 않는 풀이·튜터·시험 세션도 학생별 상태다. 새 슬롯에서 이전
     /// 학생의 답안이나 진행 중 시험을 다시 열 수 없도록 전환 순간에만 초기화한다.
     private func clearTransientAccountState() {
+        academyContextTask?.cancel(); academyContextTask = nil; todayAcademyAttendance = nil
+        CurriculumAvailabilityStore.shared.cancelSessionRequest()
+        canonicalLearning = nil
+        workspace = .student
         // 예약해 둔 로컬 알림에도 앞 학생의 상태가 들어 있다(복습할 오답 수, 방어 마감).
         // 한 대의 iPad 를 형제가 나눠 쓰므로 슬롯이 바뀌면 예약도 함께 끊는다.
         // 새 슬롯의 예약은 reloadLocalData() 뒤 각 화면이 서버 값을 받아 다시 건다.
@@ -1163,6 +1204,7 @@ final class AppStore: ObservableObject {
         assessmentDraftTask = nil
         assessmentStartGeneration = UUID()
         assessmentSubmitting = false
+        assessmentStarting = false
         assessmentSyncError = nil
         NotificationInboxStore.shared.reloadForCurrentSlot()
         lastGrading = nil
@@ -1213,6 +1255,16 @@ final class AppStore: ObservableObject {
         SyncEngine.shared.onRemoteProgress = { [weak self] rows, owner in
             self?.mergeRemoteProgress(rows, owner: owner)
         }
+        SyncEngine.shared.onCanonicalLearning = { [weak self] snapshot, owner in
+            guard let self, self.isSyncAccountOwnerActive(owner), !self.progressResetInFlight else { return }
+            self.canonicalLearning = snapshot
+            self.progressV2.applyCanonical(snapshot)
+            self.saveProgressV2()
+            if let data = try? JSONEncoder().encode(snapshot) {
+                UserDefaults.standard.set(data, forKey: self.canonicalLearningKey)
+            }
+            WidgetBridge.publish(from: self)
+        }
         SyncEngine.shared.onRemoteStuckPoints = { [weak self] rows, owner in
             self?.mergeRemoteStuckPoints(rows, owner: owner)
         }
@@ -1220,6 +1272,7 @@ final class AppStore: ObservableObject {
         // 한 번 더 깨워야 첫 실행에서도 서버 진도가 즉시 보인다.
         Task { await SyncEngine.shared.syncNow() }
         Task { [weak self] in await self?.pullServerAssessments() }
+        Task { [weak self] in await self?.refreshAcademyLearningContext() }
     }
 
     /// 서버에서 받은 진도를 로컬과 합친다 — **덮지 않는다.**
@@ -1248,7 +1301,10 @@ final class AppStore: ObservableObject {
                 topicIndexes: r.completedTopicIndexes ?? [],
                 correctTypeIds: r.masteryGate?.correctTypeIds ?? [],
                 userCompleted: r.masteryGate?.userCompleted == true,
-                lastStudiedAt: when)
+                lastStudiedAt: when,
+                serverPercent: r.completionPercent,
+                serverRequiredDistinctTypes: r.masteryGate?.requiredDistinctTypes,
+                serverCorrectTypeIDs: r.masteryGate?.correctTypeIds)
             if r.masteryGate?.userCompleted == true {
                 // 구 평가센터 잠금은 v2 id가 아니라 legacy.appId 집합을 읽는다.
                 if let appID = CurriculumV2.concept(r.conceptId)?.2.legacy?.appId {
@@ -1339,6 +1395,9 @@ final class AppStore: ObservableObject {
 
     /// 현재 슬롯의 파일들로 메모리 상태를 통째로 다시 채운다.
     func reloadLocalData() {
+        canonicalLearning = UserDefaults.standard.data(forKey: canonicalLearningKey)
+            .flatMap { try? JSONDecoder().decode(CanonicalLearningSnapshot.self, from: $0) }
+        if canonicalLearning?.isValid != true { canonicalLearning = nil }
         wrongNotes = WrongNoteDisk.load()
         cheatingReviews = CheatingReviewDisk.loadRecoveringInterrupted()
         var p = ProgressV2Store.load()
@@ -1509,6 +1568,11 @@ final class AppStore: ObservableObject {
             SyncEngine.shared.enqueueWrongNote(note)
         }
         Task { [weak self] in await self?.pullServerAssessments() }
+        if let intent = pendingAssessmentIntent {
+            pendingAssessmentIntent = nil
+            startPaper(scope: intent.scope, course: intent.course, unit: intent.unit, subunit: intent.subunit)
+        }
+        Task { await MatthsIAPStore.shared.reconcileForCurrentAccount() }
         return true
     }
 
@@ -1551,16 +1615,20 @@ final class AppStore: ObservableObject {
         guard isLearningAccountOperationActive(for: DataScope.slot),
               !progressResetInFlight else { return false }
         progressResetInFlight = true
+        SyncEngine.shared.beginProgressReset()
         defer { progressResetInFlight = false }
 
         let slot = DataScope.slot
         let previousCompleted = completedConceptIDs
         let previousProgress = progressV2
+        let previousCanonical = canonicalLearning
         let previousSolved = solvedTotal
         let previousCorrect = correctTotal
         completedConceptIDs = []
         Progress.save([])
         progressV2 = ProgressV2Store()
+        canonicalLearning = nil
+        UserDefaults.standard.removeObject(forKey: canonicalLearningKey)
         solvedTotal = 0
         correctTotal = 0
         UserDefaults.standard.set(0, forKey: AppStore.slotKey("matths.solved"))
@@ -1578,6 +1646,10 @@ final class AppStore: ObservableObject {
             completedConceptIDs = previousCompleted
             Progress.save(previousCompleted)
             progressV2 = previousProgress
+            canonicalLearning = previousCanonical
+            if let previousCanonical, let data = try? JSONEncoder().encode(previousCanonical) {
+                UserDefaults.standard.set(data, forKey: canonicalLearningKey)
+            }
             solvedTotal = previousSolved
             correctTotal = previousCorrect
             UserDefaults.standard.set(
@@ -1651,9 +1723,10 @@ final class AppStore: ObservableObject {
             serverProfile = nil
             return
         }
+        let owner = captureAccountSessionBoundary()
         do {
             let user = try await ServerAPI.me()
-            guard authProvider == "server" else { return }
+            guard authProvider == "server", ownsCurrentAccountSession(owner) else { return }
             applyServerProfile(user)
         } catch {
             // 401은 공통 요청 계층이 인증 만료로 전환한다. 일시적 네트워크 오류에는
@@ -1671,6 +1744,18 @@ final class AppStore: ObservableObject {
         authenticationNotice = nil
     }
 
+    func finishPasswordChange(for boundary: AccountSessionBoundary) async {
+        guard ownsCurrentAccountSession(boundary) else { return }
+        pendingAssessmentIntent = nil
+        ServerAPI.logout()
+        let switched = await signOut(discardingCurrentSlot: false)
+        if switched || ownsCurrentAccountSession(boundary) {
+            authProvider = nil
+            UserDefaults.standard.removeObject(forKey: "matths.auth")
+            authenticationNotice = "비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해 주세요."
+        }
+    }
+
     // MARK: 커리큘럼 v2 — 2022 개정 전 과목 (CurriculumV2.swift, 웹 레포 진실원)
 
     /// v2 진도 — topic 30% + 유형 60% + 완료체크 100% (웹 공식)
@@ -1684,6 +1769,49 @@ final class AppStore: ObservableObject {
 
     /// v2 학습 화면이 보는 개념 id (웹 3계층 id)
     @Published var selectedConceptV2ID: String?
+    @Published var curriculumAccessNotice: String?
+    private var curriculumSubscription: AnyCancellable?
+    @Published private(set) var canonicalLearning: CanonicalLearningSnapshot?
+    @Published private(set) var todayAcademyAttendance: ServerAPI.AcademyAttendanceDashboard?
+    private var academyContextTask: Task<Void, Never>?
+    func refreshAcademyLearningContext() async {
+        if let task = academyContextTask { await task.value; return }
+        guard authProvider == "server", !["teacher", "admin"].contains(serverProfile?.role ?? "student"),
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let owner = captureAccountSessionBoundary()
+        let task = Task { [weak self] in
+            do {
+                let value = try await ServerAPI.academyDashboard(authorization: authorization)
+                guard !Task.isCancelled, let self, self.ownsCurrentAccountSession(owner) else { return }
+                self.todayAcademyAttendance = value.attendance
+                WidgetBridge.publish(from: self)
+            } catch {
+                guard let self, self.ownsCurrentAccountSession(owner) else { return }
+                self.todayAcademyAttendance = nil
+            }
+        }
+        academyContextTask = task
+        await task.value
+        if ownsCurrentAccountSession(owner) { academyContextTask = nil }
+    }
+    private var canonicalLearningKey: String {
+        "matths.learning.canonical.v1." + ServerAPI.baseURL.absoluteString + "." + DataScope.slot
+    }
+    var learningSummary: (percent: Int, done: Int, total: Int) {
+        if let canonicalLearning {
+            let value = canonicalLearning.projection(using: CurriculumPolicy.snapshot)
+            return (value.percent, value.done, value.total)
+        }
+        return progressV2.overallScoped()
+    }
+    var nextLearningConcept: (CourseV2, UnitV2, ConceptV2)? {
+        if let canonicalLearning {
+            guard let id = canonicalLearning.projection(using: CurriculumPolicy.snapshot).nextConceptID,
+                  CurriculumV2.canStudy(id) else { return nil }
+            return CurriculumV2.concept(id)
+        }
+        return progressV2.continueConcept()
+    }
     /// v2 허브에서 펼친 과목 — Split View 전환·앱 재실행 뒤에도 같은 과목을 유지한다.
     @Published var selectedCourseV2ID: String? =
         UserDefaults.standard.string(forKey: AppStore.slotKey("matths.lastCourseV2")) {
@@ -1697,6 +1825,12 @@ final class AppStore: ObservableObject {
     var examSourceConceptV2ID: String?
 
     func openConceptV2(_ id: String) {
+        guard CurriculumV2.canStudy(id) else {
+            curriculumAccessNotice = "이 과목은 준비 중입니다. 현재 공개된 과목에서 학습을 이어가 주세요."
+            route = .curriculum
+            return
+        }
+        curriculumAccessNotice = nil
         selectedConceptV2ID = id
         if let (course, _, _) = CurriculumV2.concept(id) {
             selectedCourseV2ID = course.id
@@ -1718,7 +1852,7 @@ final class AppStore: ObservableObject {
             ? String(rawType.dropFirst(4))
             : rawType
         if ProblemType(rawValue: canonicalType) != nil {
-            for course in CurriculumV2.data.courses {
+            for course in CurriculumV2.availableCourses {
                 for unit in course.units {
                     if let concept = unit.concepts.first(where: {
                         $0.practiceTypes.contains(canonicalType)
@@ -1730,7 +1864,7 @@ final class AppStore: ObservableObject {
             }
         }
 
-        if let (_, _, concept) = progressV2.continueConcept() {
+        if let (_, _, concept) = nextLearningConcept {
             openConceptV2(concept.id)
         } else {
             route = .curriculum
@@ -1746,7 +1880,7 @@ final class AppStore: ObservableObject {
     /// 학생의 마지막 탭이 사라질 수 있다. 슬롯 게이트를 mutation보다 먼저 확인하고
     /// snapshot·로컬 이벤트·서버 journal을 같은 호출에서 한 번씩만 만든다.
     func toggleConceptTopic(_ index: Int, concept: ConceptV2) {
-        guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
+        guard isLearningAccountOperationActive(for: DataScope.slot), CurriculumV2.canStudy(concept.id) else { return }
         let wasCompleted = progressV2.byConcept[concept.id]?
             .completedTopicIndexes.contains(index) == true
         progressV2.toggleTopic(index, concept: concept)
@@ -1785,7 +1919,7 @@ final class AppStore: ObservableObject {
     /// 호출부에서 먼저 v2를 저장한 뒤 markConceptComplete를 다시 부르면 같은 전체
     /// 스냅샷과 completion op가 두 번 생겨 버튼 반환도 늦고 큐도 중복된다.
     func completeConceptV2(_ concept: ConceptV2) {
-        guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
+        guard isLearningAccountOperationActive(for: DataScope.slot), CurriculumV2.canStudy(concept.id) else { return }
         progressV2.setUserCompleted(true, concept: concept)
         if let appID = concept.legacy?.appId {
             completedConceptIDs.insert(appID)
@@ -1800,6 +1934,7 @@ final class AppStore: ObservableObject {
 
     func markConceptComplete(_ id: String) {
         guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
+        if let (_, _, concept) = Self.v2Concept(forLegacyAppID: id), !CurriculumV2.canStudy(concept.id) { return }
         completedConceptIDs.insert(id)
         Progress.save(completedConceptIDs)
         // v2 화면에서 legacy.appId 호환 기록을 남긴 경우에도 같은 완료를 v2 진도와
@@ -2427,6 +2562,14 @@ final class AppStore: ObservableObject {
     @Published var currentAttemptID: String?
     @Published var assessmentSyncError: String?
     @Published private(set) var assessmentSubmitting = false
+    @Published private(set) var assessmentStarting = false
+    struct AssessmentStartIntent {
+        let scope: PaperScope
+        let course: AssessCourse
+        let unit: AssessUnit?
+        let subunit: AssessSubunit?
+    }
+    private var pendingAssessmentIntent: AssessmentStartIntent?
     private var assessmentStartGeneration = UUID()
     private var assessmentDraftTask: Task<Void, Never>?
     /// 로컬 제출의 wrongNotes→assessment 내구 순서가 끝나기 전 stable flush가
@@ -2441,7 +2584,19 @@ final class AppStore: ObservableObject {
     func startPaper(scope: PaperScope, course: AssessCourse,
                     unit: AssessUnit? = nil, subunit: AssessSubunit? = nil) {
         guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
+        guard CurriculumPolicy.isAvailable(course.courseId) else {
+            assessmentSyncError = "이 과목은 준비 중입니다."
+            return
+        }
+        guard !assessmentStarting else { return }
         if ServerAPI.hasToken {
+            let scopeKey = "\(scope.rawValue)/\(course.courseId)/\(unit?.unitId ?? "-")/\(subunit?.id ?? "-")"
+            if let open = attemptsV2.openAttempt(scopeKey: scopeKey) {
+                currentAttemptID = open.id
+                route = .paper
+                return
+            }
+            assessmentStarting = true
             let generation = UUID()
             assessmentStartGeneration = generation
             let account = captureAccountSessionBoundary()
@@ -2453,52 +2608,18 @@ final class AppStore: ObservableObject {
             }
             return
         }
-        startLocalPaper(scope: scope, course: course, unit: unit, subunit: subunit)
+        pendingAssessmentIntent = AssessmentStartIntent(scope: scope, course: course, unit: unit, subunit: subunit)
+        authenticationNotice = "로그인하면 공식 평가 기록과 응시 상태를 안전하게 저장할 수 있습니다."
+        authProvider = nil
     }
 
-    private func startLocalPaper(scope: PaperScope, course: AssessCourse,
-                                 unit: AssessUnit? = nil, subunit: AssessSubunit? = nil) {
-        let scopeKey = "\(scope.rawValue)/\(course.courseId)/\(unit?.unitId ?? "-")/\(subunit?.id ?? "-")"
-        // 평가센터가 "진행 중"이라고 표시한 회차는 새로 뽑지 말고 실제 저장 답안으로
-        // 돌아간다. 종전에는 같은 CTA가 매번 새 AssessmentAttempt를 만들어
-        // "이어서 응시"가 사실상 데이터 유실 버튼이었다.
-        if let open = attemptsV2.openAttempt(scopeKey: scopeKey) {
-            currentAttemptID = open.id
-            route = .paper
-            return
-        }
-        let title: String
-        switch scope {
-        case .subunit: title = "“\(subunit?.title ?? "")” 중간평가"
-        case .unit:    title = "“\(unit?.title ?? "")” 기말평가"
-        case .course:  title = "“\(course.title)” 과목 종합평가"
-        }
-        // 심화 템플릿의 스테이지 선택 근거 — 이 과목의 완료 개념 (웹 learnedConceptIds)
-        let learned = CurriculumV2.course(course.courseId)?.allConcepts
-            .filter { progressV2.percent(for: $0) >= 100 }.map(\.id) ?? []
-        let questions = PaperFactory.make(
-            scope: scope, course: course, unit: unit, subunit: subunit,
-            seed: UInt64(Date().timeIntervalSince1970),
-            avoid: attemptsV2.avoidedTypeKeys(scopeKey: scopeKey),
-            learned: learned)
-        guard !questions.isEmpty else { return }
-        let attempt = AssessmentAttemptV2(
-            id: UUID().uuidString, scope: scope, courseId: course.courseId,
-            unitId: unit?.unitId, subunitId: subunit?.id, title: title,
-            questions: questions, answers: Array(repeating: "", count: questions.count),
-            submittedAt: nil, scorePercent: nil, passed: nil, createdAt: Date(),
-            // 제한 시간을 **시작할 때 박아 둔다** — 레포와 같은 값(10/30/60분).
-            timeLimitMs: AssessTimeLimit.ms(for: scope.rawValue), disqualified: false)
-        attemptsV2.upsert(attempt)
-        requestImmediateLearningPersistence(.assessments(attemptsV2.attempts))
-        currentAttemptID = attempt.id
-        route = .paper
-    }
 
     private func startServerPaper(scope: PaperScope, course: AssessCourse,
                                   unit: AssessUnit?, subunit: AssessSubunit?,
                                   generation: UUID,
                                   account: AccountSessionBoundary) async {
+        defer { if generation == assessmentStartGeneration { assessmentStarting = false } }
+        guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account) else { return }
         do {
             let remote = try await ServerAPI.startAssessment(
                 scope: scope, courseId: course.courseId, unitId: unit?.unitId,
@@ -2609,7 +2730,11 @@ final class AppStore: ObservableObject {
         guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
         guard let current = currentAttempt, current.submittedAt == nil else { return }
         let account = captureAccountSessionBoundary()
-        if current.serverBacked == true, ServerAPI.hasToken {
+        guard current.serverBacked == true else {
+            assessmentSyncError = "이 기록은 이전 버전의 비공식 연습입니다. 공식 평가로 제출할 수 없습니다."
+            return
+        }
+        if current.serverBacked == true {
             guard !assessmentSubmitting else { return }
             assessmentSubmitting = true
             assessmentDraftTask?.cancel()
@@ -2619,13 +2744,6 @@ final class AppStore: ObservableObject {
             }
             return
         }
-        guard !assessmentSubmitting else { return }
-        assessmentSubmitting = true
-        assessmentDraftTask?.cancel()
-        Task { [weak self] in
-            await self?.submitLocalPaper(
-                monotonicElapsed: monotonicElapsed, account: account)
-        }
     }
 
     private func submitServerPaper(_ attempt: AssessmentAttemptV2,
@@ -2634,6 +2752,7 @@ final class AppStore: ObservableObject {
         defer {
             if ownsCurrentAccountSession(account) { assessmentSubmitting = false }
         }
+        guard isLearningAccountOperationActive(for: account) else { return }
         do {
             let payload = AssessmentSyncPayload.answers(for: attempt)
             let remote: ServerAPI.RemoteAssessment
@@ -2662,140 +2781,6 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func submitLocalPaper(
-        monotonicElapsed: TimeInterval = 0,
-        account: AccountSessionBoundary
-    ) async {
-        defer {
-            if ownsCurrentAccountSession(account) { assessmentSubmitting = false }
-        }
-        guard isLearningAccountOperationActive(for: account) else { return }
-        guard var a = currentAttempt, a.submittedAt == nil else { return }
-        assessmentPersistenceTransactionInFlight = true
-        defer { assessmentPersistenceTransactionInFlight = false }
-
-        // **시간이 지났으면 0점 실격이다.** 레포는 이때 status="disqualified",
-        // reason="time-limit", earnedPoints=0 으로 저장한다. 앱에는 이 처리가
-        // 아예 없어서, 몇 시간이 걸려도 정상 점수가 나왔다 —
-        // 같은 시험을 앱에서 보는 쪽이 더 유리했다.
-        if a.remainingSeconds(monotonicElapsed: monotonicElapsed) <= 0 {
-            a.disqualified = true
-            a.scorePercent = 0
-            a.passed = false
-            a.submittedAt = Date()
-            var updatedAttempts = attemptsV2
-            updatedAttempts.upsert(a)
-            let persisted = await persistLearningImmediately(
-                .assessments(updatedAttempts.attempts), for: account.slot)
-            guard ownsLocalAssessmentPersistenceTransaction(account) else { return }
-            guard persisted else {
-                assessmentSyncError = "시간 초과 결과를 이 기기에 저장하지 못했습니다."
-                return
-            }
-            attemptsV2 = updatedAttempts
-            assessmentSyncError = nil
-            return
-        }
-
-        let result = PaperFactory.grade(questions: a.questions, answers: a.answers)
-        a.scorePercent = result.scorePercent
-        a.passed = result.scorePercent >= AssessCatalog.data.passScore
-        a.submittedAt = Date()
-
-        // 제출 완료 회차를 먼저 저장한 뒤 오답을 debounce하면, 그 150ms 사이 종료 시
-        // 재제출은 막혔는데 파생 오답은 없는 복구 불가능 상태가 된다. 메모리를 아직
-        // 공개하지 않은 값 스냅샷으로 둘 다 만들고, 재생성 가능한 assessment보다
-        // 오답 정본을 먼저 내구 저장한다.
-        var updatedAttempts = attemptsV2
-        updatedAttempts.upsert(a)
-        var updatedWrongNotes = wrongNotes
-        var wrongNotesToSync: [WrongNoteEntry] = []
-        for (i, q) in a.questions.enumerated() where !result.verdicts[i] {
-            let pid = "paper-\(a.id)-\(q.no)"
-            if let existing = updatedWrongNotes.firstIndex(where: { $0.problemID == pid }) {
-                // 첫 제출에서 오답 파일은 성공하고 assessment 파일만 실패했을 수 있다.
-                // 재시도 때 기존 problemID를 건너뛰더라도 아직 서버 id가 없는 항목은
-                // 성공 경계 뒤 멱등 큐에 다시 태워야 영구 로컬 전용으로 남지 않는다.
-                if updatedWrongNotes[existing].serverAttemptId == nil {
-                    wrongNotesToSync.append(updatedWrongNotes[existing])
-                }
-                continue
-            }
-            let note = WrongNoteEntry(
-                id: UUID().uuidString, problemID: pid, typeKey: q.typeKey,
-                typeName: a.title, unit: "평가 \(a.title)",
-                statement: q.prompt, answer: q.answer,
-                // 해설이 비어 있으면 "평가 결과 화면에서 보라" 고 안내했었는데, 제출한
-                // 시험지를 다시 여는 진입점이 앱에 없다 — 도달 못 하는 화면을 가리키는
-                // 안내는 없느니만 못하다. 없는 것은 없다고 말한다 (2026-07-29 감사 적발).
-                steps: q.solution.isEmpty
-                    ? ["이 문항은 모범 풀이가 제공되지 않습니다. 정답과 대조하며 풀이를 다시 확인해 보세요."]
-                    : [q.solution],
-                seed: 0, divergenceStep: nil, drawingPNGBase64: nil,
-                srsStage: 0, nextReviewAt: Date(), wrongCount: 1, createdAt: Date(),
-                choices: q.choices, isTex: true)
-            updatedWrongNotes.insert(note, at: 0)
-            wrongNotesToSync.append(note)
-        }
-
-        let wrongNotesPersisted = await persistLearningImmediately(
-            .wrongNotes(updatedWrongNotes), for: account.slot)
-        guard ownsLocalAssessmentPersistenceTransaction(account) else { return }
-        guard wrongNotesPersisted else {
-            assessmentSyncError = "평가 오답을 이 기기에 저장하지 못해 제출을 완료하지 않았습니다."
-            return
-        }
-        let assessmentPersisted = await persistLearningImmediately(
-            .assessments(updatedAttempts.attempts), for: account.slot)
-        guard ownsLocalAssessmentPersistenceTransaction(account) else { return }
-        guard assessmentPersisted else {
-            // 오답 파일은 이미 안전하다. 메모리에도 같은 값을 유지해 같은 실행에서
-            // 재시도할 때 problemID 중복 방지가 작동하게 하고, 회차만 미제출로 둔다.
-            wrongNotes = updatedWrongNotes
-            assessmentSyncError = "평가 결과를 이 기기에 저장하지 못해 제출을 완료하지 않았습니다."
-            objectWillChange.send()
-            return
-        }
-
-        attemptsV2 = updatedAttempts
-        wrongNotes = updatedWrongNotes
-        assessmentSyncError = nil
-
-        let correctCount = result.verdicts.filter { $0 }.count
-        let elapsedMs = monotonicElapsed > 0
-            ? Int((monotonicElapsed * 1_000).rounded()) : nil
-        EventLog.appendGrading(
-            correct: correctCount,
-            total: a.questions.count,
-            durationMs: elapsedMs)
-        SyncEngine.shared.enqueueGradingEvents(
-            correct: correctCount,
-            total: a.questions.count,
-            durationMs: elapsedMs)
-        solvedTotal += a.questions.count
-        correctTotal += correctCount
-        UserDefaults.standard.set(solvedTotal, forKey: AppStore.slotKey("matths.solved"))
-        UserDefaults.standard.set(correctTotal, forKey: AppStore.slotKey("matths.correct"))
-        activityDays = ActivityLog.recordToday()
-
-        for note in wrongNotesToSync {
-            // 평가 오답도 서버로 올린다. 이 한 줄이 없어서 로그인 이후 생긴 평가
-            // 오답만 영영 안 올라갔다 — 기출 경로에서 이미 같은 구멍을 메웠는데
-            // 평가 경로에만 남아 있었다(2026-07-29 감사 적발).
-            SyncEngine.shared.enqueueWrongNote(note)
-        }
-        // 제출된 회차는 submittedAt 때문에 재실행에서 다시 side effect를 만들 수 없다.
-        // 따라서 일반 학습 debounce와 달리, 로컬 대시보드 이벤트와 서버 outbox도 이
-        // 제출 트랜잭션에서 actor disk ack까지 닫는다. UI는 위 Published assignment로
-        // 이미 리뷰 모드가 됐고, JSON/FileHandle 작업만 별도 writer에서 진행된다.
-        let eventsPersisted = await EventLog.flushPendingWrites(for: account.slot)
-        let syncQueuePersisted = await SyncEngine.shared.flushLocalQueuePersistence()
-        guard ownsLocalAssessmentPersistenceTransaction(account) else { return }
-        if !(eventsPersisted && syncQueuePersisted) {
-            assessmentSyncError = "평가 결과는 저장했지만 활동·동기화 기록을 안전하게 보관하지 못했습니다. 저장 공간을 확인해주세요."
-        }
-        objectWillChange.send()
-    }
 
     /// 과목 종합평가 통과 여부 — 진도 95% 캡의 근거 (웹 applyAssessmentGates)
     func coursePassedV2(_ webCourseID: String) -> Bool {
@@ -2844,7 +2829,7 @@ final class AppStore: ObservableObject {
             tasks.append(DailyPlanTask(id: "review", kind: "review",
                 title: "오답 \(dueReviewCount)문항 복습", estimatedMinutes: dueReviewCount * 4, done: false))
         }
-        if let (course, _, con) = progressV2.continueConcept() {
+        if let (course, _, con) = nextLearningConcept {
             tasks.append(DailyPlanTask(id: "concept-\(con.id)", kind: "concept",
                 title: "\(course.title) \(con.title) 학습",
                 estimatedMinutes: con.lesson?.estimatedMinutes ?? 15, done: false))
@@ -2870,6 +2855,7 @@ final class AppStore: ObservableObject {
 
     /// 웹 로컬 생성기 연습 — 네이티브 유형이 없는 개념의 STEP04 (웹 practiceService)
     func startWebPractice(_ concept: ConceptV2) {
+        guard CurriculumV2.canStudy(concept.id) else { return }
         guard let (course, unit, _) = CurriculumV2.concept(concept.id) else { return }
         let seed = UInt64(Date().timeIntervalSince1970 * 1_000)
         let problems = WebGen.practiceProblems(
@@ -2975,6 +2961,18 @@ final class AppStore: ObservableObject {
     }
 
     init() {
+        curriculumSubscription = CurriculumAvailabilityStore.shared.$snapshot.dropFirst().sink { [weak self] _ in
+            guard let self else { return }
+            self.objectWillChange.send()
+            if let id = self.selectedCourseV2ID, !CurriculumPolicy.isAvailable(id) {
+                self.selectedCourseV2ID = CurriculumV2.availableCourses.first?.id
+            }
+            if let id = self.selectedConceptV2ID, !CurriculumV2.canStudy(id), self.route == .concept {
+                self.curriculumAccessNotice = "이 과목은 현재 준비 중입니다. 다른 공개 과목을 선택해 주세요."
+                self.route = .curriculum
+            }
+            WidgetBridge.publish(from: self)
+        }
         #if !DEBUG
         let persistedProvider = authProvider
         let sanitizedProvider = ServerTokenOwnership.sanitizedPersistedProvider(persistedProvider)
@@ -3173,6 +3171,10 @@ final class AppStore: ObservableObject {
         // 로그인 화면은 RootView보다 먼저 뜬다. RootView.onAppear에서만 콜백을 걸면
         // 첫 로그인 직후 guest 승계 큐를 적재할 때 session owner 공급자가 아직 nil이다.
         wireSyncCallbacks()
+        Task { await refreshAcademyLearningContext() }
+        #if DEBUG
+        Task { OfflinePracticeSelfTest.runIfRequested() }
+        #endif
     }
 
     func recordStuckPoint(_ text: String) {
@@ -3216,6 +3218,14 @@ final class AppStore: ObservableObject {
     /// 개념 화면은 탭이 아니지만 커리큘럼에서 들어온 곳이므로 그 탭을 켠다.
     /// (아무 탭도 안 켜져 있으면 학생은 자기가 어디 있는지 알 수 없다.)
     var selectedTab: Route {
+        if ProductExperience.enabled && workspace != .student {
+            return route == .notifications ? .notifications : (route == .academy ? .academy : .me)
+        }
+        if ProductExperience.enabled {
+            if route == .commerce { return StudentDestination.containing(commerceOrigin).route }
+            if route == .notifications { return StudentDestination.containing(notificationOrigin).route }
+            return StudentDestination.containing(route).route
+        }
         switch route {
         case .concept: return .curriculum
         case .placement, .arenaShop: return .rank

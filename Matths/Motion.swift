@@ -64,17 +64,17 @@ extension AppStore.Route {
     var navOrder: Int {
         switch self {
         case .home: return 0
-        case .curriculum: return 1
+        case .curriculum, .learn: return 1
         case .concept: return 2
         case .assess: return 3
-        case .wrongNotes: return 4
+        case .wrongNotes, .records: return 4
         case .community: return 5      // 탭 순서: 오답노트 다음, GOAT Arena 앞
         case .rank, .arenaShop, .commerce: return 6
         case .pro: return 7
         case .chat: return 8
         // 알림함은 프로필과 같은 "상단 바에서 다녀오는 곳" 이라 그 옆에 둔다.
         case .notifications: return 9
-        case .profile, .services, .academy, .coachSuggestions, .support, .archive, .studyHall, .storeCatalog, .faq, .hostedPortal: return 9
+        case .profile, .me, .services, .academy, .coachSuggestions, .support, .archive, .studyHall, .storeCatalog, .faq, .hostedPortal: return 9
         // 퀵 연습은 홈에서 들어가는 짧은 세션 — 진행 방향(끝)으로 둔다
         case .quickPractice, .solve, .result, .kice, .paper, .placement, .weeklyMock: return 10
         }
