@@ -91,7 +91,7 @@ struct RootView: View {
                         if !(keyboardVisible && verticalSizeClass == .compact) { topChrome }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if !keyboardVisible && !usesSidebar(width: width) { bottomChrome }
+                        if !keyboardVisible && !usesSidebar(width: width) && !hasStaffWorkspace { bottomChrome }
                     }
                     .safeAreaInset(edge: .leading, spacing: 0) {
                         if usesSidebar(width: width) { LearningFlowSidebar() }
@@ -212,7 +212,11 @@ struct RootView: View {
     }
 
     private func usesSidebar(width: CGFloat) -> Bool {
-        ProductExperience.enabled && width >= 900 && !navigationTypeSize.isAccessibilitySize
+        ProductExperience.enabled && !hasStaffWorkspace && width >= 900 && !navigationTypeSize.isAccessibilitySize
+    }
+
+    private var hasStaffWorkspace: Bool {
+        ProductExperience.enabled && store.workspace != .student && store.route == .academy
     }
 
     /// 두 바가 깔고 앉는 면. 바 자신의 배경과 **같은 색**이어야 한다 —
@@ -911,6 +915,13 @@ struct NativeTutorialOverlay: View {
     @State private var mutationInFlight = false
     @State private var mutationError: String?
     @State private var coachFrame = 1
+    private struct RunOwner {
+        let id: UUID
+        let request: AccountRequestOwner
+        let role: String
+    }
+    @State private var runOwner: RunOwner?
+    @State private var mutationTask: Task<Void, Never>?
     #if DEBUG
     @State private var consumedDebugFixture = false
     #endif
@@ -922,9 +933,41 @@ struct NativeTutorialOverlay: View {
         let chapterStates = arena?.chapters
             .map { "\($0.key):\($0.value.status)" }
             .sorted().joined(separator: "|") ?? ""
-        return [store.authProvider ?? "", String(describing: store.route), dashboard,
+        // This boundary contains only the local slot and generation, never a
+        // Bearer token. It changes even when the same account signs in again.
+        return [String(describing: store.captureAccountSessionBoundary()),
+                store.nativeTutorialPresentationOwner?.uuidString ?? "",
+                DataScope.slot, normalizedRole, store.authProvider ?? "", String(describing: store.route), dashboard,
                 String(store.requestedDashboardTutorial),
                 store.requestedArenaTutorialChapter ?? "", chapterStates].joined(separator: "#")
+    }
+
+    private var normalizedRole: String { store.serverProfile?.role?.lowercased() ?? "student" }
+    private func owns(_ owner: RunOwner) -> Bool {
+        runOwner?.id == owner.id && owner.request.isCurrent(in: store)
+            && owner.role == normalizedRole && store.authProvider == "server"
+            && store.nativeTutorialPresentationOwner == owner.id
+    }
+    @MainActor private func claimRun() -> RunOwner? {
+        guard store.authProvider == "server", let request = AccountRequestOwner(store: store) else { return nil }
+        let owner = RunOwner(id: UUID(), request: request, role: normalizedRole)
+        runOwner = owner
+        store.claimNativeTutorialPresentation(owner.id)
+        return owner
+    }
+    @MainActor private func clearRun(ifOwnedBy expectedID: UUID? = nil) {
+        guard expectedID == nil || runOwner?.id == expectedID else { return }
+        let previous = runOwner
+        let sameAccount = previous?.request.isCurrent(in: store) == true
+            && store.nativeTutorialPresentationOwner == previous?.id
+        mutationTask?.cancel(); mutationTask = nil
+        run = nil; runOwner = nil; spotlightVisible = false
+        mutationInFlight = false; mutationError = nil
+        if let previous { store.releaseNativeTutorialPresentation(previous.id) }
+        if sameAccount {
+            store.requestedDashboardTutorial = false
+            store.requestedArenaTutorialChapter = nil
+        }
     }
 
     private var steps: [NativeTutorialStep] {
@@ -1126,7 +1169,7 @@ struct NativeTutorialOverlay: View {
 
     var body: some View {
         Group {
-            if run != nil, steps.indices.contains(stepIndex) {
+            if let owner = runOwner, owns(owner), run != nil, steps.indices.contains(stepIndex) {
                 GeometryReader { proxy in
                     let target = spotlightRect(for: steps[stepIndex].spotlight, in: proxy)
                     ZStack {
@@ -1160,6 +1203,10 @@ struct NativeTutorialOverlay: View {
             }
         }
         .task(id: triggerKey) { await startIfNeeded() }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            if let owner = runOwner, !owns(owner) { clearRun(ifOwnedBy: owner.id) }
+        }
+        .onDisappear { clearRun() }
         .task(id: runDescription) {
             coachFrame = 1
             guard run != nil, !reduceMotion, store.motionOn else { return }
@@ -1376,6 +1423,10 @@ struct NativeTutorialOverlay: View {
 
     @MainActor
     private func startIfNeeded() async {
+        if let owner = runOwner, !owns(owner) {
+            clearRun(ifOwnedBy: owner.id)
+            return
+        }
         guard run == nil, !store.isSessionMode else { return }
 
         #if DEBUG
@@ -1384,16 +1435,16 @@ struct NativeTutorialOverlay: View {
             consumedDebugFixture = true
             let normalized = fixture.replacingOccurrences(of: "arena-", with: "")
             if fixture == "dashboard" {
-                store.isTutorialPresentationActive = true
+                guard let owner = claimRun() else { return }
                 run = .dashboard
                 stepIndex = Self.fixtureStepIndex(count: Self.dashboardSteps.count)
-                await settle(on: Self.dashboardSteps[stepIndex].route)
+                await settle(on: Self.dashboardSteps[stepIndex].route, owner: owner)
             } else if Self.arenaSteps[normalized] != nil {
                 let fixtureSteps = Self.arenaSteps[normalized] ?? []
-                store.isTutorialPresentationActive = true
+                guard let owner = claimRun() else { return }
                 run = .arena(normalized)
                 stepIndex = Self.fixtureStepIndex(count: fixtureSteps.count)
-                await settle(on: fixtureSteps[stepIndex].route)
+                await settle(on: fixtureSteps[stepIndex].route, owner: owner)
             }
             return
         }
@@ -1417,20 +1468,20 @@ struct NativeTutorialOverlay: View {
            arena.chapters[requested]?.status == "PENDING" {
             let requiredRoute: AppStore.Route = requested == "ranked_shop" ? .arenaShop : .rank
             guard store.route == requiredRoute else { return }
+            guard let owner = claimRun() else { return }
             store.requestedArenaTutorialChapter = nil
-            store.isTutorialPresentationActive = true
             run = .arena(requested)
             stepIndex = 0
-            await settle(on: requiredRoute)
+            await settle(on: requiredRoute, owner: owner)
             return
         }
 
         if store.requestedDashboardTutorial,
            profile.dashboardTutorial?.shouldAutoStart == true {
-            store.isTutorialPresentationActive = true
+            guard let owner = claimRun() else { return }
             run = .dashboard
             stepIndex = 0
-            await settle(on: .home)
+            await settle(on: .home, owner: owner)
             return
         }
 
@@ -1454,10 +1505,10 @@ struct NativeTutorialOverlay: View {
         guard let chapter = pageChapter,
               arena.availableChapters.contains(chapter),
               arena.chapters[chapter]?.status == "PENDING" else { return }
-        store.isTutorialPresentationActive = true
+        guard let owner = claimRun() else { return }
         run = .arena(chapter)
         stepIndex = 0
-        await settle(on: store.route)
+        await settle(on: store.route, owner: owner)
     }
 
     #if DEBUG
@@ -1481,19 +1532,20 @@ struct NativeTutorialOverlay: View {
     #endif
 
     @MainActor
-    private func settle(on route: AppStore.Route) async {
+    private func settle(on route: AppStore.Route, owner: RunOwner) async {
+        guard owns(owner) else { return }
         spotlightVisible = false
         withAnimation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.2),
                       completionCriteria: .logicallyComplete) {
             store.route = route
         } completion: {
-            guard run != nil, store.route == route else { return }
+            guard owns(owner), run != nil, store.route == route else { return }
             spotlightVisible = true
         }
     }
 
     private func advance() {
-        guard !mutationInFlight else { return }
+        guard let owner = runOwner, owns(owner), !mutationInFlight else { return }
         mutationError = nil
         if stepIndex + 1 >= steps.count {
             finish(skipped: false)
@@ -1501,33 +1553,36 @@ struct NativeTutorialOverlay: View {
         }
         stepIndex += 1
         let route = steps[stepIndex].route
-        Task { await settle(on: route) }
+        Task { await settle(on: route, owner: owner) }
     }
 
     private func finish(skipped: Bool) {
-        guard let activeRun = run, !mutationInFlight else { return }
+        guard let activeRun = run, let owner = runOwner, !mutationInFlight else { return }
+        guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
         #if DEBUG
         if consumedDebugFixture {
-            store.isTutorialPresentationActive = false
-            run = nil
-            spotlightVisible = false
-            mutationError = nil
+            clearRun(ifOwnedBy: owner.id)
             return
         }
         #endif
         mutationInFlight = true
         mutationError = nil
-        Task {
+        mutationTask = Task {
+            guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
             do {
                 switch activeRun {
                 case .dashboard:
-                    _ = try await ServerAPI.updateDashboardTutorial(skipped ? "SKIP" : "COMPLETE")
+                    _ = try await ServerAPI.updateDashboardTutorial(skipped ? "SKIP" : "COMPLETE", authorization: owner.request.authorization)
                 case .arena(let chapter):
                     _ = try await ServerAPI.updateArenaTutorial(
-                        chapter: chapter, action: skipped ? "SKIP" : "COMPLETE")
+                        chapter: chapter, action: skipped ? "SKIP" : "COMPLETE", authorization: owner.request.authorization)
                 }
-                await store.refreshServerProfile()
+                guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
+                let profile = try await ServerAPI.me(authorization: owner.request.authorization)
+                guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
+                store.acceptServerProfile(profile, owner: owner.request)
             } catch {
+                guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
                 // 완료 상태가 서버에 저장되지 않으면 닫지 않는다. 재시도 가능한 같은
                 // 버튼을 남겨 기기만 완료된 거짓 상태를 만들지 않는다.
                 mutationInFlight = false
@@ -1535,12 +1590,7 @@ struct NativeTutorialOverlay: View {
                     ?? "튜토리얼 상태를 저장하지 못했습니다. 다시 시도해 주세요."
                 return
             }
-            store.requestedDashboardTutorial = false
-            store.requestedArenaTutorialChapter = nil
-            store.isTutorialPresentationActive = false
-            run = nil
-            spotlightVisible = false
-            mutationInFlight = false
+            clearRun(ifOwnedBy: owner.id)
         }
     }
 }

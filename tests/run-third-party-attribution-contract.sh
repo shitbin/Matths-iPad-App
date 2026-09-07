@@ -18,6 +18,11 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 profile="$root/Matths/ProfileScreen.swift"
+grep -Fq '("Qwen2.5-VL 3B (Alibaba Cloud)", "Qwen Research License' "$profile"
+if grep -Fq '("Qwen2.5-VL 3B (Alibaba Cloud)", "Apache License 2.0"' "$profile"; then
+  echo 'FAIL: upstream research-only Qwen2.5-VL3B must not be relabeled Apache-2.0' >&2
+  exit 1
+fi
 sync="$root/scripts/sync-concept-motion-bundle.sh"
 
 fail() { echo "FAIL: $1" >&2; exit 1; }

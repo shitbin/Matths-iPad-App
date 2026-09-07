@@ -108,10 +108,30 @@ final class ArenaWebModel: NSObject, ObservableObject {
     /// 마지막으로 성공적으로 머문 아레나 주소. /login 을 가로챈 뒤 돌아갈 곳이다.
     private var lastArenaURL: URL?
     private var downloadFiles: [ObjectIdentifier: URL] = [:]
+    private var authorizedDownloads = Set<ObjectIdentifier>()
     /// 계정 전환 때 WKWebView를 새로 만들어도 현재 Dynamic Type 배율을 잃지 않는다.
     private var hostedPageSize: DynamicTypeSize = .large
     /// 계정 전환·토큰 폐기 알림 구독. 프로세스 수명과 같아서(shared) 해제하지 않는다.
-    private var accountObservers: [NSObjectProtocol] = []
+    private let accountObservers = WebAccountObserverBag()
+    private var ownership = WebHandoffOwnership()
+    private var requestTask: Task<Void, Never>?
+    private var reopenAfterAccountChange = false
+    private struct RequestContext {
+        let ticket: WebHandoffOwnership.Ticket
+        let authorization: ServerAPI.AuthorizationSnapshot?
+        let signedIn: Bool
+        let view: WKWebView
+    }
+    #if DEBUG
+    var debugHandoffClient: ((ServerAPI.AuthorizationSnapshot) async throws -> String)?
+    private(set) var debugLoadedURLs: [URL] = []
+    var debugHandoffTask: Task<Void, Never>? { requestTask }
+    static func debugMakeForHandoffSelfTest() -> ArenaWebModel { ArenaWebModel() }
+    func debugBeginHandoffForSelfTest() {
+        signedIn = true
+        startHandoff(then: arenaURL("/goat-arena"))
+    }
+    #endif
 
     private override init() {
         webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
@@ -134,7 +154,7 @@ final class ArenaWebModel: NSObject, ObservableObject {
             DataScope.didSwitchNotification,
             .matthsServerAuthenticationExpired,
         ]
-        accountObservers = names.map { name in
+        accountObservers.tokens = names.map { name in
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.accountDidChange() }
             }
@@ -154,8 +174,17 @@ final class ArenaWebModel: NSObject, ObservableObject {
     /// 화면이 뜰 때/목적지를 바꿔 다시 열 때 부른다.
     /// - Parameter signedIn: 앱의 서버 로그인 여부. 넘기지 않으면 키체인 토큰으로 본다.
     func open(_ destination: ArenaWebDestination, signedIn: Bool? = nil) {
+        cancelTransition()
+        discardingSession = false
+        reopenAfterAccountChange = false
         self.destination = destination
-        self.signedIn = signedIn ?? ServerAPI.hasToken
+        let nextSignedIn = signedIn ?? ServerAPI.hasToken
+        if self.signedIn && !nextSignedIn {
+            discardWebViewImmediately()
+            needsFreshSession = true
+            if let host = serverBase.host?.lowercased() { _ = HostedWebCookieReset.beginReset(host: host) }
+        }
+        self.signedIn = nextSignedIn
         loadFailure = nil
         wantsClose = false
 
@@ -181,7 +210,9 @@ final class ArenaWebModel: NSObject, ObservableObject {
 
         block = nil
         let url = arenaURL(destination.path)
-        Task { @MainActor in
+        let context = captureRequest()
+        guard context.authorization != nil else { block = .signedOut; isLoading = false; return }
+        requestTask = Task { @MainActor in
             #if DEBUG
             // 브리지가 "핸드오프부터" 시작했는지 "세션 재사용" 인지는 로그만 보고 갈라야 한다.
             // (실측 중 이 한 줄이 없어서 재사용 경로가 안 도는 원인을 못 찾았다)
@@ -190,37 +221,46 @@ final class ArenaWebModel: NSObject, ObservableObject {
             #endif
             if needsFreshSession {
                 // 계정이 바뀌었을 수 있다 — 앞사람의 세션 쿠키와 화면을 먼저 버린다.
-                await discardWebSession()
+                await clearServerCookies()
+                guard isCurrent(context) else { return }
                 needsFreshSession = false
             }
+            guard isCurrent(context) else { return }
             if hasWebSession {
-                load(url)
+                load(url, in: context.view)
             } else {
-                await handoff(then: url)
+                await handoff(then: url, context: context)
             }
         }
     }
 
     /// 로그아웃·계정 전환. 앞사람의 웹 세션을 즉시 버린다.
     func accountDidChange() {
-        // 겹쳐 오는 알림을 한 번으로 접는다. 로그아웃 한 번에 슬롯 전환과 토큰 폐기가
-        // 연달아 오는데, 두 번 돌면 두 번째가 **이미 떼어 낸** 웹뷰를 보고
-        // "화면에 없었다" 고 판단해 다시 열지 않는다 — 브리지가 빈 화면으로 남는다.
-        guard !discardingSession else { return }
+        // Every notification invalidates old work. Visibility is retained across
+        // overlapping resets so the latest notification can reopen a visible host.
+        cancelTransition()
         discardingSession = true
         // 화면이 떠 있는 채로 계정이 바뀌면 빈 웹뷰만 남는다 — 새 계정으로 다시 열거나
         // (로그아웃이면) "로그인이 필요합니다" 카드까지 스스로 보여 준다.
-        let wasVisible = webView.superview != nil
+        let wasVisible = webView.superview != nil || reopenAfterAccountChange
+        reopenAfterAccountChange = wasVisible
+        signedIn = ServerAPI.hasToken
+        discardWebViewImmediately()
         needsFreshSession = true
         hasWebSession = false
         block = nil
         sessionNotice = nil
-        Task { @MainActor in
-            await discardWebSession()
+        let context = captureRequest()
+        if let host = serverBase.host?.lowercased() { _ = HostedWebCookieReset.beginReset(host: host) }
+        requestTask = Task { @MainActor in
+            await clearServerCookies()
+            guard isCurrent(context) else { return }
             // 여기서 이미 지웠으므로 다음 진입이 또 지우지 않게 내린다.
             needsFreshSession = false
             discardingSession = false
-            if wasVisible { open(destination, signedIn: ServerAPI.hasToken) }
+            let shouldReopen = reopenAfterAccountChange
+            reopenAfterAccountChange = false
+            if shouldReopen { open(destination, signedIn: ServerAPI.hasToken) }
         }
     }
 
@@ -258,13 +298,19 @@ final class ArenaWebModel: NSObject, ObservableObject {
 
     // MARK: 조작
 
-    func goBack() { webView.goBack() }
-    func goForward() { webView.goForward() }
-    func stop() { webView.stopLoading() }
+    func goBack() { cancelTransition(); webView.goBack() }
+    func goForward() { cancelTransition(); webView.goForward() }
+    func stop() {
+        cancelTransition()
+        handingOff = false; pendingDestination = nil
+        webView.stopLoading()
+    }
 
     func reload() {
+        let wasHandoff = handingOff
+        cancelTransition()
         loadFailure = nil
-        if webView.url == nil {
+        if webView.url == nil || wasHandoff || needsFreshSession {
             open(destination, signedIn: signedIn)
         } else {
             webView.reload()
@@ -274,8 +320,9 @@ final class ArenaWebModel: NSObject, ObservableObject {
     /// 오류 카드의 "다시 시도". 실패한 주소가 있으면 그 주소를, 없으면 목적지부터.
     func retry() {
         let failed = loadFailure?.url
+        cancelTransition()
         loadFailure = nil
-        if let failed, isServerHost(failed) {
+        if let failed, isServerHost(failed), !needsFreshSession, !failed.path.hasPrefix("/app/commerce/") {
             load(failed)
         } else {
             open(destination, signedIn: signedIn)
@@ -284,15 +331,55 @@ final class ArenaWebModel: NSObject, ObservableObject {
 
     // MARK: 로그인 핸드오프
 
+    private func cancelTransition() {
+        ownership.invalidate()
+        requestTask?.cancel()
+        requestTask = nil
+        handingOff = false
+        pendingDestination = nil
+        webView.stopLoading()
+    }
+
+    private func captureRequest() -> RequestContext {
+        RequestContext(ticket: ownership.begin(slot: DataScope.slot, viewIdentity: ObjectIdentifier(webView)),
+                       authorization: ServerAPI.captureAuthorization(), signedIn: signedIn, view: webView)
+    }
+
+    private func isCurrent(_ context: RequestContext) -> Bool {
+        guard !Task.isCancelled, context.view === webView,
+              ownership.owns(context.ticket, slot: DataScope.slot, viewIdentity: ObjectIdentifier(webView)),
+              context.signedIn == signedIn else { return false }
+        if context.signedIn {
+            guard let authorization = context.authorization else { return false }
+            return ServerAPI.isCurrentAuthorization(authorization)
+        }
+        return true
+    }
+
+    private func startHandoff(then destination: URL) {
+        cancelTransition()
+        let context = captureRequest()
+        guard context.authorization != nil else { block = .signedOut; isLoading = false; return }
+        requestTask = Task { @MainActor in await handoff(then: destination, context: context) }
+    }
+
     /// 게시판·이용권 화면과 **같은 통로**. mode "pricing" 은 결제 여부와 무관하게
     /// 항상 발급된다(서버 규칙) — 우리는 세션 쿠키만 필요하고 결제 화면은 안 본다.
-    private func handoff(then destination: URL) async {
+    private func handoff(then destination: URL, context: RequestContext) async {
+        guard isCurrent(context), let authorization = context.authorization else { return }
         handingOff = true
         pendingDestination = destination
         loadFailure = nil
         do {
-            let handoff = try await ServerAPI.createCommerceHandoff(mode: "pricing")
-            guard let url = validatedHandoffURL(handoff.url) else {
+            let rawURL: String
+            #if DEBUG
+            if let debugHandoffClient { rawURL = try await debugHandoffClient(authorization) }
+            else { rawURL = try await ServerAPI.createCommerceHandoff(mode: "pricing", authorization: authorization).url }
+            #else
+            rawURL = try await ServerAPI.createCommerceHandoff(mode: "pricing", authorization: authorization).url
+            #endif
+            guard isCurrent(context) else { return }
+            guard let url = validatedHandoffURL(rawURL) else {
                 throw ServerAPIError(
                     message: "로그인 연결 주소의 안전성을 확인할 수 없습니다.",
                     code: "INVALID_HANDOFF_URL")
@@ -300,14 +387,17 @@ final class ArenaWebModel: NSObject, ObservableObject {
             lastHandoffAt = Date()
             sessionNotice = nil
             NSLog("ARENA-WEB 핸드오프 요청 성공 → 세션 URL 로드")
-            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+            load(url, in: context.view)
         } catch {
+            guard isCurrent(context) else { return }
             // 토큰 만료(401)면 ServerAPI 가 이미 앱 전체에 재로그인을 알렸다.
             // 아레나는 로그인 없이 볼 수 있는 페이지가 하나도 없으므로, 게시판처럼
             // "읽기 모드로 계속" 이 없다. 무엇이 막혔는지 카드로 말하고 멈춘다.
             handingOff = false
             pendingDestination = nil
+            #if DEBUG
             NSLog("ARENA-WEB 핸드오프 실패 · %@", String(describing: error))
+            #endif
             loadFailure = LoadFailure(
                 message: handoffFailureMessage(error),
                 url: nil)
@@ -329,11 +419,7 @@ final class ArenaWebModel: NSObject, ObservableObject {
     /// 이용권 화면(CommerceHubScreen)·게시판과 같은 검사:
     /// https · 같은 호스트 · /app/commerce/ 경로만 연다.
     private func validatedHandoffURL(_ value: String) -> URL? {
-        guard let url = URL(string: value),
-              url.scheme == "https",
-              url.host?.lowercased() == serverBase.host?.lowercased(),
-              url.path.hasPrefix("/app/commerce/") else { return nil }
-        return url
+        WebHandoffOwnership.validatedURL(value, base: serverBase)
     }
 
     /// 핸드오프 URL 이 리다이렉트 없이 끝났다(410 만료·403 계정 상태).
@@ -476,23 +562,32 @@ final class ArenaWebModel: NSObject, ObservableObject {
         return ["/", "/main", "/my-learning", "/war-of-masters"].contains(url.path)
     }
 
-    private func load(_ url: URL) {
+    private func load(_ url: URL, in requestedView: WKWebView? = nil) {
+        let target = requestedView ?? webView
+        guard target === webView else { return }
+        #if DEBUG
+        if debugHandoffClient != nil { debugLoadedURLs.append(url); return }
+        #endif
         loadFailure = nil
-        webView.load(URLRequest(url: url))
+        target.load(URLRequest(url: url))
     }
 
     // MARK: 세션 폐기
 
     /// 계정 전환·로그아웃. 쿠키를 지우고 **웹뷰를 통째로 새로 만든다** —
     /// 쿠키만 지우면 앞사람의 마지막 아레나 페이지가 화면과 뒤로가기 기록에 남는다.
-    private func discardWebSession() async {
+    private func discardWebViewImmediately() {
         hasWebSession = false
         handingOff = false
         pendingDestination = nil
         lastArenaURL = nil
         lastHandoffAt = nil
         webView.stopLoading()
-        await clearServerCookies()
+        previewFile = nil
+        externalDestination = nil
+        wantsNativeCommerce = false
+        downloadFiles.removeAll()
+        authorizedDownloads.removeAll()
         observers.removeAll()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
@@ -507,11 +602,8 @@ final class ArenaWebModel: NSObject, ObservableObject {
 
     /// 서버 호스트의 쿠키만 지운다. 다른 웹뷰(개념 수업 등)는 로컬 파일이라 영향이 없다.
     private func clearServerCookies() async {
-        let store = WKWebsiteDataStore.default().httpCookieStore
-        let cookies = await store.allCookies()
-        for cookie in cookies where isServerCookie(cookie) {
-            await store.deleteCookie(cookie)
-        }
+        guard let host = serverBase.host?.lowercased() else { return }
+        await HostedWebCookieReset.reset(host: host)
     }
 
     private func isServerCookie(_ cookie: HTTPCookie) -> Bool {
@@ -545,6 +637,7 @@ extension ArenaWebModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard webView === self.webView else { decisionHandler(.cancel); return }
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
@@ -593,7 +686,7 @@ extension ArenaWebModel: WKNavigationDelegate {
             let recently = lastHandoffAt.map { Date().timeIntervalSince($0) < 30 } ?? false
             if signedIn && !recently {
                 let destination = lastArenaURL ?? arenaURL(self.destination.path)
-                Task { @MainActor in await handoff(then: destination) }
+                startHandoff(then: destination)
             } else if signedIn {
                 // 방금(30초 안에) 세션을 이었는데도 서버가 다시 로그인 화면으로 보낸다.
                 // 앱에는 로그인이 되어 있으므로 "로그인이 필요합니다" 는 거짓말이 되고,
@@ -653,6 +746,7 @@ extension ArenaWebModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationResponse: WKNavigationResponse,
                  decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard webView === self.webView else { decisionHandler(.cancel); return }
         guard navigationResponse.isForMainFrame,
               let http = navigationResponse.response as? HTTPURLResponse else {
             decisionHandler(.allow)
@@ -694,10 +788,12 @@ extension ArenaWebModel: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
         loadFailure = nil
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
         refreshControl.endRefreshing()
         // 핸드오프 URL 자체가 최종 페이지로 남았다면(리다이렉트가 안 왔다) 되돌린다.
         if handingOff, let url = webView.url, url.path.hasPrefix("/app/commerce/") {
@@ -713,17 +809,20 @@ extension ArenaWebModel: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         handleFailure(error, url: webView.url)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
+        guard webView === self.webView else { return }
         let failedURL = (error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL
         handleFailure(error, url: failedURL)
     }
 
     /// 웹 콘텐츠 프로세스가 죽으면(메모리 압박) 빈 화면이 남는다. 같은 주소를 다시 연다.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
         if webView.url != nil { webView.reload() } else { open(destination, signedIn: signedIn) }
     }
 
@@ -747,11 +846,15 @@ extension ArenaWebModel: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
                  didBecome download: WKDownload) {
+        guard webView === self.webView else { return }
+        authorizedDownloads.insert(ObjectIdentifier(download))
         download.delegate = self
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction,
                  didBecome download: WKDownload) {
+        guard webView === self.webView else { return }
+        authorizedDownloads.insert(ObjectIdentifier(download))
         download.delegate = self
     }
 }
@@ -763,6 +866,7 @@ extension ArenaWebModel: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard webView === self.webView else { return nil }
         guard let url = navigationAction.request.url else { return nil }
         if isServerHost(url) {
             webView.load(navigationAction.request)
@@ -776,6 +880,7 @@ extension ArenaWebModel: WKUIDelegate {
     /// WebKit 이 조용히 취소(false)로 처리해서 **버튼이 무음으로 죽는다**.
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        guard webView === self.webView else { completionHandler(); return }
         guard let presenter = Self.topViewController() else {
             completionHandler()
             return
@@ -787,6 +892,7 @@ extension ArenaWebModel: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        guard webView === self.webView else { completionHandler(false); return }
         guard let presenter = Self.topViewController() else {
             completionHandler(false)
             return
@@ -800,6 +906,7 @@ extension ArenaWebModel: WKUIDelegate {
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
                  defaultText: String?, initiatedByFrame frame: WKFrameInfo,
                  completionHandler: @escaping (String?) -> Void) {
+        guard webView === self.webView else { completionHandler(nil); return }
         guard let presenter = Self.topViewController() else {
             completionHandler(nil)
             return
@@ -828,6 +935,7 @@ extension ArenaWebModel: WKUIDelegate {
 extension ArenaWebModel: WKDownloadDelegate {
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        guard authorizedDownloads.contains(ObjectIdentifier(download)) else { completionHandler(nil); return }
         // 임시 폴더 아래 다운로드마다 새 디렉터리 — 같은 파일명끼리 덮어쓰지 않는다.
         // 영구 보관이 아니라 미리보기용이다. 시스템이 tmp 를 정리해도 잃을 것이 없다.
         let directory = FileManager.default.temporaryDirectory
@@ -839,18 +947,21 @@ extension ArenaWebModel: WKDownloadDelegate {
             completionHandler(nil)
             return
         }
-        let safeName = suggestedFilename.isEmpty ? "attachment" : suggestedFilename
+        let candidate = (suggestedFilename as NSString).lastPathComponent
+        let safeName = candidate.isEmpty || candidate == "." || candidate == ".." ? "attachment" : candidate
         let file = directory.appendingPathComponent(safeName)
         downloadFiles[ObjectIdentifier(download)] = file
         completionHandler(file)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        guard authorizedDownloads.remove(ObjectIdentifier(download)) != nil else { return }
         guard let file = downloadFiles.removeValue(forKey: ObjectIdentifier(download)) else { return }
         previewFile = PreviewFile(url: file)
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        guard authorizedDownloads.remove(ObjectIdentifier(download)) != nil else { return }
         downloadFiles.removeValue(forKey: ObjectIdentifier(download))
         loadFailure = LoadFailure(message: "파일을 내려받지 못했습니다. " + readableMessage(for: error),
                                   url: nil)

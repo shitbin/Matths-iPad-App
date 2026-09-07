@@ -10,5 +10,5 @@ for file in "$api" "$screen" "$fixture" "$demo" "$admin"; do [ -f "$file" ] || {
 for value in ADMIN_DATA_ANALYSIS_NATIVE_V1 adminDataAnalysis rebuildAdminDataAnalysis '/api/v1/admin/data-analysis'; do grep -Fq "$value" "$api" || { echo "FAIL missing API $value" >&2; exit 1; }; done
 for value in '운영 지표' '원장에서 다시 집계' 'verticalSizeClass == .compact' '출시 전 가정 비교' '분자' '분모' '표본'; do grep -Fq "$value" "$screen" || { echo "FAIL missing UI $value" >&2; exit 1; }; done
 grep -Fq 'GET /api/v1/admin/data-analysis' "$demo"
-grep -Fq '"월별 운영 지표"' "$admin"
+grep -Fq '"월별 운영 지표"' "$root/Matths/StaffWorkspaceState.swift"
 echo "native admin data analysis contract passed"

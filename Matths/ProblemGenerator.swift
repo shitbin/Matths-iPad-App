@@ -181,12 +181,12 @@ enum ProblemType: String, CaseIterable {
             return GeneratedProblem(
                 id: "\(rawValue)-\(index)",
                 typeKey: rawValue, typeName: name, unit: unit,
-                statement: "함수 f(x) = x³\(term(p, "x²"))\(term(q, "x")) 가 "
+                statement: "함수 f(x) = x³ + px² + qx 가 "
                     + "x = \(a) 에서 극대, x = \(b) 에서 극소가 될 때, "
                     + "상수 p, q 에 대하여 p + q 의 값을 구하시오.",
                 answer: "\(answer)",
                 steps: [
-                    "f'(x) = 3x² \(signed(2 * p))x \(signed(q))",
+                    "f'(x) = 3x² + 2px + q",
                     "극값 조건에서 f'(\(a)) = 0, f'(\(b)) = 0 이므로 두 근이 \(a), \(b)",
                     "근과 계수: \(a) + \(b) = -2p/3 이므로 p = \(p)",
                     "\(a) × \(b) = q/3 이므로 q = \(q)",
@@ -420,7 +420,7 @@ enum ProblemType: String, CaseIterable {
                 answer: "\(answer)",
                 steps: [
                     "곱은 지수의 합: \(a)^\(m) × \(a)^\(n) = \(a)^\(m + n)",
-                    "나눗셈은 지수의 차: \(a)^\(m + n) ÷ \(a)^\(p) = \(a)^\(m + n)⁻\(p)",
+                    "나눗셈은 지수의 차: \(a)^\(m + n) ÷ \(a)^\(p) = \(a)^(\(m + n) − \(p))",
                     "지수 정리: \(m + n) − \(p) = \(e)",
                     "\(a)^\(e) 을 계산한다",
                     "답: \(answer)",

@@ -4,6 +4,21 @@ import UIKit
 
 @MainActor
 final class TeacherAcademyScreenModel: ObservableObject {
+    // Immutable mounted-account owner: child panels may queue Tasks, but an old
+    // model is never rebound to the next account before those Tasks execute.
+    private let accountOwner: AccountRequestOwner?
+    private weak var accountStore: AppStore?
+    init(store: AppStore) {
+        accountOwner = AccountRequestOwner(store: store)
+        accountStore = store
+    }
+    private var isMountedOwnerCurrent: Bool {
+        guard let accountOwner, let accountStore else { return false }
+        return accountOwner.isCurrent(in: accountStore)
+            && accountStore.authProvider == "server"
+            && accountStore.serverProfile?.role?.lowercased() == "teacher"
+    }
+    // End mounted-account owner
     enum Section: String, CaseIterable, Identifiable {
         case overview = "현황"
         case requests = "승인 요청"
@@ -18,10 +33,7 @@ final class TeacherAcademyScreenModel: ObservableObject {
         var id: String { rawValue }
     }
 
-    struct AttendanceDraft: Equatable {
-        var status: String
-        var note: String
-    }
+    typealias AttendanceDraft = ServerAPI.TeacherAttendanceRecord.Value
 
     @Published var dashboard: ServerAPI.TeacherAcademyDashboard?
     @Published var setup: ServerAPI.TeacherAcademySetup?
@@ -38,8 +50,20 @@ final class TeacherAcademyScreenModel: ObservableObject {
     @Published var attendanceClassID = ""
     @Published var attendanceDrafts: [String: AttendanceDraft] = [:]
     @Published var isAttendanceLoading = false
+    @Published private(set) var attendanceConflicts: Set<String> = []
 
     private var generation = UUID()
+    private var attendanceRequestID = UUID()
+    private var attendanceBaseline: [String: AttendanceDraft] = [:]
+    private var pendingAttendance: [String: (baseline: [String: AttendanceDraft], edited: [String: AttendanceDraft])] = [:]
+
+    var hasAttendanceChanges: Bool {
+        attendanceDrafts.mapValues { $0.normalized } != attendanceBaseline.mapValues { $0.normalized }
+    }
+    var attendanceMatchesSelection: Bool {
+        guard let attendance else { return false }
+        return attendance.dateKey == attendanceDateKey && (attendance.selectedClass?.id ?? "") == attendanceClassID
+    }
 
     private static var initialSection: Section {
         #if DEBUG
@@ -75,48 +99,63 @@ final class TeacherAcademyScreenModel: ObservableObject {
 
     func resetAndLoad() async {
         generation = UUID()
+        attendanceRequestID = UUID()
         dashboard = nil
         setup = nil
+        actionID = nil
+        attendance = nil
+        attendanceDrafts = [:]
+        attendanceBaseline = [:]
+        pendingAttendance = [:]
+        attendanceConflicts = []
+        attendanceClassID = ""
+        isAttendanceLoading = false
+        showsInviteComposer = false
+        inviteLabel = "학생 초대"
+        inviteClassID = ""
         errorMessage = nil
         noticeMessage = nil
         await load()
     }
 
     func load() async {
+        guard isMountedOwnerCurrent, let authorization = accountOwner?.authorization else { return }
         let requestGeneration = generation
         isLoading = dashboard == nil && setup == nil
         errorMessage = nil
         do {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-teacherSetupFixture") {
-                let value = try await ServerAPI.teacherAcademySetup()
-                guard requestGeneration == generation else { return }
+                let value = try await ServerAPI.teacherAcademySetup(authorization: authorization)
+                guard isMountedOwnerCurrent, requestGeneration == generation else { return }
                 setup = value
                 isLoading = false
                 return
             }
             #endif
-            let value = try await ServerAPI.teacherAcademyDashboard()
-            guard requestGeneration == generation else { return }
+            let value = try await ServerAPI.teacherAcademyDashboard(authorization: authorization)
+            guard isMountedOwnerCurrent, requestGeneration == generation else { return }
             install(value)
         } catch is CancellationError {
             return
         } catch let error as ServerAPIError where error.code == "ACADEMY_SETUP_REQUIRED" {
-            guard requestGeneration == generation else { return }
+            guard isMountedOwnerCurrent, requestGeneration == generation else { return }
             do {
-                let value = try await ServerAPI.teacherAcademySetup()
-                guard requestGeneration == generation else { return }
+                let value = try await ServerAPI.teacherAcademySetup(authorization: authorization)
+                guard isMountedOwnerCurrent, requestGeneration == generation else { return }
                 if value.isReady {
-                    install(try await ServerAPI.teacherAcademyDashboard())
+                    let dashboard = try await ServerAPI.teacherAcademyDashboard(authorization: authorization)
+                    guard isMountedOwnerCurrent, requestGeneration == generation else { return }
+                    install(dashboard)
                 } else {
                     setup = value
                 }
             } catch {
-                guard requestGeneration == generation else { return }
+                guard isMountedOwnerCurrent, requestGeneration == generation else { return }
                 errorMessage = readable(error)
             }
         } catch {
-            guard requestGeneration == generation else { return }
+            guard isMountedOwnerCurrent, requestGeneration == generation else { return }
             errorMessage = readable(error)
         }
         if requestGeneration == generation { isLoading = false }
@@ -128,8 +167,8 @@ final class TeacherAcademyScreenModel: ObservableObject {
             errorMessage = "학원 이름은 2자 이상 80자 이하로 입력해 주세요."
             return false
         }
-        return await performSetup(id: "setup-create", notice: "학원 등록 요청을 보냈습니다.") {
-            try await ServerAPI.createTeacherAcademy(name: normalized)
+        return await performSetup(id: "setup-create", notice: "학원 등록 요청을 보냈습니다.") { authorization in
+            try await ServerAPI.createTeacherAcademy(name: normalized, authorization: authorization)
         }
     }
 
@@ -138,44 +177,44 @@ final class TeacherAcademyScreenModel: ObservableObject {
             errorMessage = "참여할 학원을 선택해 주세요."
             return false
         }
-        return await performSetup(id: "setup-join", notice: "학원 참여 요청을 보냈습니다.") {
-            try await ServerAPI.requestTeacherAcademyJoin(academyID: academyID)
+        return await performSetup(id: "setup-join", notice: "학원 참여 요청을 보냈습니다.") { authorization in
+            try await ServerAPI.requestTeacherAcademyJoin(academyID: academyID, authorization: authorization)
         }
     }
 
     func cancelAcademyJoin() async -> Bool {
-        await performSetup(id: "setup-cancel", notice: "학원 참여 요청을 취소했습니다.") {
-            try await ServerAPI.cancelTeacherAcademyJoin()
+        await performSetup(id: "setup-cancel", notice: "학원 참여 요청을 취소했습니다.") { authorization in
+            try await ServerAPI.cancelTeacherAcademyJoin(authorization: authorization)
         }
     }
 
     func updateAcademyProfileImage(jpegData: Data) async {
-        await perform(id: "academy-profile-upload", notice: "학원 대표 사진을 저장했습니다.") {
-            try await ServerAPI.updateTeacherAcademyProfileImage(jpegData: jpegData)
+        await perform(id: "academy-profile-upload", notice: "학원 대표 사진을 저장했습니다.") { authorization in
+            try await ServerAPI.updateTeacherAcademyProfileImage(jpegData: jpegData, authorization: authorization)
         }
     }
 
     func removeAcademyProfileImage() async {
-        await perform(id: "academy-profile-remove", notice: "학원 대표 사진을 기본 이미지로 되돌렸습니다.") {
-            try await ServerAPI.removeTeacherAcademyProfileImage()
+        await perform(id: "academy-profile-remove", notice: "학원 대표 사진을 기본 이미지로 되돌렸습니다.") { authorization in
+            try await ServerAPI.removeTeacherAcademyProfileImage(authorization: authorization)
         }
     }
 
     func review(_ membership: ServerAPI.TeacherAcademyMembership, approve: Bool) async {
-        await perform(id: membership.id, notice: approve ? "학생을 승인했습니다." : "승인 요청을 거절했습니다.") {
-            try await ServerAPI.reviewAcademyStudent(membershipID: membership.id, approve: approve)
+        await perform(id: membership.id, notice: approve ? "학생을 승인했습니다." : "승인 요청을 거절했습니다.") { authorization in
+            try await ServerAPI.reviewAcademyStudent(membershipID: membership.id, approve: approve, authorization: authorization)
         }
     }
 
     func assign(_ membership: ServerAPI.TeacherAcademyMembership, classID: String?) async {
-        await perform(id: membership.id, notice: classID == nil ? "반 배정을 해제했습니다." : "반을 배정했습니다.") {
-            try await ServerAPI.assignAcademyStudent(membershipID: membership.id, classID: classID)
+        await perform(id: membership.id, notice: classID == nil ? "반 배정을 해제했습니다." : "반을 배정했습니다.") { authorization in
+            try await ServerAPI.assignAcademyStudent(membershipID: membership.id, classID: classID, authorization: authorization)
         }
     }
 
     func removeStudent(_ membership: ServerAPI.TeacherAcademyMembership) async {
-        await perform(id: membership.id, notice: "학생을 학원 명단에서 제외했습니다.") {
-            try await ServerAPI.removeAcademyStudent(membershipID: membership.id)
+        await perform(id: membership.id, notice: "학생을 학원 명단에서 제외했습니다.") { authorization in
+            try await ServerAPI.removeAcademyStudent(membershipID: membership.id, authorization: authorization)
         }
     }
 
@@ -185,12 +224,12 @@ final class TeacherAcademyScreenModel: ObservableObject {
             errorMessage = "초대 이름을 입력해 주세요."
             return
         }
-        await perform(id: "new-invite", notice: "새 초대 코드를 만들었습니다.") {
+        let saved = await perform(id: "new-invite", notice: "새 초대 코드를 만들었습니다.") { authorization in
             try await ServerAPI.createAcademyInvite(
                 label: label,
-                classID: inviteClassID.isEmpty ? nil : inviteClassID)
+                classID: inviteClassID.isEmpty ? nil : inviteClassID, authorization: authorization)
         }
-        if errorMessage == nil {
+        if saved {
             inviteLabel = "학생 초대"
             inviteClassID = ""
             showsInviteComposer = false
@@ -199,8 +238,8 @@ final class TeacherAcademyScreenModel: ObservableObject {
     }
 
     func revoke(_ invite: ServerAPI.TeacherAcademyInvite) async {
-        await perform(id: invite.id, notice: "초대 코드를 회수했습니다.") {
-            try await ServerAPI.revokeAcademyInvite(invite.id)
+        await perform(id: invite.id, notice: "초대 코드를 회수했습니다.") { authorization in
+            try await ServerAPI.revokeAcademyInvite(invite.id, authorization: authorization)
         }
     }
 
@@ -208,72 +247,75 @@ final class TeacherAcademyScreenModel: ObservableObject {
         await perform(
             id: staff.id,
             notice: approve ? "선생님 참여 요청을 승인했습니다." : "선생님 참여 요청을 거절했습니다."
-        ) {
-            try await ServerAPI.reviewAcademyStaff(staffID: staff.id, approve: approve)
+        ) { authorization in
+            try await ServerAPI.reviewAcademyStaff(staffID: staff.id, approve: approve, authorization: authorization)
         }
     }
 
     func revokeStaff(_ staff: ServerAPI.TeacherAcademyStaff) async {
-        await perform(id: staff.id, notice: "선생님의 학원 접근 권한을 해제했습니다.") {
-            try await ServerAPI.revokeAcademyStaff(staff.id)
+        await perform(id: staff.id, notice: "선생님의 학원 접근 권한을 해제했습니다.") { authorization in
+            try await ServerAPI.revokeAcademyStaff(staff.id, authorization: authorization)
         }
     }
 
     func saveClass(classID: String?, draft: ServerAPI.TeacherAcademyClassDraft) async -> Bool {
         let creating = classID == nil
-        await perform(
+        return await perform(
             id: classID.map { "class-\($0)" } ?? "class-new",
             notice: creating ? "새 반을 만들었습니다." : "반 일정과 출결 방식을 저장했습니다."
-        ) {
+        ) { authorization in
             if let classID {
-                return try await ServerAPI.updateTeacherAcademyClass(classID: classID, draft: draft)
+                return try await ServerAPI.updateTeacherAcademyClass(classID: classID, draft: draft, authorization: authorization)
             }
-            return try await ServerAPI.createTeacherAcademyClass(draft)
+            return try await ServerAPI.createTeacherAcademyClass(draft, authorization: authorization)
         }
-        return errorMessage == nil
     }
 
     func archiveClass(_ academyClass: ServerAPI.AcademyClassSummary) async {
-        await perform(id: "class-\(academyClass.id)", notice: "\(academyClass.name) 반을 보관했습니다.") {
-            try await ServerAPI.archiveTeacherAcademyClass(academyClass.id)
+        await perform(id: "class-\(academyClass.id)", notice: "\(academyClass.name) 반을 보관했습니다.") { authorization in
+            try await ServerAPI.archiveTeacherAcademyClass(academyClass.id, authorization: authorization)
         }
     }
 
     func restoreClass(_ academyClass: ServerAPI.AcademyClassSummary) async {
-        await perform(id: "class-\(academyClass.id)", notice: "\(academyClass.name) 반을 복구했습니다.") {
-            try await ServerAPI.restoreTeacherAcademyClass(academyClass.id)
+        await perform(id: "class-\(academyClass.id)", notice: "\(academyClass.name) 반을 복구했습니다.") { authorization in
+            try await ServerAPI.restoreTeacherAcademyClass(academyClass.id, authorization: authorization)
         }
     }
 
     func addClassCoTeacher(classID: String, teacherUserID: String) async -> Bool {
-        await perform(id: "class-\(classID)", notice: "공동 담당 선생님을 추가했습니다.") {
+        return await perform(id: "class-\(classID)", notice: "공동 담당 선생님을 추가했습니다.") { authorization in
             try await ServerAPI.addTeacherAcademyClassCoTeacher(
-                classID: classID, teacherUserID: teacherUserID)
+                classID: classID, teacherUserID: teacherUserID, authorization: authorization)
         }
-        return errorMessage == nil
     }
 
     func removeClassCoTeacher(classID: String, teacherUserID: String) async {
-        await perform(id: "class-\(classID)", notice: "공동 담당 선생님을 해제했습니다.") {
+        await perform(id: "class-\(classID)", notice: "공동 담당 선생님을 해제했습니다.") { authorization in
             try await ServerAPI.removeTeacherAcademyClassCoTeacher(
-                classID: classID, teacherUserID: teacherUserID)
+                classID: classID, teacherUserID: teacherUserID, authorization: authorization)
         }
     }
 
     func transferClassHomeroom(
         classID: String, teacherUserID: String, keepPreviousAsCoTeacher: Bool
     ) async -> Bool {
-        await perform(id: "class-\(classID)", notice: "담임 선생님을 이전했습니다.") {
+        return await perform(id: "class-\(classID)", notice: "담임 선생님을 이전했습니다.") { authorization in
             try await ServerAPI.transferTeacherAcademyClassHomeroom(
                 classID: classID,
                 teacherUserID: teacherUserID,
-                keepPreviousAsCoTeacher: keepPreviousAsCoTeacher)
+                keepPreviousAsCoTeacher: keepPreviousAsCoTeacher, authorization: authorization)
         }
-        return errorMessage == nil
     }
 
     func loadAttendance() async {
+        guard isMountedOwnerCurrent, let authorization = accountOwner?.authorization else { return }
         guard section == .attendance else { return }
+        stashAttendanceDraft()
+        let requestGeneration = generation
+        let requestID = UUID()
+        attendanceRequestID = requestID
+        let account = DataScope.slot
         let requestedDateKey = attendanceDateKey
         let requestedClassID = attendanceClassID
         isAttendanceLoading = true
@@ -281,20 +323,23 @@ final class TeacherAcademyScreenModel: ObservableObject {
         do {
             let value = try await ServerAPI.teacherAcademyAttendance(
                 dateKey: requestedDateKey,
-                classID: requestedClassID.isEmpty ? nil : requestedClassID)
-            guard section == .attendance,
+                classID: requestedClassID.isEmpty ? nil : requestedClassID,
+                authorization: authorization)
+            guard requestGeneration == generation, requestID == attendanceRequestID,
+                  account == DataScope.slot, ServerAPI.isCurrentAuthorization(authorization), section == .attendance,
                   attendanceDateKey == requestedDateKey,
                   attendanceClassID == requestedClassID else { return }
             installAttendance(value)
         } catch is CancellationError {
             return
         } catch {
-            guard section == .attendance,
+            guard requestGeneration == generation, requestID == attendanceRequestID,
+                  account == DataScope.slot, section == .attendance,
                   attendanceDateKey == requestedDateKey,
                   attendanceClassID == requestedClassID else { return }
             errorMessage = readable(error)
         }
-        if section == .attendance,
+        if requestGeneration == generation, requestID == attendanceRequestID, section == .attendance,
            attendanceDateKey == requestedDateKey,
            attendanceClassID == requestedClassID {
             isAttendanceLoading = false
@@ -317,6 +362,7 @@ final class TeacherAcademyScreenModel: ObservableObject {
         let current = drafts[entryID] ?? AttendanceDraft(status: "", note: "")
         drafts[entryID] = AttendanceDraft(status: status, note: current.note)
         attendanceDrafts = drafts
+        attendanceConflicts.remove(entryID)
     }
 
     func updateAttendanceNote(entryID: String, note: String) {
@@ -324,82 +370,131 @@ final class TeacherAcademyScreenModel: ObservableObject {
         let current = drafts[entryID] ?? AttendanceDraft(status: "", note: "")
         drafts[entryID] = AttendanceDraft(status: current.status, note: note)
         attendanceDrafts = drafts
+        attendanceConflicts.remove(entryID)
     }
 
     func saveAttendance() async {
-        guard let attendance, actionID == nil else { return }
+        guard isMountedOwnerCurrent, let authorization = accountOwner?.authorization else { return }
+        guard let attendance, actionID == nil, attendanceMatchesSelection,
+              !isAttendanceLoading, attendanceConflicts.isEmpty else { return }
+        let requestGeneration = generation
+        let account = DataScope.slot
+        let requestedKey = attendanceKey(attendance)
+        stashAttendanceDraft()
         actionID = "attendance-save"
+        defer { if generation == requestGeneration, actionID == "attendance-save" { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
-            let records = attendance.roster.map { entry in
-                let draft = attendanceDrafts[entry.id] ?? AttendanceDraft(status: "", note: "")
-                return ServerAPI.TeacherAttendanceRecord(
-                    studentUserID: entry.student.id,
-                    status: draft.status,
-                    note: draft.note.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
+            let records = try ServerAPI.changedTeacherAttendanceRecords(
+                roster: attendance, baseline: attendanceBaseline, edited: attendanceDrafts)
+            guard !records.isEmpty else { return }
             let value = try await ServerAPI.saveTeacherAcademyAttendance(
                 dateKey: attendance.dateKey,
                 classID: attendance.selectedClass?.id,
                 sessionID: attendance.session?.id,
-                records: records)
-            installAttendance(value)
+                records: records, authorization: authorization)
+            guard generation == requestGeneration, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
+            pendingAttendance.removeValue(forKey: requestedKey)
+            guard attendanceDateKey == attendance.dateKey,
+                  attendanceClassID == (attendance.selectedClass?.id ?? ""),
+                  self.attendance.map(attendanceKey) == requestedKey else { return }
+            installAttendance(value, discardingDraft: true)
             noticeMessage = "출결을 저장했습니다."
         } catch {
+            guard generation == requestGeneration, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
+            if (error as? ServerAPIError)?.code == "ATTENDANCE_WRITE_CONFLICT",
+               attendanceDateKey == attendance.dateKey,
+               attendanceClassID == (attendance.selectedClass?.id ?? "") {
+                // Refresh the comparison baseline, but keep every edited value
+                // and mark collisions until the teacher explicitly resolves it.
+                if let latest = try? await ServerAPI.teacherAcademyAttendance(
+                    dateKey: attendance.dateKey, classID: attendance.selectedClass?.id, authorization: authorization),
+                   generation == requestGeneration, account == DataScope.slot,
+                   ServerAPI.isCurrentAuthorization(authorization),
+                   attendanceDateKey == attendance.dateKey,
+                   attendanceClassID == (attendance.selectedClass?.id ?? "") {
+                    installAttendance(latest)
+                }
+            }
+            guard generation == requestGeneration, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
+            guard attendanceDateKey == attendance.dateKey,
+                  attendanceClassID == (attendance.selectedClass?.id ?? "") else { return }
             errorMessage = readable(error)
         }
-        actionID = nil
     }
 
     func regenerateAttendanceCode() async {
+        guard isMountedOwnerCurrent, let authorization = accountOwner?.authorization else { return }
         guard let sessionID = attendance?.session?.id, actionID == nil else { return }
+        let requestGeneration = generation
+        let account = DataScope.slot
         actionID = "attendance-code"
         errorMessage = nil
         noticeMessage = nil
         do {
-            let session = try await ServerAPI.regenerateTeacherAttendanceCode(sessionID)
+            let session = try await ServerAPI.regenerateTeacherAttendanceCode(sessionID, authorization: authorization)
+            guard generation == requestGeneration, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization), attendance?.session?.id == sessionID else { return }
             attendance?.session = session
             noticeMessage = "새 출석 코드를 만들었습니다."
         } catch {
+            guard generation == requestGeneration, account == DataScope.slot else { return }
             errorMessage = readable(error)
         }
         actionID = nil
     }
 
-    private func perform(
+    @discardableResult private func perform(
         id: String,
         notice: String,
-        operation: () async throws -> ServerAPI.TeacherAcademyDashboard
-    ) async {
-        guard actionID == nil else { return }
+        operation: (ServerAPI.AuthorizationSnapshot) async throws -> ServerAPI.TeacherAcademyDashboard
+    ) async -> Bool {
+        guard isMountedOwnerCurrent, let authorization = accountOwner?.authorization, actionID == nil else { return false }
+        let requestGeneration = generation
+        let account = DataScope.slot
         actionID = id
+        defer { if generation == requestGeneration { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
-            install(try await operation())
+            let response = try await operation(authorization)
+            guard isMountedOwnerCurrent, generation == requestGeneration, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return false }
+            install(response)
             noticeMessage = notice
+            return true
         } catch {
+            guard isMountedOwnerCurrent, generation == requestGeneration, account == DataScope.slot else { return false }
             errorMessage = readable(error)
         }
-        actionID = nil
+        return false
     }
 
     private func performSetup(
         id: String,
         notice: String,
-        operation: () async throws -> ServerAPI.TeacherAcademySetup
+        operation: (ServerAPI.AuthorizationSnapshot) async throws -> ServerAPI.TeacherAcademySetup
     ) async -> Bool {
-        guard actionID == nil else { return false }
+        guard isMountedOwnerCurrent, let authorization = accountOwner?.authorization, actionID == nil else { return false }
+        let requestGeneration = generation
+        let account = DataScope.slot
         actionID = id
         errorMessage = nil
         noticeMessage = nil
         do {
-            setup = try await operation()
+            let response = try await operation(authorization)
+            guard isMountedOwnerCurrent, generation == requestGeneration, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return false }
+            setup = response
             noticeMessage = notice
             actionID = nil
             return true
         } catch {
+            guard isMountedOwnerCurrent, generation == requestGeneration, account == DataScope.slot else { return false }
             errorMessage = readable(error)
             actionID = nil
             return false
@@ -410,21 +505,53 @@ final class TeacherAcademyScreenModel: ObservableObject {
         dashboard = value
         setup = nil
         if value.requests.isEmpty && section == .requests { section = .students }
+        if !value.isOwner && section == .settings { section = .overview }
     }
 
-    private func installAttendance(_ value: ServerAPI.TeacherAttendanceRoster) {
+    private func installAttendance(_ value: ServerAPI.TeacherAttendanceRoster, discardingDraft: Bool = false) {
+        if !discardingDraft { stashAttendanceDraft() }
         attendance = value
         attendanceDateKey = value.dateKey
         attendanceClassID = value.selectedClass?.id ?? ""
-        attendanceDrafts = Dictionary(uniqueKeysWithValues: value.roster.map { entry in
+        let server = Dictionary(value.roster.map { entry in
             (
                 entry.id,
                 AttendanceDraft(
                     status: entry.attendance?.status ?? "",
                     note: entry.attendance?.note ?? "")
             )
-        })
+        }, uniquingKeysWith: { _, last in last })
+        if !discardingDraft, let cached = pendingAttendance[attendanceKey(value)] {
+            let merged = StaffDraftMerge(server: server, baseline: cached.baseline, edited: cached.edited)
+            attendanceDrafts = merged.values
+            attendanceConflicts = merged.conflicts
+        } else {
+            attendanceDrafts = server
+            attendanceConflicts = []
+        }
+        attendanceBaseline = server
     }
+
+    private func attendanceKey(_ roster: ServerAPI.TeacherAttendanceRoster) -> String {
+        [roster.dateKey, roster.selectedClass?.id ?? "", roster.session?.id ?? ""].joined(separator: "|")
+    }
+
+    private func stashAttendanceDraft() {
+        guard let attendance else { return }
+        let key = attendanceKey(attendance)
+        if hasAttendanceChanges { pendingAttendance[key] = (attendanceBaseline, attendanceDrafts) }
+        else { pendingAttendance.removeValue(forKey: key) }
+    }
+
+    func useServerAttendance() {
+        attendanceDrafts = attendanceBaseline
+        attendanceConflicts = []
+        if let attendance { pendingAttendance.removeValue(forKey: attendanceKey(attendance)) }
+    }
+
+    func confirmLocalAttendance() { attendanceConflicts = [] }
+
+    func preserveAttendanceDraft() { stashAttendanceDraft() }
 
     private static var kstCalendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -450,7 +577,13 @@ final class TeacherAcademyScreenModel: ObservableObject {
     }
 
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
+        if (error as? ServerAPIError)?.statusCode == 403 {
+            generation = UUID(); attendanceRequestID = UUID()
+            dashboard = nil; setup = nil; attendance = nil; actionID = nil; isLoading = false
+            attendanceDrafts = [:]; attendanceBaseline = [:]; pendingAttendance = [:]
+            attendanceConflicts = []; showsInviteComposer = false; isAttendanceLoading = false
+        }
+        return (error as? ServerAPIError)?.errorDescription
             ?? (error as NSError).localizedDescription
     }
 }
@@ -459,12 +592,50 @@ final class TeacherAcademyScreenModel: ObservableObject {
 /// 빠르게 끝내고, 원장 전용 반 설정은 인증된 전체 관리 포털로 이어진다.
 struct TeacherAcademyScreen: View {
     @EnvironmentObject private var store: AppStore
+    var body: some View {
+        AccountScopedTeacherAcademyScreen(store: store)
+            .id(String(describing: store.captureAccountSessionBoundary()) + "#" + (store.serverProfile?.role ?? ""))
+    }
+}
+
+private struct AccountScopedTeacherAcademyScreen: View {
+    @EnvironmentObject private var store: AppStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @StateObject private var model = TeacherAcademyScreenModel()
+    @StateObject private var model: TeacherAcademyScreenModel
+    init(store: AppStore) {
+        _model = StateObject(wrappedValue: TeacherAcademyScreenModel(store: store))
+    }
     @State private var removingStudent: ServerAPI.TeacherAcademyMembership?
     @State private var focusedStudentID: String?
     @State private var showsAcademyPhotoPicker = false
+    @State private var visitedSections: Set<TeacherAcademyScreenModel.Section> = []
+    @State private var lastSections: [TeacherWorkspaceArea: TeacherAcademyScreenModel.Section] = [:]
+
+    private var area: TeacherWorkspaceArea { Self.area(for: model.section) }
+
+    private static func area(for section: TeacherAcademyScreenModel.Section) -> TeacherWorkspaceArea {
+        switch section {
+        case .overview, .requests: .overview
+        case .classes, .classwork: .classes
+        case .students: .students
+        case .attendance: .attendance
+        case .forensics, .staff, .invites, .settings: .more
+        }
+    }
+
+    private func selectArea(_ next: TeacherWorkspaceArea) {
+        model.preserveAttendanceDraft()
+        lastSections[area] = model.section
+        let fallback: TeacherAcademyScreenModel.Section = switch next {
+        case .overview: .overview
+        case .classes: .classes
+        case .students: .students
+        case .attendance: .attendance
+        case .more: .staff
+        }
+        model.section = lastSections[next] ?? fallback
+    }
 
     private var compactLandscape: Bool {
         verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize
@@ -489,11 +660,21 @@ struct TeacherAcademyScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Tokens.paper)
+        .onAppear { visitedSections.insert(model.section) }
+        .onChange(of: model.section) { _, next in visitedSections.insert(next) }
+        .onChange(of: model.dashboard?.isOwner) { _, isOwner in
+            if isOwner == false { visitedSections.remove(.settings); lastSections.removeValue(forKey: .more) }
+        }
         .task { if model.dashboard == nil && model.setup == nil { await model.load() } }
         .task(id: "\(model.section.rawValue)|\(model.attendanceDateKey)|\(model.attendanceClassID)") {
             await model.loadAttendance()
         }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            visitedSections = []
+            lastSections = [:]
+            removingStudent = nil
+            focusedStudentID = nil
+            showsAcademyPhotoPicker = false
             Task { await model.resetAndLoad() }
         }
         .compactHeightSheet(isPresented: $model.showsInviteComposer) {
@@ -535,163 +716,90 @@ struct TeacherAcademyScreen: View {
         _ dashboard: ServerAPI.TeacherAcademyDashboard,
         viewport: GeometryProxy
     ) -> some View {
-        let leadingInset = max(12, viewport.safeAreaInsets.leading + 12)
-        let trailingInset = max(12, viewport.safeAreaInsets.trailing + 12)
-        let compactSummaryWidth = min(260, viewport.size.width * 0.31)
-        let compactWorkWidth = max(
-            300,
-            viewport.size.width - leadingInset - trailingInset
-                - compactSummaryWidth - Tokens.Space.s3)
-
-        if verticalSizeClass == .compact
-            && (model.section == .overview
-                || model.section == .forensics
-                || model.section == .settings) {
-            workColumn(dashboard)
-                .padding(.leading, max(12, viewport.safeAreaInsets.leading + 12))
-                .padding(.trailing, max(12, viewport.safeAreaInsets.trailing + 12))
-                .padding(.vertical, Tokens.Space.s2)
-        } else if compactLandscape && model.section == .students {
-            workColumn(dashboard)
-                .padding(.leading, max(12, viewport.safeAreaInsets.leading + 12))
-                .padding(.trailing, max(12, viewport.safeAreaInsets.trailing + 12))
-                .padding(.vertical, Tokens.Space.s2)
-        } else if compactLandscape {
-            HStack(alignment: .top, spacing: Tokens.Space.s3) {
-                summaryColumn(dashboard)
-                    .frame(width: compactSummaryWidth)
-                workColumn(dashboard)
-                    // maxWidth만 주면 출결 HStack의 이상적 폭이 부모보다 커질 때
-                    // 안전영역 바깥까지 실제 프레임이 팽창한다. 남은 폭을 정확히
-                    // 제안해 탭·요약·입력 행이 Island 앞에서 압축되게 한다.
-                    .frame(width: compactWorkWidth, alignment: .topLeading)
-            }
-            // Dynamic Island가 어느 쪽에 있든 그 방향의 실제 인셋을 각각 사용한다.
-            // leading 한 값을 양쪽에 재사용하면 기기를 반대로 돌렸을 때 작업대가
-            // trailing Island 아래로 들어가 출결 저장·입력 안내가 가려진다.
-            .padding(.leading, max(12, viewport.safeAreaInsets.leading + 12))
-            .padding(.trailing, max(12, viewport.safeAreaInsets.trailing + 12))
-            .padding(.vertical, Tokens.Space.s2)
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                    summaryColumn(dashboard)
-                    workColumn(dashboard)
-                }
-                .readableWidth(Tokens.readableWidth)
-                .adaptiveHPadding()
-                .adaptiveVPadding()
-            }
-            .refreshable { await model.load() }
-        }
-    }
-
-    private func summaryColumn(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Group {
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        academyIdentity(dashboard)
-                    }
-                } else {
-                    HStack(spacing: Tokens.Space.s3) {
-                        academyIdentity(dashboard)
-                    }
-                }
-            }
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: Tokens.Space.s2) {
-                    metric(value: dashboard.pendingCount, label: "승인 대기", emphasized: dashboard.pendingCount > 0)
-                    metric(value: dashboard.studentCount, label: "학생", emphasized: false)
-                    metric(value: dashboard.classes.count, label: "반", emphasized: false)
-                }
-            } else {
+        StaffWorkspaceContainer(
+            title: "수업 관리", subtitle: dashboard.academy.name,
+            destinations: TeacherWorkspaceArea.allCases.map {
+                StaffWorkspaceDestination(id: $0.rawValue, title: $0.title, symbol: $0.symbol)
+            }, selectedID: area.rawValue,
+            onSelect: { if let next = TeacherWorkspaceArea(rawValue: $0) { selectArea(next) } }
+        ) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 HStack(spacing: Tokens.Space.s2) {
-                    metric(value: dashboard.pendingCount, label: "승인 대기", emphasized: dashboard.pendingCount > 0)
-                    metric(value: dashboard.studentCount, label: "학생", emphasized: false)
-                    metric(value: dashboard.classes.count, label: "반", emphasized: false)
-                }
-            }
-            feedbackText
-        }
-        .teacherAcademySurface()
-    }
-
-    private func academyIdentity(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
-        Group {
-                Text(dashboard.academy.name.first.map(String.init) ?? "학")
-                    .font(.mHeading)
-                    .foregroundStyle(Tokens.onBrand)
-                    .frame(width: 48, height: 48)
-                    .background(Tokens.actionPrimary,
-                                in: RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(dashboard.academy.name)
-                        .font(compactLandscape ? .mBodyB : .mTitle)
-                        .foregroundStyle(Tokens.ink)
-                        .lineLimit(2)
-                    Text(dashboard.isOwner ? "원장" : "선생님")
-                        .font(.mCaption)
-                        .foregroundStyle(Tokens.text2)
-                }
-        }
-    }
-
-    private func metric(value: Int, label: String, emphasized: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("\(value)").font(.mHeading.monospacedDigit())
-            Text(label).font(.mMicro)
-        }
-        .foregroundStyle(emphasized ? Tokens.dangerInk : Tokens.ink)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Tokens.Space.s2)
-        .background(emphasized ? Tokens.dangerSoft : Tokens.primarySoft,
-                    in: RoundedRectangle(cornerRadius: Tokens.Radius.sm, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-
-    private func workColumn(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            HStack {
-                managementSectionPicker(dashboard)
-                if model.actionID != nil { ProgressView().tint(Tokens.primary) }
-            }
-            Group {
-                switch model.section {
-                case .overview:
-                    TeacherAnalyticsPanel(classes: dashboard.classes) { membershipID in
-                        focusedStudentID = membershipID
-                        model.section = .students
+                    if compactLandscape {
+                        Text(area.title).font(.mBodyB).foregroundStyle(Tokens.ink).fixedSize()
+                        managementSectionPicker(dashboard).frame(maxWidth: 420)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(area.title).font(.mHeading).foregroundStyle(Tokens.ink)
+                            Text(dashboard.academy.name).font(.mMicro).foregroundStyle(Tokens.text3).lineLimit(1)
+                        }
                     }
-                case .requests: requestList(dashboard)
-                case .students:
-                    TeacherStudentManagementPanel(initialMembershipID: focusedStudentID) {
-                        await model.load()
+                    Spacer()
+                    if model.hasAttendanceChanges {
+                        Button("출결 초안") { model.section = .attendance }.font(.mCaption)
                     }
-                case .attendance: attendanceBoard(dashboard)
-                case .classwork: TeacherClassworkPanel(classes: dashboard.classes)
-                case .forensics: TeacherAcademyForensicsPanel()
-                case .classes: TeacherClassManagementPanel(dashboard: dashboard, model: model)
-                case .staff: staffList(dashboard)
-                case .invites: inviteList(dashboard)
-                case .settings:
-                    TeacherAcademyProfilePanel(
-                        dashboard: dashboard,
-                        model: model,
-                        onChoosePhoto: { showsAcademyPhotoPicker = true })
+                    if model.actionID != nil { ProgressView() }
+                    Button { Task { await model.load() } } label: {
+                        Image(systemName: "arrow.clockwise").frame(width: 44, height: 44)
+                    }.disabled(model.actionID != nil).accessibilityLabel("학원 정보 새로고침")
+                }
+                if !compactLandscape { managementSectionPicker(dashboard) }
+                feedbackText
+                // Keep each visited feature at a stable identity. A tab switch
+                // must not discard search, selected student, file draft or scroll.
+                ZStack(alignment: .topLeading) {
+                    ForEach(availableSections(dashboard).filter { visitedSections.contains($0) || model.section == $0 }) { section in
+                        sectionContent(section, dashboard: dashboard)
+                            .environment(\.staffWorkspaceActive, model.section == section)
+                            .opacity(model.section == section ? 1 : 0)
+                            .allowsHitTesting(model.section == section)
+                            .accessibilityHidden(model.section != section)
+                            .zIndex(model.section == section ? 1 : 0)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .padding(.horizontal, Tokens.Space.s3)
+            .padding(.top, Tokens.Space.s2)
+        }
+    }
+
+    @ViewBuilder
+    private func sectionContent(_ section: TeacherAcademyScreenModel.Section, dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
+        switch section {
+        case .overview:
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                HStack(spacing: Tokens.Space.s2) {
+                    Button("승인 대기 \(dashboard.pendingCount)") { model.section = .requests }
+                        .buttonStyle(.bordered)
+                    Button("오늘 출결") { model.jumpAttendanceToToday(); model.section = .attendance }
+                        .buttonStyle(.borderedProminent).tint(Tokens.actionPrimary)
+                    Button("수업·과제") { model.section = .classwork }.buttonStyle(.bordered)
+                }
+                TeacherAnalyticsPanel(classes: dashboard.classes) { membershipID in
+                    focusedStudentID = membershipID
+                    model.section = .students
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        case .requests: requestList(dashboard)
+        case .students:
+            TeacherStudentManagementPanel(initialMembershipID: focusedStudentID) { await model.load() }
+        case .attendance: attendanceBoard(dashboard)
+        case .classwork: TeacherClassworkPanel(classes: dashboard.classes).id(store.captureAccountSessionBoundary())
+        case .forensics: TeacherAcademyForensicsPanel()
+        case .classes: TeacherClassManagementPanel(dashboard: dashboard, model: model)
+        case .staff: staffList(dashboard)
+        case .invites: inviteList(dashboard)
+        case .settings:
+            TeacherAcademyProfilePanel(dashboard: dashboard, model: model, onChoosePhoto: { showsAcademyPhotoPicker = true })
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
     private func managementSectionPicker(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             Picker("관리 항목", selection: $model.section) {
-                ForEach(availableSections(dashboard)) { section in
+                ForEach(availableSections(dashboard).filter { Self.area(for: $0) == area }) { section in
                     Text(sectionTitle(section, dashboard: dashboard)).tag(section)
                 }
             }
@@ -703,7 +811,7 @@ struct TeacherAcademyScreen: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
                     HStack(spacing: Tokens.Space.s1) {
-                        ForEach(availableSections(dashboard)) { section in
+                        ForEach(availableSections(dashboard).filter { Self.area(for: $0) == area }) { section in
                             Button {
                                 model.section = section
                             } label: {
@@ -760,38 +868,21 @@ struct TeacherAcademyScreen: View {
         }
     }
 
-    private func studentList(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
-        listContainer {
-            if dashboard.students.isEmpty {
-                emptyState("승인된 학생이 없습니다", "초대 코드를 보내거나 들어온 요청을 승인해 주세요.")
-            } else {
-                ForEach(dashboard.students) { membership in
-                    personRow(membership) {
-                        Menu {
-                            Button("미배정") { Task { await model.assign(membership, classID: nil) } }
-                            ForEach(dashboard.classes) { academyClass in
-                                Button(academyClass.name) {
-                                    Task { await model.assign(membership, classID: academyClass.id) }
-                                }
-                            }
-                            Divider()
-                            Button("학원에서 제외", role: .destructive) {
-                                removingStudent = membership
-                            }
-                        } label: {
-                            Label(membership.academyClass?.name ?? "반 배정", systemImage: "person.2")
-                                .font(.mCaption)
-                                .frame(minHeight: 44)
-                        }
-                        .disabled(model.actionID != nil)
-                    }
-                }
-            }
-        }
-    }
-
     private func attendanceBoard(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            if !model.attendanceConflicts.isEmpty {
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    Text("다른 작업자가 변경한 출결 \(model.attendanceConflicts.count)건과 초안이 다릅니다.")
+                        .font(.mCaption).foregroundStyle(Tokens.warningInk)
+                    HStack {
+                        Button("서버 기록 사용") { model.useServerAttendance() }
+                        Button("내 초안 확인·유지") { model.confirmLocalAttendance() }
+                    }.buttonStyle(.bordered)
+                }
+            } else if model.hasAttendanceChanges {
+                Text("저장하지 않은 출결이 있습니다. 반·날짜를 바꾸어도 이 작업공간의 초안을 유지합니다.")
+                    .font(.mMicro).foregroundStyle(Tokens.warningInk)
+            }
             Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -818,13 +909,13 @@ struct TeacherAcademyScreen: View {
             }
             .disabled(model.actionID != nil)
 
-            if model.isAttendanceLoading && model.attendance == nil {
+            if model.isAttendanceLoading && !model.attendanceMatchesSelection {
                 HStack(spacing: Tokens.Space.s2) {
                     ProgressView().tint(Tokens.primary)
                     Text("출결부를 불러오는 중입니다").font(.mCaption).foregroundStyle(Tokens.text2)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let attendance = model.attendance {
+            } else if let attendance = model.attendance, model.attendanceMatchesSelection {
                 attendanceSummary(attendance)
                 if attendance.roster.isEmpty {
                     emptyState("이 반에 출결 학생이 없습니다", "학생을 반에 배정하면 날짜별 출결부가 만들어집니다.")
@@ -892,7 +983,9 @@ struct TeacherAcademyScreen: View {
     private var attendanceSaveButton: some View {
                 Button("저장") { Task { await model.saveAttendance() } }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(model.actionID != nil || model.attendance?.roster.isEmpty != false)
+                    .disabled(model.actionID != nil || model.isAttendanceLoading || !model.attendanceMatchesSelection
+                              || !model.attendanceConflicts.isEmpty || !model.hasAttendanceChanges
+                              || model.attendance?.roster.isEmpty != false)
                     .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil)
     }
 

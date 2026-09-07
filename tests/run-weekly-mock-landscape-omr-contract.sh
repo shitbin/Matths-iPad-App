@@ -3,12 +3,16 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 screen="$root/Matths/WeeklyMockScreen.swift"
+awk '/private func omrPane/,/@ViewBuilder private func answerRows/' "$screen" | grep -Fq '.safeAreaInset(edge: .bottom, spacing: 0)'
 
 grep -Fq '@Environment(\.verticalSizeClass) private var verticalSizeClass' "$screen"
 grep -Fq '@Environment(\.dynamicTypeSize) private var dynamicTypeSize' "$screen"
 grep -Fq 'verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize' "$screen"
 grep -Fq 'private var usesLandscapeSplitWorkspace: Bool' "$screen"
-grep -Fq 'geometry.size.width >= 900 || usesLandscapeSplitWorkspace' "$screen"
+# Actual container width AND height now select the shared problem workspace.
+# Retain side-by-side PDF/OMR, not the retired width-or-size-class expression.
+grep -Fq 'UniversalLayoutPolicy.usesProblemSplit(width: geometry.size.width, height: geometry.size.height,' "$screen"
+grep -Fq 'ResponsiveProblemWorkspace(spacing: 1, trailingWidth: min(390, max(300, geometry.size.width * 0.36)))' "$screen"
 grep -Fq 'omrPane(value)' "$screen"
 grep -Fq '.frame(width: min(390, max(300, geometry.size.width * 0.36)))' "$screen"
 grep -Fq 'guard dynamicTypeSize.isAccessibilitySize else { return attempt.exam.title }' "$screen"

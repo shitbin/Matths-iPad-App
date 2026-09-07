@@ -354,7 +354,13 @@ extension JSONEncoder {
 /// 앱 ↔ 위젯 공유 저장소. 앱 그룹 하나, 키 하나.
 enum MatthsWidgetStore {
     /// 앱과 위젯 확장의 entitlements 에 같은 이름으로 들어 있어야 한다.
-    static let appGroupID = "group.kr.matths.app"
+    static let appGroupID: String = {
+        #if DEBUG
+        // QA builds must not replace the installed TestFlight user's widget data.
+        if Bundle.main.bundleIdentifier?.contains(".uiqa") == true { return "group.kr.matths.app.uiqa" }
+        #endif
+        return "group.kr.matths.app"
+    }()
     static let key = "widget.snapshot.v1"
     /// 위젯 종류 식별자 — WidgetCenter.reloadTimelines(ofKind:) 와 위젯 선언이 같은 값을 쓴다.
     static let widgetKind = "MatthsTodayWidget"

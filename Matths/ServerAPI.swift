@@ -270,7 +270,17 @@ enum ServerAPI {
     static func cancelAuthenticationAttempt(_ id: UUID?) {
         guard let id else { return }
         TokenBox.cancelAuthenticationAttempt(id)
+        // A failed/cancelled re-login may have deferred cleanup of the expired
+        // old session. This publishes only when no newer attempt/token owns it.
+        notifyAuthenticationExpired(message: nil)
     }
+
+    static func beginSignOut() -> UUID { TokenBox.beginSignOut() }
+    static func ownsSignOut(_ id: UUID) -> Bool { TokenBox.ownsSignOut(id) }
+    static func finishSignOut(_ id: UUID) -> Bool { TokenBox.finishSignOut(id) }
+    static func ownsAuthenticationExpiration(_ id: UUID) -> Bool { TokenBox.ownsExpiration(id) }
+    static func finishAuthenticationExpiration(_ id: UUID) -> Bool { TokenBox.finishExpiration(id) }
+    static var mayShowAuthenticationExpiredNotice: Bool { TokenBox.expirationTicket() != nil }
 
     /// 비동기 요청을 시작한 계정의 Bearer 자격을 고정한다. 요청 본문이 실제로
     /// URLRequest를 만드는 시점에 전역 Keychain을 다시 읽으면, 그 사이 로그인한
@@ -304,15 +314,15 @@ enum ServerAPI {
         return AuthorizationSnapshot(token: TokenBox.load())
     }
 
-    static func me() async throws -> ServerUser {
-        let res: MeResponse = try await request("GET", "/api/v1/me", body: nil, authed: true)
+    static func me(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> ServerUser {
+        let res: MeResponse = try await request("GET", "/api/v1/me", body: nil, authed: true, authorization: authorization)
         return res.user
     }
 
-    static func updateNickname(_ nickname: String) async throws -> ServerUser {
+    static func updateNickname(_ nickname: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> ServerUser {
         let response: MeResponse = try await request(
             "PATCH", "/api/v1/me/nickname",
-            body: ["nickname": nickname], authed: true)
+            body: ["nickname": nickname], authed: true, authorization: authorization)
         return response.user
     }
 
@@ -320,14 +330,14 @@ enum ServerAPI {
     private struct DashboardTutorialResponse: Codable { var tutorial: ServerTutorialStatus }
     private struct ArenaTutorialResponse: Codable { var tutorial: ServerArenaTutorialStatus }
 
-    static func updateProfileAvatarPreset(_ avatarCode: String) async throws -> ServerProfileAvatar {
+    static func updateProfileAvatarPreset(_ avatarCode: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> ServerProfileAvatar {
         let response: ProfileAvatarResponse = try await request(
             "PATCH", "/api/v1/me/avatar/preset",
-            body: ["avatarCode": avatarCode], authed: true)
+            body: ["avatarCode": avatarCode], authed: true, authorization: authorization)
         return response.profileAvatar
     }
 
-    static func updateProfileAvatarCustom(jpegData: Data) async throws -> ServerProfileAvatar {
+    static func updateProfileAvatarCustom(jpegData: Data, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> ServerProfileAvatar {
         guard !jpegData.isEmpty, jpegData.count <= 5 * 1024 * 1024 else {
             throw ServerAPIError(
                 message: "프로필 사진은 5MB 이하로 선택해 주세요.",
@@ -338,7 +348,7 @@ enum ServerAPI {
             "POST",
             "/api/v1/me/avatar/custom",
             contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 90)
+            timeout: 90, authorization: authorization)
         var body = Data()
         body.append(Data("--\(boundary)\r\n".utf8))
         body.append(Data("Content-Disposition: form-data; name=\"profileImage\"; filename=\"profile.jpg\"\r\n".utf8))
@@ -354,30 +364,31 @@ enum ServerAPI {
         return try JSONDecoder().decode(ProfileAvatarResponse.self, from: data).profileAvatar
     }
 
-    static func updateCoachMode(_ mode: String) async throws {
+    static func updateCoachMode(_ mode: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws {
         struct CoachResponse: Codable {
             struct Coach: Codable { var mode: String }
             var coach: Coach
         }
         let _: CoachResponse = try await request(
             "PATCH", "/api/v1/me/coach-mode",
-            body: ["mode": mode], authed: true)
+            body: ["mode": mode], authed: true, authorization: authorization)
     }
 
-    static func updateDashboardTutorial(_ action: String) async throws -> ServerTutorialStatus {
+    static func updateDashboardTutorial(_ action: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> ServerTutorialStatus {
         let response: DashboardTutorialResponse = try await request(
             "PATCH", "/api/v1/me/tutorials/dashboard",
-            body: ["action": action], authed: true)
+            body: ["action": action], authed: true, authorization: authorization)
         return response.tutorial
     }
 
     static func updateArenaTutorial(
         chapter: String,
-        action: String
+        action: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> ServerArenaTutorialStatus {
         let response: ArenaTutorialResponse = try await request(
             "PATCH", "/api/v1/me/tutorials/arena",
-            body: ["chapter": chapter, "action": action], authed: true)
+            body: ["chapter": chapter, "action": action], authed: true, authorization: authorization)
         return response.tutorial
     }
 
@@ -416,11 +427,11 @@ enum ServerAPI {
     /// 프로필의 학교 변경은 학교 리그 정본을 바꾸는 서버 작업이다.
     /// 로컬 표시부터 바꾸면 실패·오프라인 때 앱과 웹의 학교가 갈리므로,
     /// 서버가 검증해 돌려준 사용자만 호출부가 로컬 상태에 반영한다.
-    static func updateSchool(region: String, code: String) async throws -> ServerUser {
+    static func updateSchool(region: String, code: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> ServerUser {
         let res: MeResponse = try await request(
             "PATCH", "/api/v1/me/school",
             body: ["schoolRegion": region, "schoolCode": code],
-            authed: true)
+            authed: true, authorization: authorization)
         return res.user
     }
 
@@ -689,6 +700,8 @@ enum ServerAPI {
         var assignmentInstructions: String
         var dueAt: String?
         var files: [File]
+        var assignmentOmr: AcademyAssignmentOMR? = nil
+        var submissions: [AcademyAssignmentSubmission]? = nil
     }
 
     struct AcademyAttendanceDashboard: Codable, Equatable {
@@ -729,6 +742,8 @@ enum ServerAPI {
         var academy: AcademySummary
         var academyClass: AcademyClassSummary
         var week: AcademyWeek
+        var submission: AcademyAssignmentSubmission? = nil
+        var serverTime: String? = nil
     }
 
     struct AcademyPerson: Codable, Identifiable, Equatable {
@@ -1073,6 +1088,8 @@ enum ServerAPI {
 
     struct TeacherAttendanceEntry: Codable, Identifiable, Equatable {
         struct Attendance: Codable, Equatable {
+            var id: String? = nil
+            var updatedAt: String? = nil
             var status: String
             var checkedInAt: String?
             var source: String?
@@ -1102,12 +1119,41 @@ enum ServerAPI {
         var roster: [TeacherAttendanceEntry]
         var counts: TeacherAttendanceCounts
         var truncated: Bool
+        var conditionalWriteVersion: Int? = nil
     }
 
     struct TeacherAttendanceRecord: Equatable {
+        struct Value: Equatable {
+            var status: String
+            var note: String
+            var normalized: Self {
+                Self(status: status, note: note.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        struct ExpectedState: Equatable {
+            var recordID: String?
+            var updatedAt: String?
+            var status: String?
+            var note: String
+        }
         var studentUserID: String
         var status: String
         var note: String
+        var expectedState: ExpectedState? = nil
+
+        var requestBody: [String: Any] {
+            var result: [String: Any] = ["studentUserId": studentUserID, "status": status, "note": note]
+            if let expectedState {
+                result["expectedState"] = [
+                    "recordId": expectedState.recordID.map { $0 as Any } ?? NSNull(),
+                    "updatedAt": expectedState.updatedAt.map { $0 as Any } ?? NSNull(),
+                    "status": expectedState.status.map { $0 as Any } ?? NSNull(),
+                    "note": expectedState.note,
+                ]
+            }
+            return result
+        }
     }
 
     private struct TeacherAttendanceSessionResponse: Codable {
@@ -1155,6 +1201,8 @@ enum ServerAPI {
         var assignmentTitle: String
         var assignmentInstructions: String
         var dueAt: String
+        /// nil preserves an existing OMR on old-style edits; enabled=false explicitly removes it.
+        var assignmentOmr: AcademyAssignmentConfiguration? = nil
     }
 
     struct AdminAcademyApplicant: Codable, Identifiable, Equatable {
@@ -1314,68 +1362,68 @@ enum ServerAPI {
         var attendance: AcademyAttendanceDashboard.Record
     }
 
-    static func academyDashboard(authorization: AuthorizationSnapshot? = nil) async throws -> AcademyDashboard {
+    static func academyDashboard(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AcademyDashboard {
         try await request("GET", "/api/v1/academy/student", body: nil, authed: true, authorization: authorization)
     }
 
-    static func academyWeek(_ weekID: String) async throws -> AcademyWeekResponse {
+    static func academyWeek(_ weekID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AcademyWeekResponse {
         try await request(
-            "GET", "/api/v1/academy/student/weeks/\(weekID)", body: nil, authed: true)
+            "GET", "/api/v1/academy/student/weeks/\(weekID)", body: nil, authed: true, authorization: authorization)
     }
 
-    static func requestAcademy(inviteCode: String) async throws -> AcademyDashboard {
+    static func requestAcademy(inviteCode: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/student/join-code",
-            body: ["code": inviteCode, "consent": true], authed: true)
+            body: ["code": inviteCode, "consent": true], authed: true, authorization: authorization)
     }
 
-    static func requestAcademy(academyID: String) async throws -> AcademyDashboard {
+    static func requestAcademy(academyID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/student/join",
-            body: ["academyId": academyID, "consent": true], authed: true)
+            body: ["academyId": academyID, "consent": true], authed: true, authorization: authorization)
     }
 
-    static func leaveAcademy() async throws -> AcademyDashboard {
+    static func leaveAcademy(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AcademyDashboard {
         try await request(
-            "POST", "/api/v1/academy/student/leave", body: [:], authed: true)
+            "POST", "/api/v1/academy/student/leave", body: [:], authed: true, authorization: authorization)
     }
 
-    static func checkInAcademyAttendance(sessionID: String, code: String)
+    static func checkInAcademyAttendance(sessionID: String, code: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> AcademyAttendanceDashboard.Record {
         let response: AcademyCheckInResponse = try await request(
             "POST", "/api/v1/academy/student/attendance/check-in",
-            body: ["sessionId": sessionID, "code": code], authed: true)
+            body: ["sessionId": sessionID, "code": code], authed: true, authorization: authorization)
         return response.attendance
     }
 
-    static func teacherAcademyDashboard() async throws -> TeacherAcademyDashboard {
-        try await request("GET", "/api/v1/academy/teacher", body: nil, authed: true)
+    static func teacherAcademyDashboard(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyDashboard {
+        try await request("GET", "/api/v1/academy/teacher", body: nil, authed: true, authorization: authorization)
     }
 
-    static func teacherAcademySetup() async throws -> TeacherAcademySetup {
-        try await request("GET", "/api/v1/academy/teacher/setup", body: nil, authed: true)
+    static func teacherAcademySetup(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademySetup {
+        try await request("GET", "/api/v1/academy/teacher/setup", body: nil, authed: true, authorization: authorization)
     }
 
-    static func createTeacherAcademy(name: String) async throws -> TeacherAcademySetup {
+    static func createTeacherAcademy(name: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademySetup {
         try await request(
             "POST", "/api/v1/academy/teacher/setup",
-            body: ["academyName": name], authed: true)
+            body: ["academyName": name], authed: true, authorization: authorization)
     }
 
-    static func requestTeacherAcademyJoin(academyID: String)
+    static func requestTeacherAcademyJoin(academyID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademySetup {
         try await request(
             "POST", "/api/v1/academy/teacher/setup/join",
-            body: ["academyId": academyID], authed: true)
+            body: ["academyId": academyID], authed: true, authorization: authorization)
     }
 
-    static func cancelTeacherAcademyJoin() async throws -> TeacherAcademySetup {
+    static func cancelTeacherAcademyJoin(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademySetup {
         try await request(
             "POST", "/api/v1/academy/teacher/setup/join/cancel",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func updateTeacherAcademyProfileImage(jpegData: Data)
+    static func updateTeacherAcademyProfileImage(jpegData: Data, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         guard !jpegData.isEmpty, jpegData.count <= 5 * 1024 * 1024 else {
             throw ServerAPIError(
@@ -1387,7 +1435,7 @@ enum ServerAPI {
             "POST",
             "/api/v1/academy/teacher/profile-image",
             contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 90)
+            timeout: 90, authorization: authorization)
         var body = Data()
         body.append(Data("--\(boundary)\r\n".utf8))
         body.append(Data("Content-Disposition: form-data; name=\"profileImage\"; filename=\"academy-profile.jpg\"\r\n".utf8))
@@ -1403,33 +1451,32 @@ enum ServerAPI {
         return try JSONDecoder().decode(TeacherAcademyDashboard.self, from: data)
     }
 
-    static func removeTeacherAcademyProfileImage() async throws -> TeacherAcademyDashboard {
+    static func removeTeacherAcademyProfileImage(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/profile-image/remove",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func teacherAcademyForensics(classID: String?) async throws -> TeacherAcademyForensics {
+    static func teacherAcademyForensics(classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyForensics {
         var query: [String: String] = [:]
         if let classID, !classID.isEmpty { query["classId"] = classID }
         return try await request(
             "GET", "/api/v1/academy/teacher/forensics",
-            body: nil, authed: true, query: query)
+            body: nil, authed: true, query: query, authorization: authorization)
     }
 
-    static func analyzeTeacherAcademyForensicsCode(classID: String, traceCode: String)
+    static func analyzeTeacherAcademyForensicsCode(classID: String, traceCode: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyForensics {
         try await request(
             "POST", "/api/v1/academy/teacher/forensics/code",
-            body: ["classId": classID, "traceCode": traceCode], authed: true)
+            body: ["classId": classID, "traceCode": traceCode], authed: true, authorization: authorization)
     }
 
     static func analyzeTeacherAcademyForensicsFile(
         classID: String,
         data: Data,
         filename: String,
-        mimeType: String
-    ) async throws -> TeacherAcademyForensics {
+        mimeType: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyForensics {
         guard !data.isEmpty, data.count <= 50 * 1024 * 1024 else {
             throw ServerAPIError(
                 message: "유출 추적 파일은 50MB 이하로 선택해 주세요.",
@@ -1438,7 +1485,7 @@ enum ServerAPI {
         let boundary = "Matths-Forensics-\(UUID().uuidString)"
         var request = try authorizedRequest(
             "POST", "/api/v1/academy/teacher/forensics/file",
-            contentType: "multipart/form-data; boundary=\(boundary)", timeout: 180)
+            contentType: "multipart/form-data; boundary=\(boundary)", timeout: 180, authorization: authorization)
         var body = Data()
         for (name, value) in [("classId", classID)] {
             body.append(Data("--\(boundary)\r\n".utf8))
@@ -1460,66 +1507,65 @@ enum ServerAPI {
         return try JSONDecoder().decode(TeacherAcademyForensics.self, from: responseData)
     }
 
-    static func teacherAcademyAnalytics(period: String?, classID: String?)
+    static func teacherAcademyAnalytics(period: String?, classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyAnalytics {
         var query: [String: String] = [:]
         if let period, !period.isEmpty { query["period"] = period }
         if let classID, !classID.isEmpty { query["classId"] = classID }
         return try await request(
             "GET", "/api/v1/academy/teacher/analytics",
-            body: nil, authed: true, query: query)
+            body: nil, authed: true, query: query, authorization: authorization)
     }
 
-    static func reviewAcademyStudent(membershipID: String, approve: Bool)
+    static func reviewAcademyStudent(membershipID: String, approve: Bool, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         let action = approve ? "approve" : "reject"
         return try await request(
             "POST", "/api/v1/academy/teacher/requests/\(membershipID)/\(action)",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func assignAcademyStudent(membershipID: String, classID: String?)
+    static func assignAcademyStudent(membershipID: String, classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/students/\(membershipID)/class",
-            body: ["classId": classID ?? ""], authed: true)
+            body: ["classId": classID ?? ""], authed: true, authorization: authorization)
     }
 
-    static func removeAcademyStudent(membershipID: String)
+    static func removeAcademyStudent(membershipID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/students/\(membershipID)/remove",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func teacherAcademyStudents(page: Int) async throws -> TeacherStudentPage {
+    static func teacherAcademyStudents(page: Int, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherStudentPage {
         try await request(
             "GET", "/api/v1/academy/teacher/students",
-            body: nil, authed: true, query: ["page": String(max(1, page))])
+            body: nil, authed: true, query: ["page": String(max(1, page))], authorization: authorization)
     }
 
-    static func teacherAcademyStudentDetail(membershipID: String, period: String?)
+    static func teacherAcademyStudentDetail(membershipID: String, period: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherStudentDetail {
         var query: [String: String] = [:]
         if let period, !period.isEmpty { query["period"] = period }
         return try await request(
             "GET", "/api/v1/academy/teacher/students/\(membershipID)",
-            body: nil, authed: true, query: query)
+            body: nil, authed: true, query: query, authorization: authorization)
     }
 
     static func bulkManageAcademyStudents(
-        membershipIDs: [String], action: String, classID: String?
-    ) async throws -> TeacherStudentBulkResult {
+        membershipIDs: [String], action: String, classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherStudentBulkResult {
         try await request(
             "POST", "/api/v1/academy/teacher/students/bulk",
             body: [
                 "membershipIds": membershipIDs,
                 "action": action,
                 "classId": classID ?? "",
-            ], authed: true)
+            ], authed: true, authorization: authorization)
     }
 
-    static func createAcademyInvite(label: String, classID: String?)
+    static func createAcademyInvite(label: String, classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/invites",
@@ -1528,81 +1574,79 @@ enum ServerAPI {
                 "classId": classID ?? "",
                 "expiryDays": 14,
                 "maxUses": 30,
-            ], authed: true)
+            ], authed: true, authorization: authorization)
     }
 
-    static func revokeAcademyInvite(_ inviteID: String) async throws -> TeacherAcademyDashboard {
+    static func revokeAcademyInvite(_ inviteID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/invites/\(inviteID)/revoke",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func reviewAcademyStaff(staffID: String, approve: Bool)
+    static func reviewAcademyStaff(staffID: String, approve: Bool, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         let action = approve ? "approve" : "reject"
         return try await request(
             "POST", "/api/v1/academy/teacher/staff/\(staffID)/\(action)",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func revokeAcademyStaff(_ staffID: String) async throws -> TeacherAcademyDashboard {
+    static func revokeAcademyStaff(_ staffID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/staff/\(staffID)/revoke",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func createTeacherAcademyClass(_ draft: TeacherAcademyClassDraft)
+    static func createTeacherAcademyClass(_ draft: TeacherAcademyClassDraft, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/classes",
-            body: teacherClassBody(draft), authed: true)
+            body: teacherClassBody(draft), authed: true, authorization: authorization)
     }
 
     static func updateTeacherAcademyClass(
-        classID: String, draft: TeacherAcademyClassDraft
-    ) async throws -> TeacherAcademyDashboard {
+        classID: String, draft: TeacherAcademyClassDraft, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/classes/\(classID)/settings",
-            body: teacherClassBody(draft), authed: true)
+            body: teacherClassBody(draft), authed: true, authorization: authorization)
     }
 
-    static func archiveTeacherAcademyClass(_ classID: String)
+    static func archiveTeacherAcademyClass(_ classID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/classes/\(classID)/archive",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func restoreTeacherAcademyClass(_ classID: String)
+    static func restoreTeacherAcademyClass(_ classID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/classes/\(classID)/restore",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func addTeacherAcademyClassCoTeacher(classID: String, teacherUserID: String)
+    static func addTeacherAcademyClassCoTeacher(classID: String, teacherUserID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/classes/\(classID)/co-teachers",
-            body: ["teacherUserId": teacherUserID], authed: true)
+            body: ["teacherUserId": teacherUserID], authed: true, authorization: authorization)
     }
 
-    static func removeTeacherAcademyClassCoTeacher(classID: String, teacherUserID: String)
+    static func removeTeacherAcademyClassCoTeacher(classID: String, teacherUserID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/classes/\(classID)/co-teachers/\(teacherUserID)/remove",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
     static func transferTeacherAcademyClassHomeroom(
-        classID: String, teacherUserID: String, keepPreviousAsCoTeacher: Bool
-    ) async throws -> TeacherAcademyDashboard {
+        classID: String, teacherUserID: String, keepPreviousAsCoTeacher: Bool, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyDashboard {
         try await request(
             "POST", "/api/v1/academy/teacher/classes/\(classID)/homeroom-transfer",
             body: [
                 "nextTeacherUserId": teacherUserID,
                 "keepPreviousAsCoTeacher": keepPreviousAsCoTeacher,
-            ], authed: true)
+            ], authed: true, authorization: authorization)
     }
 
     private static func teacherClassBody(_ draft: TeacherAcademyClassDraft) -> [String: Any] {
@@ -1619,133 +1663,147 @@ enum ServerAPI {
         ]
     }
 
-    static func teacherAcademyAttendance(dateKey: String, classID: String?)
+    static func teacherAcademyAttendance(dateKey: String, classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAttendanceRoster {
         var query = ["dateKey": dateKey]
         if let classID, !classID.isEmpty { query["classId"] = classID }
         return try await request(
             "GET", "/api/v1/academy/teacher/attendance",
-            body: nil, authed: true, query: query)
+            body: nil, authed: true, query: query, authorization: authorization)
     }
 
     static func saveTeacherAcademyAttendance(
         dateKey: String,
         classID: String?,
         sessionID: String?,
-        records: [TeacherAttendanceRecord]
-    ) async throws -> TeacherAttendanceRoster {
+        records: [TeacherAttendanceRecord], authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAttendanceRoster {
         try await request(
             "POST", "/api/v1/academy/teacher/attendance",
             body: [
                 "dateKey": dateKey,
                 "classId": classID ?? "",
                 "sessionId": sessionID ?? "",
-                "records": records.map {
-                    [
-                        "studentUserId": $0.studentUserID,
-                        "status": $0.status,
-                        "note": $0.note,
-                    ]
-                },
-            ], authed: true)
+                "records": records.map(\.requestBody),
+            ], authed: true, authorization: authorization)
     }
 
-    static func regenerateTeacherAttendanceCode(_ sessionID: String)
+    /// The roster is a read snapshot, not a write command. Only locally changed
+    /// rows are sent, with server-provided before-state when supported.
+    static func changedTeacherAttendanceRecords(
+        roster: TeacherAttendanceRoster,
+        baseline: [String: TeacherAttendanceRecord.Value],
+        edited: [String: TeacherAttendanceRecord.Value]
+    ) throws -> [TeacherAttendanceRecord] {
+        try roster.roster.compactMap { entry in
+            guard let value = edited[entry.id]?.normalized else { return nil }
+            let before = baseline[entry.id]?.normalized ?? .init(
+                status: entry.attendance?.status ?? "", note: entry.attendance?.note ?? "")
+            guard value != before else { return nil }
+            var expected: TeacherAttendanceRecord.ExpectedState?
+            if roster.conditionalWriteVersion == 1 {
+                if let record = entry.attendance {
+                    guard let id = record.id, id.range(of: "^[a-fA-F0-9]{24}$", options: .regularExpression) != nil else {
+                        throw ServerAPIError(message: "출결의 이전 상태를 확인할 수 없습니다. 다시 불러와 주세요.", code: "ATTENDANCE_EXPECTED_STATE_INVALID")
+                    }
+                    expected = .init(recordID: id, updatedAt: record.updatedAt, status: record.status, note: record.note ?? "")
+                } else {
+                    expected = .init(recordID: nil, updatedAt: nil, status: nil, note: "")
+                }
+            }
+            return .init(studentUserID: entry.student.id, status: value.status, note: value.note, expectedState: expected)
+        }
+    }
+
+    static func regenerateTeacherAttendanceCode(_ sessionID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAttendanceSession {
         let response: TeacherAttendanceSessionResponse = try await request(
             "POST",
             "/api/v1/academy/teacher/attendance/sessions/\(sessionID)/regenerate-code",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
         return response.session
     }
 
-    static func teacherAcademyClasswork(classID: String) async throws -> TeacherClasswork {
+    static func teacherAcademyClasswork(classID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherClasswork {
         try await request(
             "GET", "/api/v1/academy/teacher/classes/\(classID)/classwork",
-            body: nil, authed: true)
+            body: nil, authed: true, authorization: authorization)
     }
 
     static func saveTeacherAcademyClassWeek(
         classID: String,
         draft: TeacherClassWeekDraft,
-        files: [URL] = []
-    ) async throws -> TeacherClasswork {
+        files: [URL] = [], authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherClasswork {
         if files.isEmpty {
+            var body: [String: Any] = [
+                "weekId": draft.weekID ?? "", "academicYear": draft.academicYear,
+                "weekNumber": draft.weekNumber, "title": draft.title,
+                "lessonSummary": draft.lessonSummary, "conceptKeys": draft.conceptKeys,
+                "assignmentTitle": draft.assignmentTitle, "assignmentInstructions": draft.assignmentInstructions,
+                "dueAt": draft.dueAt,
+            ]
+            if let omr = draft.assignmentOmr {
+                if let message = omr.validationMessage { throw ServerAPIError(message: message, code: "ACADEMY_OMR_INVALID") }
+                body["assignmentOmr"] = try omr.jsonString()
+            }
             return try await request(
                 "POST", "/api/v1/academy/teacher/classes/\(classID)/classwork/weeks",
-                body: [
-                    "weekId": draft.weekID ?? "",
-                    "academicYear": draft.academicYear,
-                    "weekNumber": draft.weekNumber,
-                    "title": draft.title,
-                    "lessonSummary": draft.lessonSummary,
-                    "conceptKeys": draft.conceptKeys,
-                    "assignmentTitle": draft.assignmentTitle,
-                    "assignmentInstructions": draft.assignmentInstructions,
-                    "dueAt": draft.dueAt,
-                ], authed: true)
+                body: body, authed: true, authorization: authorization)
         }
         return try await uploadTeacherAcademyClassWeek(
-            classID: classID, draft: draft, files: files)
+            classID: classID, draft: draft, files: files, authorization: authorization)
     }
 
     static func removeTeacherAcademyClassWeekFile(
-        classID: String, weekID: String, fileID: String
-    ) async throws -> TeacherClasswork {
+        classID: String, weekID: String, fileID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherClasswork {
         try await request(
             "POST",
             "/api/v1/academy/teacher/classes/\(classID)/classwork/weeks/\(weekID)/files/\(fileID)/remove",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
     static func deleteTeacherAcademyClassWeek(
-        classID: String, weekID: String
-    ) async throws -> TeacherClasswork {
+        classID: String, weekID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherClasswork {
         try await request(
             "POST",
             "/api/v1/academy/teacher/classes/\(classID)/classwork/weeks/\(weekID)/delete",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
-    static func adminAcademyDashboard() async throws -> AdminAcademyDashboard {
-        try await request("GET", "/api/v1/academy/admin", body: nil, authed: true)
+    static func adminAcademyDashboard(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDashboard {
+        try await request("GET", "/api/v1/academy/admin", body: nil, authed: true, authorization: authorization)
     }
 
     static func adminAcademyList(
-        search: String = "", status: String = "ALL", page: Int = 1
-    ) async throws -> AdminAcademyListResponse {
+        search: String = "", status: String = "ALL", page: Int = 1, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyListResponse {
         try await request(
             "GET", "/api/v1/academy/admin/list", body: nil, authed: true,
             query: [
                 "search": search,
                 "status": status,
                 "page": String(max(1, page)),
-            ])
+            ], authorization: authorization)
     }
 
     static func adminAcademyDetail(
-        academyID: String, period: String? = nil
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, period: String? = nil, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         var query: [String: String] = [:]
         if let period, !period.isEmpty { query["period"] = period }
         return try await request(
             "GET", "/api/v1/academy/admin/\(academyID)", body: nil, authed: true,
-            query: query)
+            query: query, authorization: authorization)
     }
 
     static func updateAdminAcademyProfile(
-        academyID: String, action: String, name: String? = nil
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, action: String, name: String? = nil, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         var body: [String: Any] = ["action": action]
         if let name { body["name"] = name }
         return try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/profile",
-            body: body, authed: true)
+            body: body, authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyProfileImage(
-        academyID: String, jpegData: Data
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, jpegData: Data, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         guard !jpegData.isEmpty, jpegData.count <= 5 * 1024 * 1024 else {
             throw ServerAPIError(
                 message: "학원 프로필 사진은 5MB 이하로 선택해 주세요.",
@@ -1754,7 +1812,7 @@ enum ServerAPI {
         let boundary = "Matths-Admin-Academy-\(UUID().uuidString)"
         var request = try authorizedRequest(
             "POST", "/api/v1/academy/admin/\(academyID)/profile-image",
-            contentType: "multipart/form-data; boundary=\(boundary)", timeout: 90)
+            contentType: "multipart/form-data; boundary=\(boundary)", timeout: 90, authorization: authorization)
         var body = Data()
         body.append(Data("--\(boundary)\r\n".utf8))
         body.append(Data("Content-Disposition: form-data; name=\"action\"\r\n\r\nUPDATE\r\n".utf8))
@@ -1771,67 +1829,59 @@ enum ServerAPI {
     }
 
     static func removeAdminAcademyProfileImage(
-        academyID: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/profile-image",
-            body: ["action": "REMOVE"], authed: true)
+            body: ["action": "REMOVE"], authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyContract(
-        academyID: String, contractEndsAt: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, contractEndsAt: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/contract",
-            body: ["contractEndsAt": contractEndsAt], authed: true)
+            body: ["contractEndsAt": contractEndsAt], authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyStaff(
-        academyID: String, staffID: String, action: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, staffID: String, action: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/staff/\(staffID)",
-            body: ["action": action], authed: true)
+            body: ["action": action], authed: true, authorization: authorization)
     }
 
     static func transferAdminAcademyOwner(
-        academyID: String, newOwnerStaffID: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, newOwnerStaffID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/owner",
-            body: ["newOwnerStaffId": newOwnerStaffID], authed: true)
+            body: ["newOwnerStaffId": newOwnerStaffID], authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyStudent(
-        academyID: String, membershipID: String, action: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, membershipID: String, action: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/students/\(membershipID)",
-            body: ["action": action], authed: true)
+            body: ["action": action], authed: true, authorization: authorization)
     }
 
     static func assignAdminAcademyStudentClass(
-        academyID: String, membershipID: String, classID: String?
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, membershipID: String, classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/students/\(membershipID)/class",
-            body: ["classId": classID ?? ""], authed: true)
+            body: ["classId": classID ?? ""], authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyClass(
-        academyID: String, classID: String, action: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, classID: String, action: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/classes/\(classID)",
-            body: ["action": action], authed: true)
+            body: ["action": action], authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyClassOperations(
         academyID: String, classID: String, weekdays: [Int],
         startTime: String, endTime: String, effectiveFrom: String,
         attendanceMode: String, opensBeforeMinutes: Int,
-        lateAfterMinutes: Int, closesAfterMinutes: Int
-    ) async throws -> AdminAcademyDetail {
+        lateAfterMinutes: Int, closesAfterMinutes: Int, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/classes/\(classID)/operations",
             body: [
@@ -1843,52 +1893,48 @@ enum ServerAPI {
                 "opensBeforeMinutes": opensBeforeMinutes,
                 "lateAfterMinutes": lateAfterMinutes,
                 "closesAfterMinutes": closesAfterMinutes,
-            ], authed: true)
+            ], authed: true, authorization: authorization)
     }
 
     static func transferAdminAcademyClassHomeroom(
         academyID: String, classID: String, nextTeacherUserID: String,
-        retainPreviousAsCoTeacher: Bool
-    ) async throws -> AdminAcademyDetail {
+        retainPreviousAsCoTeacher: Bool, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/classes/\(classID)/homeroom",
             body: [
                 "nextTeacherUserId": nextTeacherUserID,
                 "retainPreviousAsCoTeacher": retainPreviousAsCoTeacher,
-            ], authed: true)
+            ], authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyInvite(
-        academyID: String, inviteID: String, action: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, inviteID: String, action: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/invites/\(inviteID)",
-            body: ["action": action], authed: true)
+            body: ["action": action], authed: true, authorization: authorization)
     }
 
     static func regenerateAdminAcademyAttendanceCode(
-        academyID: String, sessionID: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, sessionID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST",
             "/api/v1/academy/admin/\(academyID)/attendance/sessions/\(sessionID)/regenerate-code",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
     static func updateAdminAcademyAttendance(
-        academyID: String, attendanceID: String, status: String, note: String
-    ) async throws -> AdminAcademyDetail {
+        academyID: String, attendanceID: String, status: String, note: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAcademyDetail {
         try await request(
             "POST", "/api/v1/academy/admin/\(academyID)/attendance/\(attendanceID)",
-            body: ["status": status, "note": note], authed: true)
+            body: ["status": status, "note": note], authed: true, authorization: authorization)
     }
 
-    static func reviewAcademyApplication(academyID: String, approve: Bool)
+    static func reviewAcademyApplication(academyID: String, approve: Bool, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> AdminAcademyDashboard {
         let action = approve ? "approve" : "reject"
         return try await request(
             "POST", "/api/v1/academy/admin/applications/\(academyID)/\(action)",
-            body: [:], authed: true)
+            body: [:], authed: true, authorization: authorization)
     }
 
     struct CoachSuggestion: Codable, Identifiable, Equatable {
@@ -1977,19 +2023,20 @@ enum ServerAPI {
         var submission: SupportSubmission?
     }
 
-    static func supportDashboard() async throws -> SupportDashboard {
-        try await request("GET", "/api/v1/support/inquiries", body: nil, authed: true)
+    static func supportDashboard(authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> SupportDashboard {
+        try await request("GET", "/api/v1/support/inquiries", body: nil, authed: true, authorization: authorization)
     }
 
-    static func createSupportInquiry(subject: String, content: String)
+    static func createSupportInquiry(subject: String, content: String, requestID: String = UUID().uuidString,
+                                     authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest())
     async throws -> SupportDashboard {
         try await request(
             "POST", "/api/v1/support/inquiries",
             body: [
-                "requestId": UUID().uuidString,
+                "requestId": requestID,
                 "subject": subject,
                 "content": content,
-            ], authed: true)
+            ], authed: true, authorization: authorization)
     }
 
     struct ArchiveFolder: Codable, Identifiable, Equatable {
@@ -2033,29 +2080,37 @@ enum ServerAPI {
         var archive: ArchiveDashboard
     }
 
-    static func archiveDashboard(folderID: String? = nil) async throws -> ArchiveDashboard {
+    static func archiveDashboard(folderID: String? = nil,
+                                 authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> ArchiveDashboard {
         let query = folderID.map { ["folderId": $0] } ?? [:]
         let response: ArchiveDashboardEnvelope = try await request(
-            "GET", "/api/v1/archive", body: nil, authed: true, query: query)
+            "GET", "/api/v1/archive", body: nil, authed: true, query: query, authorization: authorization)
         return response.archive
     }
 
     /// 자료함 파일은 서버가 폴더 이용권을 다시 검사한다. PDF는 개인 워터마크가
     /// 적용된 응답을 받고, 그 외 파일은 서버의 짧은 서명 URL 리디렉션을 따라간다.
-    static func downloadArchiveItem(_ item: ArchiveItem) async throws -> URL {
+    static func downloadArchiveItem(_ item: ArchiveItem, accountSlot: String = DataScope.slot,
+                                    authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> URL {
         let request = try authorizedRequest(
-            "GET", "/api/v1/archive/items/\(item.id)/download", timeout: 120)
+            "GET", "/api/v1/archive/items/\(item.id)/download", timeout: 120, authorization: authorization)
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        let errorBody = (try? Data(contentsOf: temporaryURL)) ?? Data()
+        let errorBody: Data
+        if let status = (response as? HTTPURLResponse)?.statusCode, status >= 400,
+           let handle = try? FileHandle(forReadingFrom: temporaryURL) {
+            errorBody = (try? handle.read(upToCount: 65_536)) ?? Data()
+            try? handle.close()
+        } else { errorBody = Data() }
         let http = try validateAuthorizedResponse(
             response,
             errorBody: errorBody,
             requestToken: bearerToken(from: request))
 
+        guard !Task.isCancelled, DataScope.slot == accountSlot, isCurrentAuthorization(authorization) else { throw CancellationError() }
         let manager = FileManager.default
         let directory = manager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ArchiveDownloads", isDirectory: true)
-            .appendingPathComponent(DataScope.slot, isDirectory: true)
+            .appendingPathComponent(accountSlot, isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var resource = URLResourceValues()
         resource.isExcludedFromBackup = true
@@ -2074,20 +2129,26 @@ enum ServerAPI {
 
     /// 학원 과제 파일은 Bearer 소유권 검사 후 내려받는다. PDF라면 서버가 개인
     /// 워터마크를 넣어 응답하고, 다른 파일은 짧은 서명 URL로 리디렉션한다.
-    static func downloadAcademyFile(weekID: String, file: AcademyWeek.File) async throws -> URL {
+    static func downloadAcademyFile(weekID: String, file: AcademyWeek.File,
+                                    account: String = DataScope.slot,
+                                    authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> URL {
         let request = try authorizedRequest(
-            "GET", "/api/v1/academy/student/weeks/\(weekID)/files/\(file.id)", timeout: 120)
+            "GET", "/api/v1/academy/student/weeks/\(weekID)/files/\(file.id)", timeout: 120, authorization: authorization)
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        let errorBody = (try? Data(contentsOf: temporaryURL)) ?? Data()
+        let errorBody = boundedDownloadErrorBody(temporaryURL, response: response)
         let http = try validateAuthorizedResponse(
             response,
             errorBody: errorBody,
             requestToken: bearerToken(from: request))
 
+        guard !Task.isCancelled, account == DataScope.slot, isCurrentAuthorization(authorization) else {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            throw CancellationError()
+        }
         let manager = FileManager.default
         let directory = manager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AcademyAssignments", isDirectory: true)
-            .appendingPathComponent(DataScope.slot, isDirectory: true)
+            .appendingPathComponent(account, isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var resource = URLResourceValues()
         resource.isExcludedFromBackup = true
@@ -2107,23 +2168,30 @@ enum ServerAPI {
     static func downloadTeacherAcademyFile(
         classID: String,
         weekID: String,
-        file: AcademyWeek.File
+        file: AcademyWeek.File,
+        account: String = DataScope.slot,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> URL {
         let request = try authorizedRequest(
             "GET",
             "/api/v1/academy/teacher/classes/\(classID)/classwork/weeks/\(weekID)/files/\(file.id)",
-            timeout: 120)
+            timeout: 120, authorization: authorization)
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        let errorBody = (try? Data(contentsOf: temporaryURL)) ?? Data()
+        let errorBody = boundedDownloadErrorBody(temporaryURL, response: response)
         let http = try validateAuthorizedResponse(
             response,
             errorBody: errorBody,
             requestToken: bearerToken(from: request))
 
+        guard account == DataScope.slot, isCurrentAuthorization(authorization) else {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            throw CancellationError()
+        }
+
         let manager = FileManager.default
         let directory = manager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TeacherAcademyAssignments", isDirectory: true)
-            .appendingPathComponent(DataScope.slot, isDirectory: true)
+            .appendingPathComponent(account, isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var resource = URLResourceValues()
         resource.isExcludedFromBackup = true
@@ -2141,22 +2209,28 @@ enum ServerAPI {
     static func downloadAdminAcademyFile(
         academyID: String,
         weekID: String,
-        file: AcademyWeek.File
+        file: AcademyWeek.File,
+        account: String = DataScope.slot,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> URL {
         let request = try authorizedRequest(
             "GET",
             "/api/v1/academy/admin/\(academyID)/weeks/\(weekID)/files/\(file.id)",
-            timeout: 120)
+            timeout: 120, authorization: authorization)
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        let errorBody = (try? Data(contentsOf: temporaryURL)) ?? Data()
+        let errorBody = boundedDownloadErrorBody(temporaryURL, response: response)
         let http = try validateAuthorizedResponse(
             response,
             errorBody: errorBody,
             requestToken: bearerToken(from: request))
+        guard account == DataScope.slot, isCurrentAuthorization(authorization) else {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            throw CancellationError()
+        }
         let manager = FileManager.default
         let directory = manager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("AdminAcademyAssignments", isDirectory: true)
-            .appendingPathComponent(DataScope.slot, isDirectory: true)
+            .appendingPathComponent(account, isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var resource = URLResourceValues()
         resource.isExcludedFromBackup = true
@@ -2171,10 +2245,20 @@ enum ServerAPI {
         return destination
     }
 
+    /// Download success is already on disk. Do not load an entire PDF into RAM
+    /// merely to provide a possible JSON error body to the HTTP validator.
+    private static func boundedDownloadErrorBody(_ file: URL, response: URLResponse) -> Data {
+        guard let status = (response as? HTTPURLResponse)?.statusCode, status >= 400,
+              let handle = try? FileHandle(forReadingFrom: file) else { return Data() }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 65_536)) ?? Data()
+    }
+
     private static func uploadTeacherAcademyClassWeek(
         classID: String,
         draft: TeacherClassWeekDraft,
-        files: [URL]
+        files: [URL],
+        authorization: AuthorizationSnapshot
     ) async throws -> TeacherClasswork {
         guard files.count <= 10 else {
             throw ServerAPIError(
@@ -2186,7 +2270,7 @@ enum ServerAPI {
             "POST",
             "/api/v1/academy/teacher/classes/\(classID)/classwork/weeks",
             contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 240)
+            timeout: 240, authorization: authorization)
         let multipart = FileManager.default.temporaryDirectory
             .appendingPathComponent("academy-classwork-\(UUID().uuidString).body")
         FileManager.default.createFile(atPath: multipart.path, contents: nil)
@@ -2211,6 +2295,10 @@ enum ServerAPI {
         for key in draft.conceptKeys { try writeField("conceptKeys", key) }
         try writeField("assignmentTitle", draft.assignmentTitle)
         try writeField("assignmentInstructions", draft.assignmentInstructions)
+        if let omr = draft.assignmentOmr {
+            if let message = omr.validationMessage { throw ServerAPIError(message: message, code: "ACADEMY_OMR_INVALID") }
+            try writeField("assignmentOmr", omr.jsonString())
+        }
         try writeField("dueAt", draft.dueAt)
 
         let allowedExtensions: Set<String> = [
@@ -2419,39 +2507,43 @@ enum ServerAPI {
         var codeVerifier: String
     }
 
-    static func withdrawalOptions() async throws -> WithdrawalOptions {
+    static func withdrawalOptions(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> WithdrawalOptions {
         try await request(
-            "GET", "/api/v1/me/withdrawal/options", body: nil, authed: true)
+            "GET", "/api/v1/me/withdrawal/options", body: nil, authed: true, authorization: authorization)
     }
 
     static func startGoogleWithdrawalReauthentication(
-        codeChallenge: String
+        codeChallenge: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> GoogleWithdrawalStart {
         try await request(
             "POST", "/api/v1/me/withdrawal/google/start",
-            body: ["codeChallenge": codeChallenge], authed: true)
+            body: ["codeChallenge": codeChallenge], authed: true, authorization: authorization)
     }
 
     static func startKakaoWithdrawalReauthentication(
-        codeChallenge: String
+        codeChallenge: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> GoogleWithdrawalStart {
         try await request(
             "POST", "/api/v1/me/withdrawal/kakao/start",
-            body: ["codeChallenge": codeChallenge], authed: true)
+            body: ["codeChallenge": codeChallenge], authed: true, authorization: authorization)
     }
 
     static func withdrawMe(password: String,
-                           acknowledgeAnonymousRetention: Bool) async throws -> WithdrawResult {
+                           acknowledgeAnonymousRetention: Bool,
+                           authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> WithdrawResult {
         try await request("DELETE", "/api/v1/me", body: [
             "password": password,
             "confirmation": withdrawConfirmationPhrase,
             "acknowledgeAnonymousRetention": acknowledgeAnonymousRetention,
-        ], authed: true)
+        ], authed: true, authorization: authorization)
     }
 
     static func withdrawMe(
         reauthentication: GoogleWithdrawalReauthentication,
-        acknowledgeAnonymousRetention: Bool
+        acknowledgeAnonymousRetention: Bool,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> WithdrawResult {
         try await request("DELETE", "/api/v1/me", body: [
             "reauthenticationProof": reauthentication.proof,
@@ -2459,24 +2551,26 @@ enum ServerAPI {
             "reauthenticationProvider": "google",
             "confirmation": withdrawConfirmationPhrase,
             "acknowledgeAnonymousRetention": acknowledgeAnonymousRetention,
-        ], authed: true)
+        ], authed: true, authorization: authorization)
     }
 
     static func withdrawMe(
         reauthentication: AppleWithdrawalReauthentication,
-        acknowledgeAnonymousRetention: Bool
+        acknowledgeAnonymousRetention: Bool,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> WithdrawResult {
         try await request("DELETE", "/api/v1/me", body: [
             "appleIdentityToken": reauthentication.identityToken,
             "appleNonce": reauthentication.nonce,
             "confirmation": withdrawConfirmationPhrase,
             "acknowledgeAnonymousRetention": acknowledgeAnonymousRetention,
-        ], authed: true)
+        ], authed: true, authorization: authorization)
     }
 
     static func withdrawMe(
         reauthentication: KakaoWithdrawalReauthentication,
-        acknowledgeAnonymousRetention: Bool
+        acknowledgeAnonymousRetention: Bool,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> WithdrawResult {
         try await request("DELETE", "/api/v1/me", body: [
             "reauthenticationProof": reauthentication.proof,
@@ -2484,7 +2578,7 @@ enum ServerAPI {
             "reauthenticationProvider": "kakao",
             "confirmation": withdrawConfirmationPhrase,
             "acknowledgeAnonymousRetention": acknowledgeAnonymousRetention,
-        ], authed: true)
+        ], authed: true, authorization: authorization)
     }
 
     static func getArena() async throws -> ArenaResponse {
@@ -3583,13 +3677,14 @@ enum ServerAPI {
     }
 
     static func getGoatArenaSolutionBoards(
-        matchId: String
+        matchId: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> [GoatArenaSolutionBoard] {
         let response: GoatArenaSolutionBoardsResponse = try await request(
             "GET",
             "/api/v1/goat-arena/matches/\(matchId)/solution-boards",
             body: nil,
-            authed: true)
+            authed: true, authorization: authorization)
         return response.boards
     }
 
@@ -3601,7 +3696,8 @@ enum ServerAPI {
         drawingData: Data,
         previewPNG: Data,
         commandId: String,
-        clientBuildVersion: String
+        clientBuildVersion: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> GoatArenaSolutionBoard {
         guard !drawingData.isEmpty, drawingData.count <= 750 * 1024,
               !previewPNG.isEmpty, previewPNG.count <= 10 * 1024 * 1024 else {
@@ -3630,7 +3726,7 @@ enum ServerAPI {
             "PUT",
             "/api/v1/goat-arena/matches/\(matchId)/solution-boards/current",
             contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 90)
+            timeout: 90, authorization: authorization)
         request.setValue(commandId, forHTTPHeaderField: "Idempotency-Key")
         request.setValue(clientBuildVersion, forHTTPHeaderField: "X-Matths-Client-Version")
 
@@ -3777,7 +3873,8 @@ enum ServerAPI {
         matchId: String,
         files: [URL],
         submissionId: String,
-        clientBuildVersion: String
+        clientBuildVersion: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> GoatArenaEvidenceReceipt {
         guard !files.isEmpty, files.count <= 5 else {
             throw ServerAPIError(
@@ -3790,7 +3887,7 @@ enum ServerAPI {
             "POST",
             "/api/v1/goat-arena/matches/\(matchId)/evidence",
             contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 180)
+            timeout: 180, authorization: authorization)
         request.setValue(submissionId, forHTTPHeaderField: "Idempotency-Key")
         request.setValue(clientBuildVersion, forHTTPHeaderField: "X-Matths-Client-Version")
 
@@ -4096,28 +4193,28 @@ enum ServerAPI {
     /// 새 문항 뽑기. pointValue 는 **2·3점만** (서버 allowedPoints=[2,3]).
     /// 그 외 값을 보내면 서버가 2·3 중 하나를 무작위로 골라 버려,
     /// 학생이 고른 것과 다른 배점이 출제된다.
-    static func quickPracticeStart(pointValue: Int) async throws -> QuickStart {
+    static func quickPracticeStart(pointValue: Int, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> QuickStart {
         try await request("POST", "/api/v1/quick-practice/start",
-                          body: ["pointValue": pointValue], authed: true)
+                          body: ["pointValue": pointValue], authed: true, authorization: authorization)
     }
 
     static func quickPracticeSubmit(instanceId: String, answer: String,
-                                    elapsedMs: Int) async throws -> QuickResult {
+                                    elapsedMs: Int, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> QuickResult {
         struct Wrap: Decodable { var result: QuickResult }
         let w: Wrap = try await request(
             "POST", "/api/v1/quick-practice/\(instanceId)/submit",
-            body: ["answer": answer, "elapsedMs": elapsedMs], authed: true)
+            body: ["answer": answer, "elapsedMs": elapsedMs], authed: true, authorization: authorization)
         return w.result
     }
 
     /// 시간 초과 처리 — 서버가 마감 시각을 최종 판정한다(클라 시계를 믿지 않는다).
-    static func quickPracticeExpire(instanceId: String) async throws -> QuickResult {
+    static func quickPracticeExpire(instanceId: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> QuickResult {
         // 서버는 활성 시도가 없으면(이미 제출·만료됐거나 새 문항이 대체) `result: null` 을
         // 돌려준다. 필수로 두면 valueNotFound 디코드 실패가 "시간 초과 처리 실패" 로 보이므로
         // optional 로 받고, nil 이면 화면이 그대로 보여줄 수 있는 typed 오류로 바꾼다.
         struct Wrap: Decodable { var result: QuickResult? }
         let w: Wrap = try await request(
-            "POST", "/api/v1/quick-practice/\(instanceId)/expire", body: [:], authed: true)
+            "POST", "/api/v1/quick-practice/\(instanceId)/expire", body: [:], authed: true, authorization: authorization)
         guard let result = w.result else {
             throw ServerAPIError(
                 message: "이미 처리된 문항입니다. 새 문항을 시작해 주세요.",
@@ -4126,9 +4223,9 @@ enum ServerAPI {
         return result
     }
 
-    static func quickPracticeStats() async throws -> QuickStats.Row {
+    static func quickPracticeStats(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> QuickStats.Row {
         let s: QuickStats = try await request("GET", "/api/v1/quick-practice/stats",
-                                              body: nil, authed: true)
+                                              body: nil, authed: true, authorization: authorization)
         return s.stats
     }
 
@@ -4151,7 +4248,8 @@ enum ServerAPI {
         _ method: String,
         _ path: String,
         contentType: String? = nil,
-        timeout: TimeInterval = 60
+        timeout: TimeInterval = 60,
+        authorization: AuthorizationSnapshot? = nil
     ) throws -> URLRequest {
         #if DEBUG
         // 데모 모드는 여기서도 끝낸다. request() 와 같은 이유로 **토큰 검사보다 먼저**다 —
@@ -4171,7 +4269,15 @@ enum ServerAPI {
             return request
         }
         #endif
-        guard let token = TokenBox.load(), !token.isEmpty else {
+        let requestToken: String?
+        if let authorization {
+            guard let captured = authorization.token, !captured.isEmpty,
+                  TokenBox.load() == captured else { throw CancellationError() }
+            requestToken = captured
+        } else {
+            requestToken = TokenBox.load()
+        }
+        guard let token = requestToken, !token.isEmpty else {
             notifyAuthenticationExpired(
                 message: "로그인이 만료되었습니다. 다시 로그인해주세요.")
             throw ServerAPIError(
@@ -4344,6 +4450,7 @@ enum ServerAPI {
     }
 
     private static func notifyAuthenticationExpired(message: String?) {
+        guard let expirationID = TokenBox.expirationTicket() else { return }
         let providerMessage = String(message ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // 서명키 회전·구형 토큰·키체인 유실은 학생이 구분하거나 복구할 수 없다.
@@ -4358,7 +4465,8 @@ enum ServerAPI {
             name: .matthsServerAuthenticationExpired,
             object: nil,
             userInfo: [
-                "message": userMessage
+                "message": userMessage,
+                "expirationID": expirationID
             ])
     }
 }
@@ -4386,6 +4494,46 @@ private enum TokenBox {
         lock.lock()
         defer { lock.unlock() }
         authenticationOwnership.cancel(id)
+    }
+
+    static func beginSignOut() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        return authenticationOwnership.beginSignOut()
+    }
+
+    static func ownsSignOut(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return authenticationOwnership.ownsSignOut(id)
+    }
+
+    static func finishSignOut(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard authenticationOwnership.completeSignOut(id) else { return false }
+        SecItemDelete(query as CFDictionary)
+        return true
+    }
+
+    static func expirationTicket() -> UUID? {
+        lock.lock()
+        defer { lock.unlock() }
+        return authenticationOwnership.expirationTicket(hasCredential: loadUnlocked() != nil)
+    }
+
+    static func ownsExpiration(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return authenticationOwnership.ownsExpiration(id, hasCredential: loadUnlocked() != nil)
+    }
+
+    static func finishExpiration(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        // The rejected token has already been conditionally removed. Never call
+        // unconditional clear/reset from the later UI cleanup of that request.
+        return authenticationOwnership.completeExpiration(id, hasCredential: loadUnlocked() != nil)
     }
 
     static func save(_ token: String, for attemptID: UUID) throws -> Bool {

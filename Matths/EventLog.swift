@@ -277,18 +277,19 @@ enum EventLog {
 
     /// 평가·기출처럼 여러 문항을 한 번에 채점할 때도 주간 풀이/정답률에 빠짐없이
     /// 넣는다. 전체 경과 시간은 문항별로 나눠 합계가 원래 값과 같게 보존한다.
-    static func appendGrading(correct: Int, total: Int, durationMs: Int? = nil) {
+    static func appendGrading(correct: Int, total: Int, durationMs: Int? = nil,
+                              receiptID: String? = nil, occurredAt: Date? = nil) {
         let safeTotal = max(0, total)
         guard safeTotal > 0 else { return }
         let safeCorrect = min(max(0, correct), safeTotal)
         let safeDuration = max(0, durationMs ?? 0)
         let perItem = safeDuration / safeTotal
         let remainder = safeDuration % safeTotal
-        let now = Date()
+        let now = occurredAt ?? Date()
         let events = (0..<safeTotal).map { index in
             let itemDuration = durationMs == nil ? nil : perItem + (index < remainder ? 1 : 0)
             return LearningEventV1(
-                clientEventId: UUID().uuidString,
+                clientEventId: receiptID.map { "\($0)-\(index)" } ?? UUID().uuidString,
                 type: index < safeCorrect ? "problem-correct" : "problem-wrong",
                 conceptId: nil,
                 durationMs: itemDuration,

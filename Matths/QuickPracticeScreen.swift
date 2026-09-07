@@ -31,6 +31,7 @@ enum QuickPracticeStatsDisplay {
 }
 
 struct QuickPracticeScreen: View {
+    @Environment(\.matthsBrowseViewportSize) private var workspaceViewport
     @EnvironmentObject private var store: AppStore
     // 기기 이름이 아니라 크기 클래스로 분기한다 — Split View·Stage Manager 의
     // iPad 도 compact 로 들어오고, 그때 필요한 레이아웃은 iPhone 과 같다.
@@ -113,7 +114,9 @@ struct QuickPracticeScreen: View {
     /// iPhone 가로 풀이. 접근성 글자 크기에서는 두 칼럼보다 세로 스크롤이 읽기
     /// 순서를 더 잘 지키므로 기본 배치로 돌아간다.
     private var usesLandscapeSolvingLayout: Bool {
-        isShort && phase == .solving && !dynamicTypeSize.isAccessibilitySize
+        phase == .solving && UniversalLayoutPolicy.usesProblemSplit(
+            width: workspaceViewport.width, height: workspaceViewport.height,
+            accessibilityText: dynamicTypeSize.isAccessibilitySize)
     }
 
     /// 문제를 푸는 동안뿐 아니라 결과를 확인할 때도 긴 소개 헤더를 반복하지 않는다.
@@ -168,7 +171,7 @@ struct QuickPracticeScreen: View {
     /// 하단 탭 위에 남는다. 이전의 56pt는 화면에는 들어갔지만 실제 필기에는 너무
     /// 얕았다. 별도 제목 행을 도구막대 안으로 합쳐 되찾은 높이를 필기 면에 돌린다.
     private var landscapeNoteCanvasHeight: CGFloat {
-        76
+        max(76, min(460, workspaceViewport.height - 260))
     }
 
     private var landscapeSolvingCardPadding: CGFloat {
@@ -911,14 +914,16 @@ struct QuickPracticeScreen: View {
     }
 
     private func loadStats() {
-        guard ServerAPI.hasToken else { return }
+        guard let owner = AccountRequestOwner(store: store) else { return }
         let ownerSlot = accountSlot
         let requestID = UUID()
         statsRequestID = requestID
         Task {
-            let loaded = try? await ServerAPI.quickPracticeStats()
+            guard owner.isCurrent(in: store) else { return }
+            let loaded = try? await ServerAPI.quickPracticeStats(authorization: owner.authorization)
             guard ownerSlot == accountSlot,
                   ownerSlot == DataScope.slot,
+                  owner.isCurrent(in: store),
                   statsRequestID == requestID else { return }
             stats = loaded
         }
@@ -965,7 +970,7 @@ struct QuickPracticeScreen: View {
     }
 
     private func start() {
-        guard ServerAPI.hasToken, accountSlot == DataScope.slot else { return }
+        guard accountSlot == DataScope.slot, let owner = AccountRequestOwner(store: store) else { return }
         let ownerSlot = accountSlot
         let requestID = UUID()
         let selectedPointValue = pointValue
@@ -976,9 +981,10 @@ struct QuickPracticeScreen: View {
         result = nil
         resetNote()
         Task {
+            guard owner.isCurrent(in: store) else { return }
             do {
-                let s = try await ServerAPI.quickPracticeStart(pointValue: selectedPointValue)
-                guard ownsOperation(requestID, slot: ownerSlot) else { return }
+                let s = try await ServerAPI.quickPracticeStart(pointValue: selectedPointValue, authorization: owner.authorization)
+                guard owner.isCurrent(in: store), ownsOperation(requestID, slot: ownerSlot) else { return }
                 attempt = s.attempt
                 limitMs = s.timeLimitMs ?? 40_000
                 remaining = max(1, limitMs / 1000)
@@ -987,7 +993,7 @@ struct QuickPracticeScreen: View {
                 tickAnchor = startedAt
                 phase = .solving
             } catch {
-                guard ownsOperation(requestID, slot: ownerSlot) else { return }
+                guard owner.isCurrent(in: store), ownsOperation(requestID, slot: ownerSlot) else { return }
                 errorText = Self.startFailureText(error)
                 phase = .failed
             }
@@ -997,7 +1003,7 @@ struct QuickPracticeScreen: View {
     private func submit() {
         guard let a = attempt,
               phase == .solving,
-              accountSlot == DataScope.slot else { return }
+              accountSlot == DataScope.slot, let owner = AccountRequestOwner(store: store) else { return }
         let ownerSlot = accountSlot
         let requestID = UUID()
         let submittedAnswer = answer
@@ -1005,16 +1011,17 @@ struct QuickPracticeScreen: View {
         operationID = requestID
         phase = .loading
         Task {
+            guard owner.isCurrent(in: store) else { return }
             do {
                 let graded = try await ServerAPI.quickPracticeSubmit(
-                    instanceId: a.instanceId, answer: submittedAnswer, elapsedMs: elapsed)
-                guard ownsOperation(requestID, slot: ownerSlot) else { return }
+                    instanceId: a.instanceId, answer: submittedAnswer, elapsedMs: elapsed, authorization: owner.authorization)
+                guard owner.isCurrent(in: store), ownsOperation(requestID, slot: ownerSlot) else { return }
                 result = graded
                 recordSetResult(graded)
                 phase = .graded
                 loadStats()
             } catch {
-                guard ownsOperation(requestID, slot: ownerSlot) else { return }
+                guard owner.isCurrent(in: store), ownsOperation(requestID, slot: ownerSlot) else { return }
                 errorText = (error as? ServerAPIError)?.errorDescription ?? "채점에 실패했습니다"
                 phase = .failed
             }
@@ -1051,15 +1058,16 @@ struct QuickPracticeScreen: View {
         }
         guard remaining == 0,
               let a = attempt,
-              accountSlot == DataScope.slot else { return }
+              accountSlot == DataScope.slot, let owner = AccountRequestOwner(store: store) else { return }
         let ownerSlot = accountSlot
         let requestID = UUID()
         operationID = requestID
         phase = .loading
         Task {
+            guard owner.isCurrent(in: store) else { return }
             do {
-                let r = try await ServerAPI.quickPracticeExpire(instanceId: a.instanceId)
-                guard ownsOperation(requestID, slot: ownerSlot) else { return }
+                let r = try await ServerAPI.quickPracticeExpire(instanceId: a.instanceId, authorization: owner.authorization)
+                guard owner.isCurrent(in: store), ownsOperation(requestID, slot: ownerSlot) else { return }
                 if r.pending == true {
                     // 서버는 아직 시간이 남았다고 본다 — 클라 시계가 빨랐다. 1초 더 준다.
                     remaining = 1
@@ -1071,7 +1079,7 @@ struct QuickPracticeScreen: View {
                     loadStats()
                 }
             } catch {
-                guard ownsOperation(requestID, slot: ownerSlot) else { return }
+                guard owner.isCurrent(in: store), ownsOperation(requestID, slot: ownerSlot) else { return }
                 errorText = (error as? ServerAPIError)?.errorDescription ?? "시간 초과 처리에 실패했습니다"
                 phase = .failed
             }

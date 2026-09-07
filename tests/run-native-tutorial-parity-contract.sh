@@ -85,8 +85,9 @@ grep -Fq '@Published var isTutorialPresentationActive = false' "$app_store"
 grep -Fq 'guard allowPermissionPrompt else { return }' "$local_notifications"
 grep -Fq 'allowPermissionPrompt: !store.isTutorialPresentationActive' "$arena_screen"
 grep -Fq 'allowPermissionPrompt: !store.isTutorialPresentationActive' "$weekly_mock"
-grep -Fq 'store.isTutorialPresentationActive = true' "$root_view"
-grep -Fq 'store.isTutorialPresentationActive = false' "$root_view"
+grep -Fq 'store.claimNativeTutorialPresentation(owner.id)' "$root_view"
+grep -Fq 'store.releaseNativeTutorialPresentation(previous.id)' "$root_view"
+grep -Fq 'guard nativeTutorialPresentationOwner == id else { return }' "$app_store"
 
 # 튜토리얼은 눈으로만 모달이면 안 된다. VoiceOver가 dimmed 본문의 탭과 버튼으로
 # 빠져나가지 못하도록 앱 본문을 숨기고 오버레이를 접근성 모달로 선언한다.

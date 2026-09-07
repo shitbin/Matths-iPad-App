@@ -19,6 +19,9 @@ private final class TeacherAnalyticsModel: ObservableObject {
         requestID = currentRequestID
         isLoading = true
         errorMessage = nil
+        defer {
+            if currentGeneration == generation, currentRequestID == requestID { isLoading = false }
+        }
         do {
             let value = try await ServerAPI.teacherAcademyAnalytics(
                 period: selectedPeriodKey.isEmpty ? nil : selectedPeriodKey,
@@ -34,7 +37,6 @@ private final class TeacherAnalyticsModel: ObservableObject {
             errorMessage = (error as? ServerAPIError)?.errorDescription
                 ?? (error as NSError).localizedDescription
         }
-        if currentGeneration == generation, currentRequestID == requestID { isLoading = false }
     }
 
     func resetAndLoad() async {
@@ -55,9 +57,12 @@ struct TeacherAnalyticsPanel: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = TeacherAnalyticsModel()
+    @State private var containerWidth: CGFloat = 0
+    @State private var showsDetailedMetrics = false
+    @State private var showsOperationalSummary = false
 
     private var splitLayout: Bool {
-        verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize
+        StaffWorkspaceMetrics.usesListDetail(width: containerWidth) && !dynamicTypeSize.isAccessibilitySize
     }
 
     private var accessibleClasses: [ServerAPI.AcademyClassSummary] {
@@ -65,6 +70,7 @@ struct TeacherAnalyticsPanel: View {
     }
 
     var body: some View {
+        GeometryReader { viewport in
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             filterBar
             Group {
@@ -79,8 +85,13 @@ struct TeacherAnalyticsPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { containerWidth = viewport.size.width }
+        .onChange(of: viewport.size.width) { _, width in containerWidth = width }
+        }
         .task { if model.analytics == nil { await model.load() } }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            showsDetailedMetrics = false
+            showsOperationalSummary = false
             Task { await model.resetAndLoad() }
         }
     }
@@ -115,7 +126,9 @@ struct TeacherAnalyticsPanel: View {
                     .lineLimit(1)
                     .frame(minHeight: 44)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
+            .padding(.horizontal, Tokens.Space.s2)
+            .background(Tokens.paper2, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .disabled(model.isLoading)
 
             if let analytics = model.analytics {
@@ -136,7 +149,9 @@ struct TeacherAnalyticsPanel: View {
                         .font(.mCaption)
                         .frame(minHeight: 44)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .padding(.horizontal, Tokens.Space.s2)
+                .background(Tokens.paper2, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                 .disabled(model.isLoading)
             }
             Spacer(minLength: 0)
@@ -147,7 +162,7 @@ struct TeacherAnalyticsPanel: View {
                 Image(systemName: "arrow.clockwise")
                     .frame(width: 44, height: 44)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
             .disabled(model.isLoading)
             .accessibilityLabel("학습 현황 새로고침")
         }
@@ -160,8 +175,7 @@ struct TeacherAnalyticsPanel: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                         headline(analytics)
-                        healthCard(analytics.health)
-                        growthCard(analytics.growth)
+                        detailedMetrics(analytics)
                     }
                     .padding(.bottom, Tokens.Space.s2)
                 }
@@ -171,6 +185,7 @@ struct TeacherAnalyticsPanel: View {
                     VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                         attentionCard(analytics.attentionStudents)
                         mathMapCard(analytics.mathMap)
+                        WeeklyMockInsightsPanel(scope: .teacher(classID: model.selectedClassID.isEmpty ? nil : model.selectedClassID))
                         summaryCard(analytics.summary)
                     }
                     .padding(.bottom, Tokens.Space.s2)
@@ -181,14 +196,30 @@ struct TeacherAnalyticsPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     headline(analytics)
-                    healthCard(analytics.health)
-                    growthCard(analytics.growth)
                     attentionCard(analytics.attentionStudents)
+                    detailedMetrics(analytics)
                     mathMapCard(analytics.mathMap)
+                    WeeklyMockInsightsPanel(scope: .teacher(classID: model.selectedClassID.isEmpty ? nil : model.selectedClassID))
                     summaryCard(analytics.summary)
                 }
             }
         }
+    }
+
+    private func detailedMetrics(_ analytics: ServerAPI.TeacherAcademyAnalytics) -> some View {
+        DisclosureGroup(isExpanded: $showsDetailedMetrics) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                healthCard(analytics.health)
+                growthCard(analytics.growth)
+            }
+            .padding(.top, Tokens.Space.s2)
+        } label: {
+            Label("학습 지표 자세히", systemImage: "chart.bar")
+                .font(.mBodyB)
+                .frame(minHeight: 44, alignment: .leading)
+        }
+        .tint(Tokens.primary)
+        .analyticsSurface()
     }
 
     private func headline(_ analytics: ServerAPI.TeacherAcademyAnalytics) -> some View {
@@ -423,15 +454,21 @@ struct TeacherAnalyticsPanel: View {
     }
 
     private func summaryCard(_ bullets: [ServerAPI.TeacherStudentStatistics.Bullet]) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Text("운영 요약").font(.mBodyB)
+        DisclosureGroup(isExpanded: $showsOperationalSummary) {
             ForEach(bullets) { bullet in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bullet.label).font(.mCaption).foregroundStyle(Tokens.ink)
                     Text(bullet.text).font(.mMicro).foregroundStyle(Tokens.text2)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, Tokens.Space.s1)
             }
+        } label: {
+            Label("운영 요약 읽기", systemImage: "text.alignleft")
+                .font(.mBodyB)
+                .frame(minHeight: 44, alignment: .leading)
         }
+        .tint(Tokens.primary)
         .analyticsSurface(fill: Tokens.primarySoft)
     }
 

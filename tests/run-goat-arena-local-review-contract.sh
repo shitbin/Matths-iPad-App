@@ -33,6 +33,7 @@ test "$upload_line" -lt "$review_line"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 xcrun swiftc \
+  "$ROOT/Matths/ProtectedFileWriter.swift" \
   "$ROOT/Matths/CheatingDetectionModels.swift" \
   "$ROOT/Matths/GoatArenaLocalReviewContext.swift" \
   "$ROOT/tests/GoatArenaLocalReviewContextCases.swift" \

@@ -15,6 +15,7 @@
 import Foundation
 import UIKit       // 비전 재시도에서 사진을 줄인다
 import os          // os_proc_available_memory — 남은 메모리 실측
+import Darwin
 import llama
 
 final class LlamaEngine: LLMEngine, @unchecked Sendable {
@@ -24,16 +25,58 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
     private var lastTokens: [llama_token] = []   // KV 프리픽스 재사용 기준
     private let queue = DispatchQueue(label: "matths.llama", qos: .userInitiated)
     private var loadedFile: String?
+    // UI queries must neither race native pointers nor queue.sync behind a
+    // minutes-long generate call. Publish a tiny coherent value snapshot.
+    private let statusLock = NSLock()
+    private var status = (loaded: false, identifier: "", vision: false, contextTokens: 0)
+    private static let metricsLog = OSLog(subsystem: "kr.matths.app", category: "local-ai")
+
+    private static func residentMegabytes() -> UInt64 {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? info.resident_size / 1_048_576 : 0
+    }
+
+    private final class CancellationProbe {
+        let check: @Sendable () -> Bool
+        init(_ check: @escaping @Sendable () -> Bool) { self.check = check }
+    }
+
+    /// The native decoder checks this callback during prompt evaluation too,
+    /// before there is any first token for onToken-based cancellation to inspect.
+    private func installCancellation(_ params: LLMGenParams, context: OpaquePointer) -> UnsafeMutableRawPointer {
+        let raw = Unmanaged.passRetained(CancellationProbe(params.shouldCancel)).toOpaque()
+        llama_set_abort_callback(context, { opaque in
+            guard let opaque else { return false }
+            return LocalAIResourceStopSignal.shared.isRequested
+                || Unmanaged<CancellationProbe>.fromOpaque(opaque).takeUnretainedValue().check()
+        }, raw)
+        return raw
+    }
+
+    private func removeCancellation(_ raw: UnsafeMutableRawPointer, context: OpaquePointer) {
+        llama_set_abort_callback(context, nil, nil)
+        Unmanaged<CancellationProbe>.fromOpaque(raw).release()
+    }
+
+    private func checkCancellation(_ params: LLMGenParams) throws {
+        if params.shouldCancel() || LocalAIResourceStopSignal.shared.isRequested { throw CancellationError() }
+    }
 
     /// 비전(mtmd) 컨텍스트 — models/ 에 mmproj-*.gguf 가 있을 때만 열린다.
     /// b10159 XCFramework 에 mtmd 심볼·헤더가 포함돼 import llama 로 바로 쓴다.
     private var mtmd: OpaquePointer?
 
-    var isLoaded: Bool { ctx != nil }
-    var modelIdentifier: String { queue.sync { loadedFile ?? "" } }
-    var visionReady: Bool { mtmd != nil }
+    var isLoaded: Bool { statusLock.withLock { status.loaded } }
+    var modelIdentifier: String { statusLock.withLock { status.identifier } }
+    var visionReady: Bool { statusLock.withLock { status.vision } }
     /// 이 컨텍스트가 감당하는 토큰 수 — 대화 이력을 얼마나 실을지 정하는 예산
-    var contextTokens: Int { ctx.map { Int(llama_n_ctx($0)) } ?? 0 }
+    var contextTokens: Int { statusLock.withLock { status.contextTokens } }
 
     enum EngineError: LocalizedError {
         case loadFailed(String), decodeFailed(Int32), notLoaded, ctxFull
@@ -58,6 +101,14 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
     func load(modelPath: String) throws {
         try queue.sync {
             guard ctx == nil else { return }
+            guard !LocalAIResourceStopSignal.shared.isRequested else { throw CancellationError() }
+            let interval = OSSignpostID(log: Self.metricsLog)
+            os_signpost(.begin, log: Self.metricsLog, name: "AI Model Load", signpostID: interval,
+                        "resident_mb=%{public}llu", Self.residentMegabytes())
+            defer {
+                os_signpost(.end, log: Self.metricsLog, name: "AI Model Load", signpostID: interval,
+                            "resident_mb=%{public}llu", Self.residentMegabytes())
+            }
             // llama.cpp 로그를 파일로 돌린다 — abort 직전 줄을 잃지 않기 위해서다.
             // (2026-07-29: 그 줄이 없어서 원인을 두 번 추측했고 둘 다 틀렸다)
             LlamaLogSink.install()
@@ -107,6 +158,7 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
                 && !ModelDownloader.visionDisabled(for: (modelPath as NSString).lastPathComponent)
 
             var mparams = llama_model_default_params()
+            mparams.progress_callback = { _, _ in !LocalAIResourceStopSignal.shared.isRequested }
             #if targetEnvironment(simulator)
             mparams.n_gpu_layers = 0          // 시뮬은 CPU 전용 (공식 예제 규약)
             #else
@@ -152,6 +204,7 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
                 }
             guard let m = loaded else {
                 llama_backend_free()
+                if LocalAIResourceStopSignal.shared.isRequested { throw CancellationError() }
                 throw EngineError.loadFailed((modelPath as NSString).lastPathComponent)
             }
             // ── 비전 프로젝터를 **컨텍스트보다 먼저** 연다 ───────────────────
@@ -226,6 +279,7 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
                 UserDefaults.standard.removeObject(forKey: "matths.visionSkipReason")
                 LlamaLogSink.note("mtmd 로드 직전: \(mm)")
                 var mp = mtmd_context_params_default()
+                mp.progress_callback = { _, _ in !LocalAIResourceStopSignal.shared.isRequested }
                 // 프로젝터는 CPU 로만. use_gpu=true 면 clip 로더가 Metal 버퍼 할당
                 // 실패를 널 검사 없이 역참조해 즉사한다(기기 리포트 0558).
                 mp.use_gpu = false
@@ -249,7 +303,15 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
             }
 
             LlamaLogSink.note("컨텍스트 생성 직전")
+            if LocalAIResourceStopSignal.shared.isRequested {
+                if let projection = mtmd { mtmd_free(projection); mtmd = nil }
+                llama_model_free(m)
+                llama_backend_free()
+                ModelDownloader.markVisionOK()
+                throw CancellationError()
+            }
             var cparams = llama_context_default_params()
+            cparams.abort_callback = { _ in LocalAIResourceStopSignal.shared.isRequested }
             // KV 메모리 상한. 8GB 기기에서 9B(경량)를 돌릴 때는 모델만 4GB라
             // KV 까지 얹으면 jetsam 선을 넘는다 — 컨텍스트를 최소로 줄인다.
             // 무료 계정은 메모리 확장 권한(increased-memory-limit) 서명이 불가라
@@ -345,8 +407,12 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
                 if !visionOn { break }                      // 텍스트 전용은 원래 여유가 있다
             }
             guard let c else {
+                // The projector was deliberately loaded before the context.
+                // A recoverable context failure must release it before its model.
+                if let projection = mtmd { mtmd_free(projection); mtmd = nil }
                 llama_model_free(m)
                 llama_backend_free()
+                ModelDownloader.markVisionOK() // handled failure is not an app-crash receipt
                 throw EngineError.loadFailed("context")
             }
             // 여기까지 왔으면 비전 포함 전 구간을 살아서 통과했다 — 이제 표식을 지운다
@@ -356,12 +422,23 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
             ctx = c
             vocab = llama_model_get_vocab(m)
             loadedFile = (modelPath as NSString).lastPathComponent
+            statusLock.withLock {
+                status = (true, loadedFile ?? "", mtmd != nil, Int(llama_n_ctx(c)))
+            }
 
         }
     }
 
     func unload() {
         queue.sync {
+            let interval = OSSignpostID(log: Self.metricsLog)
+            os_signpost(.begin, log: Self.metricsLog, name: "AI Model Unload", signpostID: interval,
+                        "resident_mb=%{public}llu", Self.residentMegabytes())
+            defer {
+                os_signpost(.end, log: Self.metricsLog, name: "AI Model Unload", signpostID: interval,
+                            "resident_mb=%{public}llu", Self.residentMegabytes())
+            }
+            statusLock.withLock { status = (false, "", false, 0) }
             if let mt = mtmd { mtmd_free(mt) }
             if let c = ctx { llama_free(c) }
             if let m = model { llama_model_free(m) }
@@ -387,6 +464,13 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
         try queue.sync {
             guard let ctx, let vocab else { throw EngineError.notLoaded }
             guard let mtmd else { throw EngineError.loadFailed("mmproj 없음") }
+            try checkCancellation(params)
+            let cancellation = installCancellation(params, context: ctx)
+            defer { removeCancellation(cancellation, context: ctx) }
+            let interval = OSSignpostID(log: Self.metricsLog)
+            os_signpost(.begin, log: Self.metricsLog, name: "AI Vision Inference", signpostID: interval)
+            defer { os_signpost(.end, log: Self.metricsLog, name: "AI Vision Inference", signpostID: interval) }
+            var firstTokenRecorded = false
 
             let wrap = mtmd_helper_bitmap_init_from_file(mtmd, imagePath, false)
             guard let bmp = wrap.bitmap else { throw EngineError.decodeFailed(-10) }
@@ -413,6 +497,7 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
             LlamaLogSink.note("mtmd_tokenize rc=\(rc) · 청크 \(mtmd_input_chunks_size(chunks))"
                 + " · n_ctx=\(llama_n_ctx(ctx)) · n_batch=\(llama_n_batch(ctx))")
             guard rc == 0 else { throw EngineError.decodeFailed(rc == 1 ? -12 : -13) }
+            try checkCancellation(params)
             // 배치도 컨텍스트 설정을 따른다 (상수는 저사양 티어에서 abort 를 부른다)
             let nBatchV = Int32(max(1, Int(llama_n_batch(ctx))))
             // 한 번만 부른다. **memory_clear 로 지우고 되풀이하지 않는다.**
@@ -425,6 +510,7 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
             var newPastOut: Int32 = 0
             let evalRC = mtmd_helper_eval_chunks(mtmd, ctx, chunks, 0, 0,
                                                  nBatchV, true, &newPastOut)
+            try checkCancellation(params)
             newPast = newPastOut
             if evalRC != 0 { LlamaLogSink.note("이미지 인코딩 실패 rc=\(evalRC)") }
             guard evalRC == 0 else { throw EngineError.decodeFailed(-14) }
@@ -450,16 +536,23 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
             let visionBudget = min(Int(params.maxTokens),
                                    max(0, nCtx - Int(llama_memory_seq_pos_max(llama_get_memory(ctx), 0)) - 8))
             for _ in 0..<visionBudget {
+                try checkCancellation(params)
                 let id = llama_sampler_sample(chain, ctx, -1)
                 if llama_vocab_is_eog(vocab, id) { break }
                 produced += 1
                 if let piece = pieceOf(id, vocab: vocab, pending: &pending) {
+                    if !firstTokenRecorded {
+                        firstTokenRecorded = true
+                        os_signpost(.event, log: Self.metricsLog, name: "AI First Token", signpostID: interval)
+                    }
                     out += piece
                     if !onToken(piece) { break }
                 }
                 var one = id
                 let batch = llama_batch_get_one(&one, 1)
-                guard llama_decode(ctx, batch) == 0 else { throw EngineError.decodeFailed(-15) }
+                let code = llama_decode(ctx, batch)
+                try checkCancellation(params)
+                guard code == 0 else { throw EngineError.decodeFailed(-15) }
                 if Int(newPast) + produced >= nCtx - 8 { break }
             }
             if !pending.isEmpty, let tail = String(bytes: pending.map { UInt8(bitPattern: $0) }, encoding: .utf8) {
@@ -476,6 +569,22 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
                   onToken: @escaping (String) -> Bool) throws -> String {
         try queue.sync {
             guard let ctx, let vocab else { throw EngineError.notLoaded }
+            try checkCancellation(params)
+            let cancellation = installCancellation(params, context: ctx)
+            defer { removeCancellation(cancellation, context: ctx) }
+            let interval = OSSignpostID(log: Self.metricsLog)
+            os_signpost(.begin, log: Self.metricsLog, name: "AI Text Inference", signpostID: interval)
+            defer { os_signpost(.end, log: Self.metricsLog, name: "AI Text Inference", signpostID: interval) }
+            var firstTokenRecorded = false
+            // Any throw after KV mutation invalidates the prefix bookkeeping.
+            // It is unsafe to reuse lastTokens from a previous successful call.
+            var completed = false
+            defer {
+                if !completed {
+                    lastTokens = []
+                    llama_memory_clear(llama_get_memory(ctx), true)
+                }
+            }
 
             // ── 토크나이즈 (ChatML 특수 토큰 파싱, BOS 없음 — Qwen 규약)
             let tokens = try tokenize(prompt, vocab: vocab)
@@ -512,10 +621,13 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
             let nBatch = max(1, Int(llama_n_batch(ctx)))
             var pos = common
             while pos < tokens.count {
+                try checkCancellation(params)
                 let end = min(pos + nBatch, tokens.count)
                 var chunk = Array(tokens[pos..<end])
                 let batch = llama_batch_get_one(&chunk, Int32(chunk.count))
-                guard llama_decode(ctx, batch) == 0 else { throw EngineError.decodeFailed(-1) }
+                let code = llama_decode(ctx, batch)
+                try checkCancellation(params)
+                guard code == 0 else { throw EngineError.decodeFailed(-1) }
                 pos = end
             }
 
@@ -544,19 +656,26 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
             var history = tokens
 
             for _ in 0..<budget {
+                try checkCancellation(params)
                 let id = llama_sampler_sample(chain, ctx, -1)
                 if llama_vocab_is_eog(vocab, id) { break }
                 produced.append(id)
 
                 // 디토크나이즈 조각 (불완전 UTF-8 은 다음 토큰까지 미룸)
                 if let piece = pieceOf(id, vocab: vocab, pending: &pending) {
+                    if !firstTokenRecorded {
+                        firstTokenRecorded = true
+                        os_signpost(.event, log: Self.metricsLog, name: "AI First Token", signpostID: interval)
+                    }
                     out += piece
                     if !onToken(piece) { break }   // 중단 — 이 토큰은 아직 KV 에 없다
                 }
 
                 var one = id
                 let batch = llama_batch_get_one(&one, 1)
-                guard llama_decode(ctx, batch) == 0 else { throw EngineError.decodeFailed(-2) }
+                let code = llama_decode(ctx, batch)
+                try checkCancellation(params)
+                guard code == 0 else { throw EngineError.decodeFailed(-2) }
                 // history 는 "KV 에 실제로 들어간 것" 과 같아야 한다. 디코드 전에 넣으면
                 // 중단 시 1토큰 길어져 다음 턴 프리픽스 계산이 밀린다(맥락 상실).
                 history.append(id)
@@ -567,6 +686,7 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
                 _ = onToken(tail)
             }
             lastTokens = history
+            completed = true
             return out
         }
     }
@@ -975,6 +1095,7 @@ final class ModelDownloader: NSObject, ObservableObject {
     }
 
     private var preparationTask: Task<Void, Never>?
+    private var downloadAttemptID: UUID?
 
     /// Foundation의 다운로드 오류에는 호스트명·임시 파일 경로·내부 도메인이 섞일 수
     /// 있다. 학생 화면에는 원문을 내보내지 않고, 실제로 취할 수 있는 복구 행동만
@@ -1019,8 +1140,16 @@ final class ModelDownloader: NSObject, ObservableObject {
         let spec = Self.recommended
         let wantsProjector = Self.mmprojUsable(for: spec)
         preparationTask?.cancel()
+        let attemptID = UUID()
+        downloadAttemptID = attemptID
         preparationTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.downloadAttemptID == attemptID {
+                    self.downloadAttemptID = nil
+                    self.preparationTask = nil
+                }
+            }
             do {
                 if !(await LocalAIModelPack.verifyExistingArtifact(spec.file)) {
                     try await self.downloadAndInstall(
@@ -1084,27 +1213,13 @@ final class ModelDownloader: NSObject, ObservableObject {
         progressBase: Double,
         progressWeight: Double
     ) async throws {
-        let expectedBytes = LocalAIModelPack.expectedBytes(for: file)
-        try LocalAIModelPack.requireStorage(for: expectedBytes)
-        let key = "\(url.absoluteString)|\(file)|\(expectedBytes)"
-        let temporary = try await ResumableModelDownload.shared.download(
-            from: url,
-            key: key) { [weak self] fraction in
+        let attemptID = downloadAttemptID
+        try await LocalAIModelPack.prepareArtifact(url: url, file: file) { [weak self] fraction in
                 Task { @MainActor in
-                    self?.state = .downloading(progressBase + fraction * progressWeight)
+                    guard let self, let attemptID, self.downloadAttemptID == attemptID,
+                          case .downloading = self.state else { return }
+                    self.state = .downloading(progressBase + fraction * progressWeight)
                 }
             }
-        defer { ResumableModelDownload.shared.discardArtifact(for: key) }
-        let directory = AITutor.modelsDir
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let staged = directory.appendingPathComponent("staged-\(UUID().uuidString).part")
-        try FileManager.default.moveItem(at: temporary, to: staged)
-        try await Task.detached(priority: .utility) {
-            try LocalAIModelPack.installValidatedGGUF(
-                staged: staged,
-                destination: directory.appendingPathComponent(file),
-                minimumBytes: Int64(Double(expectedBytes) * 0.97),
-                expectedSHA256: LocalAIModelPack.expectedSHA256(for: file))
-        }.value
     }
 }

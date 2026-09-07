@@ -19,6 +19,13 @@ struct LottieWebView: UIViewRepresentable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(WebMotion.preferenceKey) private var userMotionEnabled = true
 
+    final class Coordinator {
+        var loadedName: String?
+        var loadedLoop = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.userContentController.addUserScript(WKUserScript(
@@ -37,17 +44,41 @@ struct LottieWebView: UIViewRepresentable {
         WebContentAccessibility.configure(web)
         web.isUserInteractionEnabled = false     // 장식이다 — 터치를 먹으면 안 된다
         if let url = Self.htmlURL {
+            context.coordinator.loadedName = name
+            context.coordinator.loadedLoop = loop
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
         return web
     }
 
     func updateUIView(_ web: WKWebView, context: Context) {
+        if context.coordinator.loadedName != name || context.coordinator.loadedLoop != loop,
+           let url = Self.htmlURL {
+            context.coordinator.loadedName = name
+            context.coordinator.loadedLoop = loop
+            let controller = web.configuration.userContentController
+            controller.removeAllUserScripts()
+            controller.addUserScript(WKUserScript(
+                source: Self.payloadJS(name: name, loop: loop),
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(
+                source: WebContentAccessibility.bootstrapScript(
+                    size: dynamicTypeSize, reduceMotion: reduceMotion,
+                    userMotionEnabled: userMotionEnabled),
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            return
+        }
         WebContentAccessibility.update(
             web,
             size: dynamicTypeSize,
             reduceMotion: reduceMotion,
             userMotionEnabled: userMotionEnabled)
+    }
+
+    static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
+        web.stopLoading()
+        web.configuration.userContentController.removeAllUserScripts()
     }
 
     static let htmlURL: URL? =

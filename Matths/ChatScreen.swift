@@ -139,6 +139,13 @@ struct ChatScreen: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Tokens.Space.s4) {
+                    if let notice = tutor.resourceInterruptionNotice {
+                        Label(notice, systemImage: "pause.circle")
+                            .font(.mCaption).foregroundStyle(Tokens.warningInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(Tokens.Space.s3)
+                            .background(Tokens.warningSoft, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    }
                     if tutor.revertedAfterCrash {
                         Label("메모리가 부족해 9B 로드 중 앱이 종료됐어요. 기본 DeepSeek 7B로 되돌렸습니다. 프로필에서 다시 켤 수 있어요.",
                               systemImage: "exclamationmark.triangle")
@@ -174,9 +181,8 @@ struct ChatScreen: View {
             }
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 // 첨부 사진 썸네일
-                if let ip = m.imagePath, let ui = UIImage(contentsOfFile: ip) {
-                    Image(uiImage: ui)
-                        .resizable().scaledToFit()
+                if let ip = m.imagePath {
+                    LocalAIPhotoThumbnail(path: ip)
                         .frame(maxWidth: 220, maxHeight: 160)
                         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                         .accessibilityLabel("첨부한 풀이 사진")

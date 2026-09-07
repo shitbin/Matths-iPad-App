@@ -68,12 +68,14 @@ struct LessonWebView: UIViewRepresentable {
         WebContentAccessibility.configure(web)
 
         if let html = Self.lessonURL {
+            context.coordinator.loadedConcept = conceptID
             web.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
         return web
     }
 
     func updateUIView(_ web: WKWebView, context: Context) {
+        context.coordinator.rebind(height: $height, quizPassed: $quizPassed)
         // 개념이 바뀌면 새 주입이 필요하므로 다시 로드
         if context.coordinator.loadedConcept != conceptID, let html = Self.lessonURL {
             context.coordinator.loadedConcept = conceptID
@@ -120,6 +122,11 @@ struct LessonWebView: UIViewRepresentable {
         @Binding var quizPassed: Bool
         var loadedConcept: String?
         init(height: Binding<CGFloat>, quizPassed: Binding<Bool>) {
+            _height = height
+            _quizPassed = quizPassed
+        }
+
+        func rebind(height: Binding<CGFloat>, quizPassed: Binding<Bool>) {
             _height = height
             _quizPassed = quizPassed
         }

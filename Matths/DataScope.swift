@@ -28,6 +28,12 @@ enum DataScope {
     static let managedFiles = [
         "progress-v2.json", "wrongnotes.json", "events.jsonl",
         "assessments.json", "dailyplan.json", "sync-queue.jsonl",
+        "assessment-start-intents.json", "practice-assessments-v1.json",
+        "legacy-practice-assessments.json",
+        "first-learning-journey-v2.json",
+        "native-service-drafts",
+        "practice-workspace-drafts-v1",
+        "mobile-first-learning-sync-v1.json", "community-request-ledger-v1.json",
         "goat-arena-v1-cache.json", "goat-arena-match-drafts.json",
         "goat-arena-rulebook-v1-cache.json",
         "goat-arena-local-review-contexts.json",

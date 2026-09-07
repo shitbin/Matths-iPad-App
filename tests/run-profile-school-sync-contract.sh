@@ -17,7 +17,7 @@ if grep -Fq '.sheet(isPresented: $showPicker)' "$PROFILE"; then
   echo "iPhone 가로 학교 목록이 draggable sheet에 남아 있습니다" >&2
   exit 1
 fi
-grep -Fq 'let user = try await ServerAPI.updateSchool(region: region, code: code)' "$PROFILE"
+grep -Fq 'let user = try await ServerAPI.updateSchool(region: region, code: code, authorization: owner.authorization)' "$PROFILE"
 grep -Fq 'guard let school = user.school,' "$PROFILE"
 grep -Fq 'let confirmedRegion = school.region,' "$PROFILE"
 grep -Fq 'let confirmedCode = school.code,' "$PROFILE"
@@ -30,7 +30,8 @@ grep -Fq 'AppStore.slotKey("matths.serverVerifiedSchool")' "$PROFILE"
 grep -Fq 'record.region == region' "$PROFILE"
 grep -Fq 'record.code == code' "$PROFILE"
 grep -Fq 'UserDefaults.standard.set(data, forKey: Self.serverVerifiedSchoolKey)' "$PROFILE"
-grep -Fq 'let user = try await ServerAPI.me()' "$PROFILE"
+grep -Fq 'let user = try await ServerAPI.me(authorization: owner.authorization)' "$PROFILE"
+grep -Fq 'owner.isCurrent(in: store)' "$PROFILE"
 grep -Fq 'store.profileSchoolName' "$PROFILE"
 
 if grep -Fq '.sheet(isPresented: $showPicker) { SchoolPickerSheet() }' "$PROFILE"; then

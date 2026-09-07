@@ -34,8 +34,8 @@ done
 grep -Fq 'contains("-adminAnnouncements")' "$screen"
 grep -Fq 'contains("-adminInquiries")' "$screen"
 
-grep -Fq 'AdminOperationsScreen { showsOperations = false }' "$admin"
-grep -Fq '"문의·운영 할 일"' "$admin"
+grep -Fq 'case .operations: AdminOperationsScreen { navigation.showDirectory() }' "$admin"
+grep -Fq '"문의·운영 할 일"' "$root/Matths/StaffWorkspaceState.swift"
 grep -Fq 'contains("-adminOperations")' "$root_view"
 if grep -Fq 'Button("웹 고급 관리")' "$teacher"; then
   echo "FAIL: teacher academy still exposes redundant hosted management" >&2

@@ -173,8 +173,10 @@ struct MatthsApp: App {
                         .environmentObject(store)
                 }
                 .overlay {
-                    if ProductExperience.enabled && !["teacher", "admin"].contains(store.serverProfile?.role?.lowercased() ?? "student") {
-                        FirstSuccessOnboardingOverlay().environmentObject(store)
+                    if ProductExperience.enabled {
+                        if !["teacher", "admin"].contains(store.serverProfile?.role?.lowercased() ?? "student") {
+                            FirstSuccessOnboardingOverlay().environmentObject(store)
+                        }
                     } else {
                         FirstRunOnboardingOverlay().environmentObject(store)
                     }
@@ -307,7 +309,13 @@ struct MatthsApp: App {
                     DebugBar().environmentObject(store)
                 }
                 .task {
+                    await LocalNativeIntegrationLogin.runIfRequested(store: store)
                     await RankPromotionPerformanceSelfTest.runIfRequested(store: store)
+                    await AppScrollPerformanceSelfTest.runIfRequested(store: store)
+                    PracticeWorkspaceDraftSelfTest.runIfRequested(store: store)
+                    WebHandoffSelfTest.runIfRequested()
+                    NativeLLMRuntimeSelfTest.runIfRequested()
+                    ProNativeRuntimeSelfTest.runIfRequested()
                 }
                 #endif
                 // ▲▲▲ 전역 디버그 바 끝 ▲▲▲
@@ -423,6 +431,7 @@ final class AppStore: ObservableObject {
             && !disabledLearningPersistenceSlots.contains(slot)
             && transitioningLearningPersistenceSlots[slot] == nil
             && !assessmentPersistenceTransactionInFlight
+            && !kiceEffectsTransactionInFlight
     }
 
     private func isLearningSlotWritable(for slot: String) -> Bool {
@@ -434,6 +443,7 @@ final class AppStore: ObservableObject {
             && owner.sessionGeneration == accountSessionGeneration
             && !disabledLearningPersistenceSlots.contains(owner.slot)
             && !assessmentPersistenceTransactionInFlight
+            && !kiceEffectsTransactionInFlight
     }
 
     private func scheduleLearningPersistence(_ snapshot: LearningPersistenceSnapshot) {
@@ -485,11 +495,17 @@ final class AppStore: ObservableObject {
         guard !disabledLearningPersistenceSlots.contains(slot) else { return false }
         guard await AssessmentScratchpadRepository.flush(slot: slot), DataScope.slot == slot,
               !disabledLearningPersistenceSlots.contains(slot) else { return false }
+        guard await PracticeWorkspaceDraftRepository.flush(slot: slot), DataScope.slot == slot,
+              !disabledLearningPersistenceSlots.contains(slot) else { return false }
+        guard await ArenaDraftPersistence.flush(slot: slot), DataScope.slot == slot,
+              !disabledLearningPersistenceSlots.contains(slot) else { return false }
+        guard await KiceStudyRepository.flush(slot: slot), DataScope.slot == slot,
+              !disabledLearningPersistenceSlots.contains(slot) else { return false }
 
         // 로컬 평가 제출은 wrongNotes → assessments 두 파일을 순서대로 확정한다.
         // 그 사이 background/account flush가 아직 공개하지 않은 옛 메모리를 더 높은
         // revision으로 쓰면 제출 결과를 되감으므로, 짧은 로컬 트랜잭션만 끝까지 기다린다.
-        while assessmentPersistenceTransactionInFlight {
+        while assessmentPersistenceTransactionInFlight || kiceEffectsTransactionInFlight {
             guard !Task.isCancelled,
                   DataScope.slot == slot,
                   !disabledLearningPersistenceSlots.contains(slot) else { return false }
@@ -544,6 +560,9 @@ final class AppStore: ObservableObject {
         // 재진입하더라도 cutoff보다 큰 새 명령을 만들 수 없어야 한다.
         disabledLearningPersistenceSlots.insert(slot)
         await AssessmentScratchpadRepository.invalidate(slot: slot)
+        await PracticeWorkspaceDraftRepository.invalidate(slot: slot)
+        await ArenaDraftPersistence.invalidate(slot: slot)
+        await KiceStudyRepository.invalidate(slot: slot)
         let cutoff = nextLearningPersistenceRevision()
         // snapshot 외의 append-only writer도 같은 owner 슬롯을 먼저 tombstone한다.
         // 탈퇴 응답을 기다리는 동안 다른 계정으로 전환됐을 수 있으므로 current slot을
@@ -579,6 +598,7 @@ final class AppStore: ObservableObject {
     }
 
     @Published private(set) var workspace: AppWorkspace = .student
+    private var workspacePreferenceLoaded = false
     var allowedWorkspaces: [AppWorkspace] {
         let role = serverProfile?.role?.lowercased() ?? "student"
         return AppWorkspace.allCases.filter { $0.allowed(role: role) }
@@ -586,9 +606,20 @@ final class AppStore: ObservableObject {
     func selectWorkspace(_ value: AppWorkspace) {
         guard allowedWorkspaces.contains(value), !isSessionMode else { return }
         workspace = value
+        workspacePreferenceLoaded = true
+        UserDefaults.standard.set(value.rawValue, forKey: AppStore.slotKey("matths.workspace.v2"))
         route = value == .student ? .home : .academy
     }
     func validateWorkspace() {
+        // The first verified staff profile opens its actual job, while an
+        // explicit switch to personal learning remains this account's choice.
+        if ProductExperience.enabled, authProvider == "server", let role = serverProfile?.role,
+           !workspacePreferenceLoaded {
+            workspacePreferenceLoaded = true
+            workspace = AppWorkspace.initial(role: role,
+                savedValue: UserDefaults.standard.string(forKey: AppStore.slotKey("matths.workspace.v2")))
+            if workspace != .student, route == .home, !hasPendingAssessmentAuthentication { route = .academy }
+        }
         if !allowedWorkspaces.contains(workspace) { workspace = .student; route = .home }
     }
 
@@ -709,7 +740,18 @@ final class AppStore: ObservableObject {
     /// 네이티브 튜토리얼이 화면을 덮고 있는 동안의 일시 상태.
     /// 서버에서 실제 마감이 내려오더라도 온보딩 한가운데 시스템 권한창을 띄우지
     /// 않기 위해 알림 예약기가 읽는다. 이미 허용된 알림 예약은 계속 동작한다.
-    @Published var isTutorialPresentationActive = false
+    @Published var isTutorialPresentationActive = false {
+        didSet { nativeTutorialPresentationOwner = nil }
+    }
+    private(set) var nativeTutorialPresentationOwner: UUID?
+    func claimNativeTutorialPresentation(_ id: UUID) {
+        isTutorialPresentationActive = true
+        nativeTutorialPresentationOwner = id
+    }
+    func releaseNativeTutorialPresentation(_ id: UUID) {
+        guard nativeTutorialPresentationOwner == id else { return }
+        isTutorialPresentationActive = false
+    }
     /// 마지막 라우트 전환의 방향 (±1). route 가 이미 @Published 라 별도 publish 불필요.
     var navDirection: CGFloat = 1
     @Published var lastGrading: GradingResult?
@@ -1051,8 +1093,24 @@ final class AppStore: ObservableObject {
     }
 
     /// 누적 학습 통계 — gradeCurrent 가 갱신한다
-    @Published var solvedTotal: Int = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.solved"))
-    @Published var correctTotal: Int = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.correct"))
+    @Published private var storedSolvedTotal: Int = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.solved"))
+    @Published private var storedCorrectTotal: Int = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.correct"))
+    @Published private var kiceStatisticsContribution = KiceStatisticsContribution.zero
+    // Historical counters may already include older KICE work. Never infer or
+    // subtract it. Only newly persisted receipts contribute through this one
+    // display boundary; ordinary grading persists the separate legacy base.
+    var solvedTotal: Int {
+        get { storedSolvedTotal + kiceStatisticsContribution.solved }
+        set { storedSolvedTotal = max(0, newValue - kiceStatisticsContribution.solved) }
+    }
+    var correctTotal: Int {
+        get { storedCorrectTotal + kiceStatisticsContribution.correct }
+        set { storedCorrectTotal = max(0, newValue - kiceStatisticsContribution.correct) }
+    }
+    private func persistBaseStatistics() {
+        UserDefaults.standard.set(storedSolvedTotal, forKey: AppStore.slotKey("matths.solved"))
+        UserDefaults.standard.set(storedCorrectTotal, forKey: AppStore.slotKey("matths.correct"))
+    }
 
     var accuracy: Int {
         solvedTotal == 0 ? 0 : Int((Double(correctTotal) / Double(solvedTotal) * 100).rounded())
@@ -1070,7 +1128,7 @@ final class AppStore: ObservableObject {
 
     // MARK: 계정별 로컬 슬롯 (DataScope)
 
-    struct AccountSessionBoundary: Sendable {
+    struct AccountSessionBoundary: Sendable, Hashable {
         fileprivate let slot: String
         fileprivate let generation: UUID
     }
@@ -1131,6 +1189,10 @@ final class AppStore: ObservableObject {
             disabledLearningPersistenceSlots.remove(target)
             guard beforeSwitch?() ?? true else { return false }
             accountSessionGeneration = UUID()
+            MatthsIAPStore.shared.sessionDidChange()
+            PracticeWorkspaceDraftRepository.activate(slot: target)
+            ArenaDraftPersistence.activate(slot: target)
+            KiceStudyRepository.activate(slot: target)
             return true
         }
         let source = DataScope.slot
@@ -1184,6 +1246,9 @@ final class AppStore: ObservableObject {
             accountSessionGeneration = previousSessionGeneration
             return false
         }
+        PracticeWorkspaceDraftRepository.activate(slot: target)
+        ArenaDraftPersistence.activate(slot: target)
+        KiceStudyRepository.activate(slot: target)
         clearTransientAccountState()
         reloadLocalData()
         return true
@@ -1192,10 +1257,14 @@ final class AppStore: ObservableObject {
     /// 파일에 저장하지 않는 풀이·튜터·시험 세션도 학생별 상태다. 새 슬롯에서 이전
     /// 학생의 답안이나 진행 중 시험을 다시 열 수 없도록 전환 순간에만 초기화한다.
     private func clearTransientAccountState() {
+        MatthsIAPStore.shared.sessionDidChange()
+        profileRefreshTask?.cancel(); profileRefreshTask = nil
+        profileRefreshID = UUID(); profileRefreshOwner = nil
         academyContextTask?.cancel(); academyContextTask = nil; todayAcademyAttendance = nil
         CurriculumAvailabilityStore.shared.cancelSessionRequest()
         canonicalLearning = nil
         workspace = .student
+        workspacePreferenceLoaded = false
         // 예약해 둔 로컬 알림에도 앞 학생의 상태가 들어 있다(복습할 오답 수, 방어 마감).
         // 한 대의 iPad 를 형제가 나눠 쓰므로 슬롯이 바뀌면 예약도 함께 끊는다.
         // 새 슬롯의 예약은 reloadLocalData() 뒤 각 화면이 서버 값을 받아 다시 건다.
@@ -1203,7 +1272,8 @@ final class AppStore: ObservableObject {
         assessmentDraftTask?.cancel()
         assessmentDraftTask = nil
         assessmentStartGeneration = UUID()
-        assessmentSubmitting = false
+        assessmentSubmissionState = .editable
+        assessmentSubmitFailures.removeAll()
         assessmentStarting = false
         assessmentSyncError = nil
         NotificationInboxStore.shared.reloadForCurrentSlot()
@@ -1218,6 +1288,9 @@ final class AppStore: ObservableObject {
         chatSeedContext = nil
         lastStudentInput = nil
         rankPromotionPresentation = nil
+        isTutorialPresentationActive = false
+        requestedDashboardTutorial = false
+        requestedArenaTutorialChapter = nil
         coach = CoachEngine()
         coachLine = nil
         coachGuidance = nil
@@ -1424,8 +1497,9 @@ final class AppStore: ObservableObject {
             forKey: AppStore.slotKey("matths.lastCourseV2"))
         // 통계는 파일이 아니라 UserDefaults 에 있다 — 슬롯 키로 다시 읽지 않으면
         // 계정을 바꿔도 앞사람의 푼 문항·정답률·최고 기록이 화면에 그대로 남는다.
-        solvedTotal = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.solved"))
-        correctTotal = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.correct"))
+        storedSolvedTotal = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.solved"))
+        storedCorrectTotal = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.correct"))
+        reloadKiceStudyState()
         bestScore = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.bestScore"))
         bestElapsedMs = UserDefaults.standard.integer(forKey: AppStore.slotKey("matths.bestMs"))
         GoatArenaClientReviewOutbox.recoverCompleted(cheatingReviews)
@@ -1438,6 +1512,11 @@ final class AppStore: ObservableObject {
     /// 서버 계정 로그인/가입 성공 — 서버 user 를 로컬 상태에 반영하고 입장
     @discardableResult
     func signInServer(_ auth: AuthResponse, attemptID: UUID) async throws -> Bool {
+        kiceAuthenticationTransitions += 1
+        defer {
+            kiceAuthenticationTransitions -= 1
+            if kiceAuthenticationTransitions == 0 { Task { [weak self] in await self?.drainKiceReceiptEffects() } }
+        }
         let user = auth.user
         // ⚠️ 순서가 전부다.
         //  ① 게스트로 쌓아 둔 기록을 **먼저 손에 쥔다.** 슬롯을 옮기면 reloadLocalData 가
@@ -1492,6 +1571,10 @@ final class AppStore: ObservableObject {
         }
         signIn(provider: "server")
         applyServerProfile(user)
+        let committedAccount = captureAccountSessionBoundary()
+        _ = await loadKiceStudyIfNeeded()
+        guard transitionGeneration == accountTransitionGeneration,
+              ownsCurrentAccountSession(committedAccount) else { return false }
         // **슬롯을 옮긴 뒤에** 세팅한다. slotKey 가 새 슬롯을 가리켜야
         // 이 계정의 키에 저장되고, 재실행 때도 같은 계정에서 복원된다.
         serverStreak = incomingStreak
@@ -1508,11 +1591,10 @@ final class AppStore: ObservableObject {
         // 통계 승계는 **아직 기록이 없는 계정**에만 한다. 이미 쌓인 계정에 더하면
         // 재로그인마다 게스트 활동이 얹혀 숫자가 부풀고, 남이 쓰던 게스트 기록까지
         // 그 계정 것이 된다 (계정 분리를 하려다 반대쪽으로 새는 길).
-        if let g = guestStats, solvedTotal == 0, correctTotal == 0 {
+        if let g = guestStats, kiceStudyReady, solvedTotal == 0, correctTotal == 0 {
             solvedTotal = g.solved
             correctTotal = g.correct
-            UserDefaults.standard.set(solvedTotal, forKey: AppStore.slotKey("matths.solved"))
-            UserDefaults.standard.set(correctTotal, forKey: AppStore.slotKey("matths.correct"))
+            persistBaseStatistics()
             if bestScore == 0 {
                 bestScore = g.best
                 bestElapsedMs = g.ms
@@ -1573,17 +1655,44 @@ final class AppStore: ObservableObject {
             startPaper(scope: intent.scope, course: intent.course, unit: intent.unit, subunit: intent.subunit)
         }
         Task { await MatthsIAPStore.shared.reconcileForCurrentAccount() }
+        let authenticatedOwner = captureAccountSessionBoundary()
+        // Login returns a compact public user, not the native /me profile. Fetch
+        // tutorial/role/coach metadata after credentials and the account slot agree.
+        await refreshServerProfile(force: true)
+        guard ownsCurrentAccountSession(authenticatedOwner) else { return false }
         return true
     }
 
     /// 버튼처럼 동기 클로저에서 부르는 편의 진입점. 실제 슬롯 전환은 아래 async
     /// 경계가 기존 계정 파일 저장을 끝낸 뒤 수행한다.
     func signOut() {
-        Task { [weak self] in _ = await self?.signOut(discardingCurrentSlot: false) }
+        // Capture user intent before scheduling. A new login begun after this
+        // call must not be cancelled by a delayed logout Task or flush callback.
+        let signOutID = ServerAPI.beginSignOut()
+        Task { [weak self] in
+            _ = await self?.transitionToSignedOut(discardingCurrentSlot: false, signOutID: signOutID)
+        }
     }
 
     @discardableResult
     func signOut(discardingCurrentSlot: Bool) async -> Bool {
+        let signOutID = ServerAPI.beginSignOut()
+        return await transitionToSignedOut(discardingCurrentSlot: discardingCurrentSlot, signOutID: signOutID)
+    }
+
+    private func transitionToSignedOut(
+        discardingCurrentSlot: Bool,
+        signOutID: UUID? = nil,
+        expirationID: UUID? = nil
+    ) async -> Bool {
+        func ownsIntent() -> Bool {
+            if let signOutID { return ServerAPI.ownsSignOut(signOutID) }
+            if let expirationID { return ServerAPI.ownsAuthenticationExpiration(expirationID) }
+            return false
+        }
+        // Do not even supersede accountTransitionGeneration if this cleanup is
+        // stale. Check again inside the commit after every persistence await.
+        guard ownsIntent() else { return false }
         let oldSlot = DataScope.slot
         guard await switchDataSlot(
             email: nil,
@@ -1591,7 +1700,11 @@ final class AppStore: ObservableObject {
             // 제출하면 삭제 직전에 파일을 되살리는 명령이 되므로 명시적으로 끈다.
             flushPending: !discardingCurrentSlot,
             beforeSwitch: {
-                ServerAPI.logout()          // 서버 계정이었으면 토큰 폐기 (게스트면 no-op)
+                let accepted: Bool
+                if let signOutID { accepted = ServerAPI.finishSignOut(signOutID) }
+                else if let expirationID { accepted = ServerAPI.finishAuthenticationExpiration(expirationID) }
+                else { accepted = false }
+                guard accepted else { return false }
                 self.authProvider = nil
                 self.serverProfile = nil
                 // Application Support의 알림 파일은 Documents 슬롯 purge에 포함되지 않는다.
@@ -1611,8 +1724,9 @@ final class AppStore: ObservableObject {
     /// 두면 resetProgress 를 부르는 두 번째 호출부가 생기는 순간 절반만 초기화되는
     /// 무음 결함이 된다 (F-01: 불변식은 소유자가 완결한다).
     @discardableResult
-    func resetProgress() async -> Bool {
-        guard isLearningAccountOperationActive(for: DataScope.slot),
+    func resetProgress(expectedAccount: AccountSessionBoundary? = nil) async -> Bool {
+        let account = expectedAccount ?? captureAccountSessionBoundary()
+        guard isLearningAccountOperationActive(for: account),
               !progressResetInFlight else { return false }
         progressResetInFlight = true
         SyncEngine.shared.beginProgressReset()
@@ -1622,22 +1736,22 @@ final class AppStore: ObservableObject {
         let previousCompleted = completedConceptIDs
         let previousProgress = progressV2
         let previousCanonical = canonicalLearning
-        let previousSolved = solvedTotal
-        let previousCorrect = correctTotal
+        let previousSolved = storedSolvedTotal
+        let previousCorrect = storedCorrectTotal
         completedConceptIDs = []
         Progress.save([])
         progressV2 = ProgressV2Store()
         canonicalLearning = nil
         UserDefaults.standard.removeObject(forKey: canonicalLearningKey)
-        solvedTotal = 0
-        correctTotal = 0
+        storedSolvedTotal = 0
+        storedCorrectTotal = 0
         UserDefaults.standard.set(0, forKey: AppStore.slotKey("matths.solved"))
         UserDefaults.standard.set(0, forKey: AppStore.slotKey("matths.correct"))
         // 파괴적 확정은 debounce하지 않는다. actor의 같은-key pending을 취소하고
         // 빈 스냅샷 쓰기가 실제로 끝난 뒤 서버 reset journal을 적재한다.
         let persisted = await persistLearningImmediately(
             .progress(progressV2.byConcept), for: slot)
-        guard isLearningAccountOperationActive(for: slot) else { return false }
+        guard isLearningAccountOperationActive(for: account) else { return false }
         guard persisted else {
             NSLog("PROGRESS-RESET-ERROR 빈 진도 스냅샷을 저장하지 못했습니다")
             // 실패를 성공처럼 보이지 않게 메모리와 UserDefaults를 원상 복구한다.
@@ -1650,8 +1764,8 @@ final class AppStore: ObservableObject {
             if let previousCanonical, let data = try? JSONEncoder().encode(previousCanonical) {
                 UserDefaults.standard.set(data, forKey: canonicalLearningKey)
             }
-            solvedTotal = previousSolved
-            correctTotal = previousCorrect
+            storedSolvedTotal = previousSolved
+            storedCorrectTotal = previousCorrect
             UserDefaults.standard.set(
                 previousSolved, forKey: AppStore.slotKey("matths.solved"))
             UserDefaults.standard.set(
@@ -1659,6 +1773,7 @@ final class AppStore: ObservableObject {
             requestImmediateLearningPersistence(.progress(previousProgress.byConcept))
             return false
         }
+        guard await resetKiceStatisticsForCurrentSlot(), isLearningAccountOperationActive(for: account) else { return false }
         if authProvider == "server" {
             let resetQueued = await SyncEngine.shared.enqueueProgressResetDurably()
             guard isLearningAccountOperationActive(for: slot) else { return false }
@@ -1705,11 +1820,18 @@ final class AppStore: ObservableObject {
     @Published private(set) var authenticationNotice: String?
     /// `/api/v1/me`의 서버 정본 프로필. 상단 아바타·Arena 레벨·프로필 화면이
     /// 각자 요청하고 서로 다른 값을 그리지 않도록 앱 수명주기 하나에서 공유한다.
-    @Published private(set) var serverProfile: ServerUser?
+    @Published private(set) var serverProfile: ServerUser? {
+        didSet { serverProfileRevision &+= 1 }
+    }
+    private var serverProfileRevision: UInt64 = 0
+    private var profileRefreshTask: Task<Void, Never>?
+    private var profileRefreshID = UUID()
+    private var profileRefreshOwner: AccountRequestOwner?
 
     @MainActor
     private func applyServerProfile(_ user: ServerUser) {
         serverProfile = user
+        validateWorkspace()
         if let name = user.name, !name.isEmpty { userName = name }
         if let email = user.email, !email.isEmpty { userEmail = email }
         if let mode = user.coachMode, let level = SpiceLevel(rawValue: mode) {
@@ -1717,24 +1839,49 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func acceptServerProfile(_ user: ServerUser, owner: AccountRequestOwner) {
+        guard owner.isCurrent(in: self) else { return }
+        applyServerProfile(user)
+    }
+
     @MainActor
-    func refreshServerProfile() async {
-        guard authProvider == "server", ServerAPI.hasToken else {
+    func refreshServerProfile(force: Bool = false) async {
+        guard authProvider == "server", let owner = AccountRequestOwner(store: self) else {
+            profileRefreshTask?.cancel(); profileRefreshTask = nil
+            profileRefreshID = UUID(); profileRefreshOwner = nil
             serverProfile = nil
             return
         }
-        let owner = captureAccountSessionBoundary()
-        do {
-            let user = try await ServerAPI.me()
-            guard authProvider == "server", ownsCurrentAccountSession(owner) else { return }
-            applyServerProfile(user)
-        } catch {
-            // 401은 공통 요청 계층이 인증 만료로 전환한다. 일시적 네트워크 오류에는
-            // 마지막으로 검증된 아바타/레벨을 유지해 상단 UI가 매번 깜빡이지 않게 한다.
+        if !force, let task = profileRefreshTask, profileRefreshOwner?.isCurrent(in: self) == true {
+            await task.value
+            return
         }
+        profileRefreshTask?.cancel()
+        let requestID = UUID(); profileRefreshID = requestID; profileRefreshOwner = owner
+        let revision = serverProfileRevision
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.profileRefreshID == requestID {
+                    self.profileRefreshTask = nil; self.profileRefreshOwner = nil
+                }
+            }
+            do {
+                let user = try await ServerAPI.me(authorization: owner.authorization)
+                guard owner.isCurrent(in: self), self.profileRefreshID == requestID,
+                      self.serverProfileRevision == revision else { return }
+                self.applyServerProfile(user)
+            } catch {
+                // Keep the last verified profile on transport errors. Request/session
+                // guards above prevent old results overwriting mutations or a new user.
+            }
+        }
+        profileRefreshTask = task
+        await task.value
     }
 
     func signIn(provider: String) {
+        if provider == "guest" { pendingAssessmentIntent = nil }
         authenticationNotice = nil
         authProvider = provider
         UserDefaults.standard.set(provider, forKey: "matths.auth")
@@ -1780,13 +1927,14 @@ final class AppStore: ObservableObject {
               let authorization = ServerAPI.captureAuthorization() else { return }
         let owner = captureAccountSessionBoundary()
         let task = Task { [weak self] in
+            guard let self else { return }
             do {
-                let value = try await ServerAPI.academyDashboard(authorization: authorization)
-                guard !Task.isCancelled, let self, self.ownsCurrentAccountSession(owner) else { return }
+                let value = try await TodayActivityStore.shared.academyContext(store: self, authorization: authorization)
+                guard !Task.isCancelled, self.ownsCurrentAccountSession(owner) else { return }
                 self.todayAcademyAttendance = value.attendance
                 WidgetBridge.publish(from: self)
             } catch {
-                guard let self, self.ownsCurrentAccountSession(owner) else { return }
+                guard self.ownsCurrentAccountSession(owner) else { return }
                 self.todayAcademyAttendance = nil
             }
         }
@@ -2184,8 +2332,7 @@ final class AppStore: ObservableObject {
         // 누적 통계 (프로필 정답률) + 학습일 기록
         solvedTotal += 1
         if ok { correctTotal += 1 }
-        UserDefaults.standard.set(solvedTotal, forKey: AppStore.slotKey("matths.solved"))
-        UserDefaults.standard.set(correctTotal, forKey: AppStore.slotKey("matths.correct"))
+        persistBaseStatistics()
         activityDays = ActivityLog.recordToday()
         examResults.append(ok)
 
@@ -2240,6 +2387,7 @@ final class AppStore: ObservableObject {
             }
             saveWrongNotes()
         }
+        FirstLearningJourneyStore.shared.recordCheck(slot: DataScope.slot, conceptID: examSourceConceptV2ID, seed: lastExamSeed, problemID: p.id, correct: ok)
         lastGrading = makeGrading(p, correct: ok)
         route = .result
     }
@@ -2348,7 +2496,7 @@ final class AppStore: ObservableObject {
         let task = Task { [weak self] in
             // 앞 검토의 모델 전환·추론·정리가 전부 끝난 뒤 다음 사진을 연다.
             await predecessor?.value
-            let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("풀이 무결성 검토")
+            let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("풀이 무결성 검토") { _ in flag.cancel() }
             defer { LocalAIBackgroundExecution.shared.endWork(backgroundToken) }
             guard let self else { return }
             let result = await self.runCheatingReview(
@@ -2482,7 +2630,7 @@ final class AppStore: ObservableObject {
             },
             awardedPoints: ok ? 4 : 0,
             feedback: ok
-                ? "정답입니다. 같은 유형이 GOAT Arena에 다른 수치로 다시 나옵니다."
+                ? "정답 조건을 확인했습니다. 다음 문제로 학습을 이어가세요."
                 : "정답이 아닙니다. 아래 모범 풀이의 단계와 본인 풀이가 어디서 갈라지는지 찾아보세요.",
             confidence: 1.0,
             needsHumanReview: false
@@ -2561,7 +2709,9 @@ final class AppStore: ObservableObject {
     @Published var attemptsV2: AttemptStoreV2 = .load()
     @Published var currentAttemptID: String?
     @Published var assessmentSyncError: String?
-    @Published private(set) var assessmentSubmitting = false
+    @Published private(set) var assessmentSubmissionState: AssessmentSubmissionState = .editable
+    var assessmentSubmitting: Bool { assessmentSubmissionState.isSubmitting }
+    private var assessmentSubmitFailures: [String: Int] = [:]
     @Published private(set) var assessmentStarting = false
     struct AssessmentStartIntent {
         let scope: PaperScope
@@ -2570,8 +2720,11 @@ final class AppStore: ObservableObject {
         let subunit: AssessSubunit?
     }
     private var pendingAssessmentIntent: AssessmentStartIntent?
+    var hasPendingAssessmentAuthentication: Bool { pendingAssessmentIntent != nil || assessmentStarting }
     private var assessmentStartGeneration = UUID()
     private var assessmentDraftTask: Task<Void, Never>?
+    private var assessmentDraftUploads: [String: Task<Void, Never>] = [:]
+    private var assessmentDraftUploadIDs: [String: UUID] = [:]
     /// 로컬 제출의 wrongNotes→assessment 내구 순서가 끝나기 전 stable flush가
     /// 미공개 옛 메모리로 두 파일을 되감지 못하게 하는 짧은 직렬화 게이트.
     private var assessmentPersistenceTransactionInFlight = false
@@ -2620,13 +2773,29 @@ final class AppStore: ObservableObject {
                                   account: AccountSessionBoundary) async {
         defer { if generation == assessmentStartGeneration { assessmentStarting = false } }
         guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account) else { return }
+        guard let authorization = ServerAPI.captureAuthorization() else { return }
+        let scopeKey = "\(scope.rawValue)/\(course.courseId)/\(unit?.unitId ?? "-")/\(subunit?.id ?? "-")"
+        var sentStartTicket: String?
         do {
+            let clientStartID = try await AssessmentStartJournal.shared.ticket(scope: scopeKey, slot: account.slot)
+            sentStartTicket = clientStartID
+            guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account),
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
             let remote = try await ServerAPI.startAssessment(
                 scope: scope, courseId: course.courseId, unitId: unit?.unitId,
-                subunitId: subunit?.id, clientStartId: generation.uuidString)
+                subunitId: subunit?.id, clientStartId: clientStartID, authorization: authorization)
+            if remote.status == "abandoned" {
+                // Only an explicit server terminal cancellation releases a replay
+                // ticket. Transport errors must retain it for safe resumption.
+                try await AssessmentStartJournal.shared.acknowledge(scope: scopeKey, ticket: clientStartID, slot: account.slot)
+                guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account) else { return }
+                assessmentSyncError = "이전 응시는 다른 화면에서 종료되었습니다. 다시 시작하면 새 평가를 엽니다."
+                return
+            }
+            guard var attempt = remote.localValue() else { throw CurriculumPolicyError.malformed }
+            attempt.clientStartID = clientStartID
             guard generation == assessmentStartGeneration,
-                  isLearningAccountOperationActive(for: account),
-                  let attempt = remote.localValue() else { return }
+                  isLearningAccountOperationActive(for: account) else { return }
             attemptsV2.upsert(attempt)
             let persisted = await persistLearningImmediately(
                 .assessments(attemptsV2.attempts), for: account.slot)
@@ -2634,23 +2803,58 @@ final class AppStore: ObservableObject {
                   isLearningAccountOperationActive(for: account) else { return }
             if !persisted {
                 assessmentSyncError = "평가 시작 기록을 이 기기에 저장하지 못했습니다. 저장 공간을 확인해주세요."
+            } else {
+                try? await AssessmentStartJournal.shared.acknowledge(scope: scopeKey, ticket: clientStartID, slot: account.slot)
             }
+            guard isLearningAccountOperationActive(for: account) else { return }
             currentAttemptID = attempt.id
             route = .paper
         } catch {
             guard generation == assessmentStartGeneration,
                   isLearningAccountOperationActive(for: account) else { return }
+            if let serverError = error as? ServerAPIError,
+               AssessmentServerConflict(status: serverError.statusCode, code: serverError.code)?.releasesStartTicket == true,
+               let ticket = sentStartTicket {
+                do {
+                    // The new server returns a typed 409 instead of an abandoned
+                    // DTO. Only this exact response releases this scope/key pair.
+                    if let known = attemptsV2.attempts.first(where: { $0.scopeKey == scopeKey && $0.clientStartID == ticket }) {
+                        _ = attemptsV2.markServerAbandoned(id: known.id, updatedAt: nil)
+                        let persisted = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: account.slot)
+                        guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account) else { return }
+                        guard persisted else {
+                            assessmentSyncError = "서버에서 종료된 응시의 기기 기록을 저장하지 못했습니다. 답안과 시작 요청을 보관하고 있습니다."
+                            return
+                        }
+                    }
+                    _ = try await AssessmentStartJournal.shared.acknowledgeAbandoned(
+                        scope: scopeKey, ticket: ticket, slot: account.slot,
+                        status: serverError.statusCode, code: serverError.code)
+                    guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account) else { return }
+                    assessmentSyncError = "이전 응시는 서버에서 종료되었습니다. 다시 시작하면 새 평가를 엽니다. 보관된 답안은 유지됩니다."
+                } catch {
+                    guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account) else { return }
+                    assessmentSyncError = "이전 응시의 종료를 확인했지만 재시작 요청을 저장하지 못했습니다. 저장 공간을 확인하고 다시 시도해 주세요."
+                }
+                return
+            }
             assessmentSyncError = (error as? ServerAPIError)?.errorDescription
                 ?? "평가를 시작하지 못했습니다. 연결을 확인하고 다시 시도해주세요."
         }
     }
 
     func pullServerAssessments() async {
-        guard ServerAPI.hasToken else { return }
+        guard let authorization = ServerAPI.captureAuthorization() else { return }
         let account = captureAccountSessionBoundary()
         do {
-            let values = try await ServerAPI.assessmentSnapshot().compactMap { $0.localValue() }
+            let response = try await ServerAPI.assessmentSnapshot(authorization: authorization)
+            let active = response.filter { $0.status != "abandoned" }
+            let values = active.compactMap { $0.localValue() }
+            guard values.count == active.count else { throw CurriculumPolicyError.malformed }
             guard isLearningAccountOperationActive(for: account) else { return }
+            for cancelled in response where cancelled.status == "abandoned" {
+                _ = attemptsV2.markServerAbandoned(id: cancelled.id, updatedAt: cancelled.serverModifiedAt)
+            }
             attemptsV2.replaceServerSnapshot(values)
             let persisted = await persistLearningImmediately(
                 .assessments(attemptsV2.attempts), for: account.slot)
@@ -2668,9 +2872,20 @@ final class AppStore: ObservableObject {
 
     func setPaperAnswer(no: Int, value: String) {
         guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
-        guard var a = currentAttempt, a.submittedAt == nil,
+        guard !assessmentSubmitting, var a = currentAttempt, a.submittedAt == nil, !a.isServerCancelled,
               no >= 1 && no <= a.answers.count else { return }
         a.answers[no - 1] = value
+        if a.serverBacked == true, let questionID = a.questions[no - 1].serverQuestionId {
+            if a.hasLegacyDraftEvidence {
+                // Edits made while review is pending stay in that same review;
+                // do not let a new keystroke silently retry a rejected write.
+                a.legacyDraftEvidence?[questionID] = value
+            } else {
+                var draft = a.pendingDraft ?? AssessmentDraftRecovery()
+                draft.edit(questionID: questionID, answer: value, expectedRevision: a.serverMutationRevision)
+                a.pendingDraft = draft
+            }
+        }
         attemptsV2.upsert(a)
         saveAttemptsV2()
         if a.serverBacked == true { scheduleAssessmentDraft(a) }
@@ -2683,14 +2898,7 @@ final class AppStore: ObservableObject {
             try? await Task.sleep(for: .milliseconds(650))
             guard !Task.isCancelled,
                   self?.isLearningAccountOperationActive(for: account) == true else { return }
-            do {
-                try await ServerAPI.saveAssessmentDraft(
-                    id: attempt.id, answers: AssessmentSyncPayload.answers(for: attempt))
-            } catch {
-                guard self?.isLearningAccountOperationActive(for: account) == true else { return }
-                self?.assessmentSyncError = (error as? ServerAPIError)?.errorDescription
-                    ?? "평가 답안을 서버에 저장하지 못했습니다. 기기에는 보관했습니다."
-            }
+            self?.queueAssessmentDraft(attempt, account: account)
         }
     }
 
@@ -2708,17 +2916,80 @@ final class AppStore: ObservableObject {
               attempt.serverBacked == true else { return }
         // 화면 이탈은 위 로컬 내구 저장까지만 기다린다. 네트워크 왕복 때문에 닫기
         // 버튼이 멈추지 않도록 서버 flush는 종전처럼 별도 Task에서 이어 간다.
-        Task { [weak self] in
-            guard self?.isLearningAccountOperationActive(for: account) == true else { return }
+        queueAssessmentDraft(attempt, account: account)
+    }
+
+    /// Serial requests per account/attempt: cancelling a debounce is not proof that
+    /// a request already accepted by the server stopped writing an older draft.
+    private func queueAssessmentDraft(_ attempt: AssessmentAttemptV2, account: AccountSessionBoundary) {
+        guard !assessmentSubmitting, isLearningAccountOperationActive(for: account),
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let key = account.slot + ":" + attempt.id
+        let previous = assessmentDraftUploads[key]
+        guard attempt.pendingDraft?.isEmpty == false, !attempt.hasLegacyDraftEvidence else { return }
+        let uploadID = UUID()
+        assessmentDraftUploadIDs[key] = uploadID
+        let task = Task { [weak self] in
+            defer {
+                if self?.assessmentDraftUploadIDs[key] == uploadID {
+                    self?.assessmentDraftUploadIDs[key] = nil
+                    self?.assessmentDraftUploads[key] = nil
+                }
+            }
+            await previous?.value
+            guard let self, self.isLearningAccountOperationActive(for: account),
+                  ServerAPI.isCurrentAuthorization(authorization),
+                  let current = self.attemptsV2.attempts.first(where: { $0.id == attempt.id }),
+                  current.submittedAt == nil, !current.isServerCancelled,
+                  !current.hasLegacyDraftEvidence else { return }
+            // Earlier queued writes may already have acknowledged these edits.
+            // Read the current dirty set only after the predecessor settles.
+            guard current.pendingDraft?.isEmpty == false else { return }
             do {
-                try await ServerAPI.saveAssessmentDraft(
-                    id: attempt.id, answers: AssessmentSyncPayload.answers(for: attempt))
+                if current.pendingDraft?.baseRevision == nil {
+                    // An old cache is not evidence of server revision zero. Probe
+                    // before a keyless write; a newer server requires review of
+                    // edits whose original revision was never captured.
+                    let latest = try await ServerAPI.assessmentAttempt(attempt.id, authorization: authorization)
+                    guard self.isLearningAccountOperationActive(for: account) else { return }
+                    if latest.status == "abandoned" {
+                        await self.recordAbandonedAssessment(id: attempt.id, modifiedAt: latest.serverModifiedAt, account: account)
+                        return
+                    }
+                    guard let value = latest.localValue() else { throw CurriculumPolicyError.malformed }
+                    if value.serverMutationRevision != nil || value.submittedAt != nil {
+                        _ = await self.reconcileUnversionedAssessmentDraft(id: attempt.id, latest: value, account: account)
+                        return
+                    }
+                }
+                guard let current = self.attemptsV2.attempts.first(where: { $0.id == attempt.id }),
+                      !current.hasLegacyDraftEvidence, !current.isServerCancelled, current.submittedAt == nil else { return }
+                let payload = current.pendingDraft?.pending ?? [:]
+                let expectedRevision = current.pendingDraft?.baseRevision
+                guard !payload.isEmpty else { return }
+                let receipt = try await ServerAPI.saveAssessmentDraft(
+                    id: attempt.id, answers: payload, expectedRevision: expectedRevision, authorization: authorization)
+                guard self.isLearningAccountOperationActive(for: account) else { return }
+                if receipt.status == "abandoned" {
+                    await self.recordAbandonedAssessment(id: attempt.id, modifiedAt: receipt.savedDate, account: account)
+                    return
+                }
+                if receipt.expired == true || receipt.status == "submitted" || receipt.status == "disqualified" {
+                    await self.pullServerAssessments()
+                    return
+                }
+                self.attemptsV2.acknowledgeDraft(id: attempt.id, sent: payload, savedAt: receipt.savedDate,
+                    expectedRevision: expectedRevision, mutationRevision: receipt.mutationRevision)
+                self.saveAttemptsV2()
             } catch {
-                guard self?.isLearningAccountOperationActive(for: account) == true else { return }
-                self?.assessmentSyncError = (error as? ServerAPIError)?.errorDescription
+                guard self.isLearningAccountOperationActive(for: account) else { return }
+                if await self.handleAssessmentConflict(error, id: attempt.id,
+                    account: account, authorization: authorization) { return }
+                self.assessmentSyncError = (error as? ServerAPIError)?.errorDescription
                     ?? "평가 답안을 서버에 저장하지 못했습니다. 기기에는 보관했습니다."
             }
         }
+        assessmentDraftUploads[key] = task
     }
 
     /// 제출 — 웹 규칙: 균등 배점 100점, PASS 80. 오답은 오답노트에도 적재(앱 강점 유지).
@@ -2729,6 +3000,14 @@ final class AppStore: ObservableObject {
     func submitPaper(monotonicElapsed: TimeInterval = 0) {
         guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
         guard let current = currentAttempt, current.submittedAt == nil else { return }
+        guard !current.isServerCancelled else {
+            assessmentSyncError = "이 평가는 서버에서 종료되었습니다. 새 평가를 시작해 주세요."
+            return
+        }
+        guard !current.hasLegacyDraftEvidence else {
+            assessmentSyncError = "아직 확인하지 않은 기기 답안이 있습니다. 서버 답안과 비교한 뒤 제출해 주세요."
+            return
+        }
         let account = captureAccountSessionBoundary()
         guard current.serverBacked == true else {
             assessmentSyncError = "이 기록은 이전 버전의 비공식 연습입니다. 공식 평가로 제출할 수 없습니다."
@@ -2736,7 +3015,7 @@ final class AppStore: ObservableObject {
         }
         if current.serverBacked == true {
             guard !assessmentSubmitting else { return }
-            assessmentSubmitting = true
+            assessmentSubmissionState = .submitting(current.id)
             assessmentDraftTask?.cancel()
             Task { [weak self] in
                 await self?.submitServerPaper(
@@ -2750,19 +3029,55 @@ final class AppStore: ObservableObject {
                                    monotonicElapsed: TimeInterval,
                                    account: AccountSessionBoundary) async {
         defer {
-            if ownsCurrentAccountSession(account) { assessmentSubmitting = false }
+            if ownsCurrentAccountSession(account), assessmentSubmissionState == .submitting(attempt.id) {
+                assessmentSubmissionState = .editable
+            }
         }
         guard isLearningAccountOperationActive(for: account) else { return }
+        guard let authorization = ServerAPI.captureAuthorization() else {
+            assessmentSubmissionState = .recover(attemptID: attempt.id, failures: 1, status: 401)
+            assessmentSyncError = "로그인이 만료되었습니다. 답안은 기기에 보관되어 있습니다. 다시 로그인한 뒤 제출해 주세요."
+            return
+        }
+        await assessmentDraftUploads[account.slot + ":" + attempt.id]?.value
+        guard isLearningAccountOperationActive(for: account), ServerAPI.isCurrentAuthorization(authorization) else { return }
+        // A pending upload can discover a conflict while submit waits for it.
+        guard let current = attemptsV2.attempts.first(where: { $0.id == attempt.id }),
+              !current.isServerCancelled, !current.hasLegacyDraftEvidence else { return }
         do {
-            let payload = AssessmentSyncPayload.answers(for: attempt)
-            let remote: ServerAPI.RemoteAssessment
-            if attempt.remainingSeconds(monotonicElapsed: monotonicElapsed) <= 0 {
-                remote = try await ServerAPI.expireAssessment(id: attempt.id, answers: payload)
-            } else {
-                remote = try await ServerAPI.submitAssessment(id: attempt.id, answers: payload)
+            let latest = try await ServerAPI.assessmentAttempt(attempt.id, authorization: authorization)
+            guard isLearningAccountOperationActive(for: account) else { return }
+            if latest.status == "abandoned" {
+                await recordAbandonedAssessment(id: attempt.id, modifiedAt: latest.serverModifiedAt, account: account)
+                return
             }
+            guard let latestAttempt = latest.localValue() else { throw CurriculumPolicyError.malformed }
+            if let unversioned = attemptsV2.attempts.first(where: { $0.id == attempt.id }),
+               unversioned.pendingDraft?.isEmpty == false, unversioned.pendingDraft?.baseRevision == nil,
+               latestAttempt.serverMutationRevision != nil {
+                if await reconcileUnversionedAssessmentDraft(id: attempt.id, latest: latestAttempt, account: account) { return }
+            }
+            guard let latestLocal = attemptsV2.attempts.first(where: { $0.id == attempt.id }),
+                  !latestLocal.isServerCancelled, !latestLocal.hasLegacyDraftEvidence else { return }
+            // The server retains acknowledged answers. Send only local changes so
+            // another device's untouched answer is not replaced by this cache.
+            let payload = latestLocal.pendingDraft?.pending ?? [:]
+            let expectedRevision = payload.isEmpty ? latestAttempt.serverMutationRevision : latestLocal.pendingDraft?.baseRevision
+            let remote: ServerAPI.RemoteAssessment
+            if latestAttempt.submittedAt != nil { remote = latest }
+            else if latestAttempt.remainingSeconds(monotonicElapsed: monotonicElapsed) <= 0 {
+                remote = try await ServerAPI.expireAssessment(id: attempt.id, answers: payload,
+                    expectedRevision: expectedRevision, authorization: authorization)
+            } else {
+                remote = try await ServerAPI.submitAssessment(id: attempt.id, answers: payload,
+                    expectedRevision: expectedRevision, authorization: authorization)
+            }
+            guard var updated = remote.localValue() else { throw CurriculumPolicyError.malformed }
+            updated.clientStartID = attempt.clientStartID
             guard isLearningAccountOperationActive(for: account),
-                  let updated = remote.localValue() else { return }
+                  updated.submittedAt != nil else { throw CurriculumPolicyError.malformed }
+            assessmentSubmissionState = .confirmed(attempt.id)
+            assessmentSubmitFailures[attempt.id] = nil
             attemptsV2.upsert(updated)
             let persisted = await persistLearningImmediately(
                 .assessments(attemptsV2.attempts), for: account.slot)
@@ -2771,14 +3086,190 @@ final class AppStore: ObservableObject {
                 assessmentSyncError = "서버 제출은 완료됐지만 이 기기의 평가 기록 저장에 실패했습니다."
             } else {
                 assessmentSyncError = nil
+                if let ticket = updated.clientStartID {
+                    try? await AssessmentStartJournal.shared.acknowledge(scope: updated.scopeKey, ticket: ticket, slot: account.slot)
+                }
             }
-            currentAttemptID = updated.id
+            guard isLearningAccountOperationActive(for: account) else { return }
+            if currentAttemptID == attempt.id { currentAttemptID = updated.id }
             await SyncEngine.shared.pullWrongNotes()
         } catch {
             guard isLearningAccountOperationActive(for: account) else { return }
+            if await handleAssessmentConflict(error, id: attempt.id,
+                account: account, authorization: authorization) { return }
+            // The submission may have succeeded even if its response was lost.
+            // Read the server receipt before inviting another submission.
+            if let remote = try? await ServerAPI.assessmentAttempt(attempt.id, authorization: authorization),
+               isLearningAccountOperationActive(for: account) {
+                if remote.status == "abandoned" {
+                    await recordAbandonedAssessment(id: attempt.id, modifiedAt: remote.serverModifiedAt, account: account)
+                    return
+                }
+                if var confirmed = remote.localValue(), confirmed.submittedAt != nil {
+                    confirmed.clientStartID = attempt.clientStartID
+                    assessmentSubmissionState = .confirmed(attempt.id)
+                    assessmentSubmitFailures[attempt.id] = nil
+                    attemptsV2.upsert(confirmed)
+                    let saved = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: account.slot)
+                    guard isLearningAccountOperationActive(for: account) else { return }
+                    assessmentSyncError = saved ? nil : "서버 제출을 확인했습니다. 기기 저장 공간을 확인해 주세요."
+                    if saved, let ticket = confirmed.clientStartID {
+                        try? await AssessmentStartJournal.shared.acknowledge(scope: confirmed.scopeKey, ticket: ticket, slot: account.slot)
+                    }
+                    guard isLearningAccountOperationActive(for: account) else { return }
+                    await SyncEngine.shared.pullWrongNotes()
+                    return
+                }
+            }
+            guard isLearningAccountOperationActive(for: account) else { return }
+            let failures = (assessmentSubmitFailures[attempt.id] ?? 0) + 1
+            assessmentSubmitFailures[attempt.id] = failures
+            assessmentSubmissionState = .recover(attemptID: attempt.id, failures: failures,
+                status: (error as? ServerAPIError)?.statusCode)
             assessmentSyncError = (error as? ServerAPIError)?.errorDescription
                 ?? "평가를 제출하지 못했습니다. 답안은 기기에 보관되어 있습니다."
         }
+    }
+
+    /// Unknown is not revision zero, and a fresh GET cannot retroactively become
+    /// the baseline of an edit made against an older cache. Preserve and compare.
+    @discardableResult
+    private func reconcileUnversionedAssessmentDraft(id: String, latest: AssessmentAttemptV2,
+                                                     account: AccountSessionBoundary) async -> Bool {
+        guard isLearningAccountOperationActive(for: account) else { return true }
+        _ = attemptsV2.holdPendingDraftForReview(id: id)
+        attemptsV2.mergeServerAttempt(latest)
+        let needsReview = attemptsV2.attempts.first(where: { $0.id == id })?.hasLegacyDraftEvidence == true
+        if assessmentSubmissionState.permitsOutcome(for: id, currentAttemptID: currentAttemptID) {
+            assessmentSubmissionState = latest.submittedAt != nil ? .confirmed(id)
+                : (needsReview ? .recovery(attemptID: id, retryAfter: nil) : .editable)
+        }
+        let saved = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: account.slot)
+        guard isLearningAccountOperationActive(for: account) else { return true }
+        if currentAttemptID == id {
+            assessmentSyncError = !saved ? "답안 비교 결과를 기기에 저장하지 못했습니다. 저장 공간을 확인해 주세요."
+                : (needsReview ? "기기 답안의 서버 기준 버전을 확인할 수 없어 자동 저장을 멈췄습니다. 최신 서버 답안과 비교한 뒤 사용할 답안을 선택해 주세요." : nil)
+        }
+        if latest.submittedAt != nil { await SyncEngine.shared.pullWrongNotes() }
+        return !saved || needsReview || latest.submittedAt != nil
+    }
+
+    /// Typed or unknown HTTP 409s pause local writes until server state has been
+    /// inspected. Only ASSESSMENT_ABANDONED is itself a cancellation receipt.
+    private func handleAssessmentConflict(_ error: Error, id: String,
+                                          account: AccountSessionBoundary,
+                                          authorization: ServerAPI.AuthorizationSnapshot) async -> Bool {
+        guard let serverError = error as? ServerAPIError,
+              let conflict = AssessmentServerConflict(status: serverError.statusCode, code: serverError.code) else { return false }
+        guard isLearningAccountOperationActive(for: account), ServerAPI.isCurrentAuthorization(authorization) else { return true }
+        if conflict == .abandoned {
+            await recordAbandonedAssessment(id: id, modifiedAt: nil, account: account)
+            return true
+        }
+        _ = attemptsV2.holdPendingDraftForReview(id: id)
+        if assessmentSubmissionState.permitsOutcome(for: id, currentAttemptID: currentAttemptID) {
+            assessmentSubmissionState = .recovery(attemptID: id, retryAfter: nil)
+        }
+        let saved = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: account.slot)
+        guard isLearningAccountOperationActive(for: account), ServerAPI.isCurrentAuthorization(authorization) else { return true }
+        do {
+            let remote = try await ServerAPI.assessmentAttempt(id, authorization: authorization)
+            guard isLearningAccountOperationActive(for: account), ServerAPI.isCurrentAuthorization(authorization) else { return true }
+            if remote.status == "abandoned" {
+                await recordAbandonedAssessment(id: id, modifiedAt: remote.serverModifiedAt, account: account)
+                return true
+            }
+            guard let value = remote.localValue() else { throw CurriculumPolicyError.malformed }
+            attemptsV2.mergeServerAttempt(value)
+            if value.submittedAt != nil,
+               assessmentSubmissionState.permitsOutcome(for: id, currentAttemptID: currentAttemptID) {
+                assessmentSubmissionState = .confirmed(id)
+            }
+            let mergedSaved = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: account.slot)
+            guard isLearningAccountOperationActive(for: account) else { return true }
+            if currentAttemptID == id {
+                if !mergedSaved {
+                    assessmentSyncError = "최신 서버 상태를 확인했지만 기기 답안 저장에 실패했습니다. 저장 공간을 확인해 주세요."
+                } else if value.submittedAt != nil {
+                    assessmentSyncError = "서버에서 이미 종료된 평가입니다. 공식 결과를 확인했으며 보관된 기기 답안으로 덮어쓰지 않았습니다."
+                } else {
+                    assessmentSyncError = "다른 요청에서 더 최근 답안을 저장했습니다. 기기 답안은 보관했으며, 서버 답안과 비교한 뒤 계속해 주세요."
+                }
+            }
+            if value.submittedAt != nil { await SyncEngine.shared.pullWrongNotes() }
+        } catch {
+            guard isLearningAccountOperationActive(for: account) else { return true }
+            if let terminalError = error as? ServerAPIError,
+               AssessmentServerConflict(status: terminalError.statusCode, code: terminalError.code) == .abandoned {
+                await recordAbandonedAssessment(id: id, modifiedAt: nil, account: account)
+                return true
+            }
+            if currentAttemptID == id {
+                assessmentSyncError = saved
+                    ? "답안 저장 충돌로 자동 재시도를 멈췄습니다. 기기 답안은 보관되어 있으며, 연결 후 서버 답안과 비교해 주세요."
+                    : "답안 저장 충돌과 기기 저장 실패가 발생했습니다. 현재 답안을 유지하고 있으니 저장 공간과 연결을 확인해 주세요."
+            }
+        }
+        return true
+    }
+
+    private func recordAbandonedAssessment(id: String, modifiedAt: Date?, account: AccountSessionBoundary) async {
+        guard isLearningAccountOperationActive(for: account) else { return }
+        let original = attemptsV2.attempts.first { $0.id == id }
+        _ = attemptsV2.markServerAbandoned(id: id, updatedAt: modifiedAt)
+        if assessmentSubmissionState.permitsOutcome(for: id, currentAttemptID: currentAttemptID) {
+            assessmentSubmissionState = .confirmed(id)
+        }
+        let saved = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: account.slot)
+        guard isLearningAccountOperationActive(for: account) else { return }
+        if saved, let original, let ticket = original.clientStartID {
+            try? await AssessmentStartJournal.shared.acknowledge(scope: original.scopeKey, ticket: ticket, slot: account.slot)
+        }
+        guard isLearningAccountOperationActive(for: account) else { return }
+        if currentAttemptID == id {
+            assessmentSyncError = "이 평가는 서버에서 종료되었습니다. 보관된 답안은 유지하며, 새 평가에서 다시 시작할 수 있습니다."
+            route = .assess
+        }
+    }
+
+    func refreshLegacyAssessmentForReview(id: String, expectedOwner: AccountRequestOwner? = nil) async -> Bool {
+        guard let owner = expectedOwner ?? AccountRequestOwner(store: self), owner.isCurrent(in: self) else { return false }
+        do {
+            let remote = try await ServerAPI.assessmentAttempt(id, authorization: owner.authorization)
+            if remote.status == "abandoned" {
+                await recordAbandonedAssessment(id: id, modifiedAt: remote.serverModifiedAt, account: owner.account)
+                return false
+            }
+            guard let value = remote.localValue(), owner.isCurrent(in: self) else { return false }
+            attemptsV2.mergeServerAttempt(value)
+            let saved = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: owner.slot)
+            guard owner.isCurrent(in: self) else { return false }
+            if !saved { assessmentSyncError = "서버 답안은 확인했지만 기기 저장에 실패했습니다." }
+            return saved
+        } catch {
+            guard owner.isCurrent(in: self) else { return false }
+            assessmentSyncError = "최신 서버 답안을 확인하지 못했습니다. 기존 기기 답안은 보관 중입니다."
+            return false
+        }
+    }
+
+    func resolveLegacyAssessmentDraft(id: String, useLocalAnswers: Bool, expectedOwner: AccountRequestOwner? = nil) async -> Bool {
+        guard let owner = expectedOwner ?? AccountRequestOwner(store: self), owner.isCurrent(in: self), !assessmentSubmitting else { return false }
+        guard await refreshLegacyAssessmentForReview(id: id, expectedOwner: owner), owner.isCurrent(in: self),
+              let attempt = attemptsV2.attempts.first(where: { $0.id == id }) else { return false }
+        let changed: Bool
+        if useLocalAnswers {
+            let ids = Set(attempt.questions.compactMap(\.serverQuestionId))
+            changed = attemptsV2.applyLegacyDraftEvidence(id: id, questionIDs: ids)
+        } else { changed = attemptsV2.discardLegacyDraftEvidence(id: id) }
+        guard changed else { return !attempt.hasLegacyDraftEvidence }
+        let saved = await persistLearningImmediately(.assessments(attemptsV2.attempts), for: owner.slot)
+        guard owner.isCurrent(in: self) else { return false }
+        if !saved { assessmentSyncError = "선택한 복구 결과를 저장하지 못했습니다. 저장 공간을 확인해 주세요."; return false }
+        if useLocalAnswers, let current = attemptsV2.attempts.first(where: { $0.id == id }), current.submittedAt == nil {
+            queueAssessmentDraft(current, account: owner.account)
+        }
+        return true
     }
 
 
@@ -2801,17 +3292,262 @@ final class AppStore: ObservableObject {
     /// 응시 중인 기출 시험 id
     @Published var kiceExamID: String?
     /// 시험별 입력 답안 (examID → "구간-문항" → 입력). 나갔다 돌아와도 유지된다.
-    @Published var kiceAnswers: [String: [String: String]] = [:]
+    @Published private(set) var kiceAnswers: [String: [String: String]] = [:]
     /// 시험별 선택과목 (examID → 과목명)
-    @Published var kiceSubject: [String: String] = [:]
+    @Published private(set) var kiceSubject: [String: String] = [:]
+    @Published private(set) var kiceStudyReady = false
+    @Published private(set) var kiceStudyLoading = false
+    @Published private(set) var kiceBusy = false
+    @Published private(set) var kiceSaveError: String?
+    @Published private(set) var kiceRecoveryRequired = false
+    private var kiceArchive: KiceStudyArchive?
+    private var kiceHandle: KiceStudyRepository.Handle?
+    private var kiceLoadTask: Task<Bool, Never>?
+    private var kiceLoadID = UUID()
+    private var kiceDurableReceiptIDs = Set<String>()
+    private var kiceEffectsTransactionInFlight = false
+    private var kiceAuthenticationTransitions = 0
 
     var kiceExam: KiceExam? {
         kiceExamID.flatMap { id in KiceBank.exams.first { $0.id == id } }
     }
 
     func startKice(_ exam: KiceExam) {
+        guard !kiceBusy else { return }
         kiceExamID = exam.id
         route = .kice
+    }
+
+    var kiceCurrentAttempt: KiceStudyAttempt? {
+        guard kiceArchive?.slot == DataScope.slot else { return nil }
+        return kiceExamID.flatMap { kiceArchive?.attempts[$0] }
+    }
+    /// Non-secret SwiftUI task identity; the session boundary's implementation
+    /// fields remain fileprivate instead of being exposed to a screen.
+    var kiceLoadIdentity: String { "\(kiceExamID ?? "none")|\(accountSessionGeneration.uuidString)" }
+    var kiceCurrentReceipt: KiceStudyReceipt? {
+        guard let id = kiceCurrentAttempt?.receiptID, kiceDurableReceiptIDs.contains(id) else { return nil }
+        return kiceArchive?.receipts[id]
+    }
+    var canEditKice: Bool {
+        kiceStudyReady && route == .kice && !kiceBusy && kiceSaveError == nil && kiceCurrentAttempt != nil
+            && kiceCurrentAttempt?.receiptID == nil && kiceHandle.map(KiceStudyRepository.accepts) == true
+            && kiceHandle?.slot == DataScope.slot
+            && isLearningAccountOperationActive(for: DataScope.slot)
+    }
+
+    private func reloadKiceStudyState() {
+        kiceLoadTask?.cancel(); kiceLoadTask = nil; kiceLoadID = UUID()
+        kiceArchive = nil; kiceHandle = nil; kiceDurableReceiptIDs = []
+        kiceStatisticsContribution = .zero; kiceStudyReady = false; kiceStudyLoading = false
+        kiceSaveError = nil; kiceRecoveryRequired = false; kiceBusy = false
+        kiceAnswers = [:]; kiceSubject = [:]
+        Task { [weak self] in
+            guard let self, await self.loadKiceStudyIfNeeded() else { return }
+            if self.kiceAuthenticationTransitions == 0 { await self.drainKiceReceiptEffects() }
+        }
+    }
+
+    private func publishKiceArchive(_ archive: KiceStudyArchive, durable: Bool) {
+        guard archive.slot == DataScope.slot else { return }
+        kiceArchive = archive
+        kiceAnswers = archive.attempts.mapValues(\.answers)
+        kiceSubject = archive.attempts.mapValues(\.subject)
+        kiceStudyReady = true
+        if durable {
+            kiceDurableReceiptIDs = Set(archive.receipts.keys)
+            kiceStatisticsContribution = archive.statistics
+        }
+    }
+
+    @discardableResult private func loadKiceStudyIfNeeded() async -> Bool {
+        if kiceStudyReady, let handle = kiceHandle, handle.slot == DataScope.slot, KiceStudyRepository.accepts(handle) { return true }
+        if let task = kiceLoadTask { return await task.value }
+        let slot = DataScope.slot
+        guard let handle = KiceStudyRepository.handle(slot: slot) else { return false }
+        let id = UUID(); kiceLoadID = id; kiceStudyLoading = true
+        let task = Task { @MainActor [weak self] () -> Bool in
+            guard let self else { return false }
+            let loaded = await KiceStudyRepository.load(handle)
+            guard !Task.isCancelled, self.kiceLoadID == id, DataScope.slot == slot, KiceStudyRepository.accepts(handle) else { return false }
+            self.kiceHandle = handle
+            switch loaded {
+            case .missing: self.publishKiceArchive(.init(slot: slot), durable: true)
+            case .archive(let value):
+                self.publishKiceArchive(value, durable: true)
+                self.restoreKiceReceiptMirrors(value)
+            case .unreadable:
+                self.kiceStudyReady = false; self.kiceRecoveryRequired = true
+                self.kiceSaveError = "저장된 기출 기록을 읽지 못했습니다. 원본을 유지하고 자동 덮어쓰기를 중단했습니다."
+                return false
+            }
+            self.kiceRecoveryRequired = false
+            return true
+        }
+        kiceLoadTask = task
+        let value = await task.value
+        if kiceLoadID == id { kiceLoadTask = nil; kiceStudyLoading = false }
+        return value
+    }
+
+    private func restoreKiceReceiptMirrors(_ archive: KiceStudyArchive) {
+        guard archive.slot == DataScope.slot else { return }
+        // These pre-existing preferences are display mirrors, not the source
+        // of truth. Repair an interrupted preferences write from committed
+        // receipts without replaying grading, SRS or sync side effects.
+        let completed = archive.receipts.values.filter(\.effectsApplied)
+        guard !completed.isEmpty else { return }
+        activityDays = ActivityLog.record(dates: completed.map(\.gradedAt))
+        let highest = completed.reduce(into: [String: Int]()) { scores, receipt in
+            scores[receipt.examID] = max(scores[receipt.examID] ?? 0, receipt.result.score)
+        }
+        for (examID, score) in highest { KiceBank.recordScore(examID, score: score) }
+    }
+
+    @discardableResult func prepareKiceStudy(_ exam: KiceExam) async -> Bool {
+        let owner = captureAccountSessionBoundary()
+        guard await loadKiceStudyIfNeeded(), ownsCurrentAccountSession(owner), kiceExamID == exam.id, route == .kice, !kiceBusy,
+              let handle = kiceHandle, var archive = kiceArchive, kiceSaveError == nil else { return false }
+        do {
+            let before = archive.revision
+            _ = try archive.prepare(.init(exam: exam))
+            if archive.revision != before {
+                kiceBusy = true
+                defer { if ownsCurrentAccountSession(owner) { kiceBusy = false } }
+                publishKiceArchive(archive, durable: false)
+                let saved = await KiceStudyRepository.save(archive, for: handle)
+                guard ownsCurrentAccountSession(owner) else { return false }
+                guard saved else { kiceSaveError = "기출 시작 기록을 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 시도해주세요."; return false }
+            }
+            publishKiceArchive(archive, durable: true)
+            await drainKiceReceiptEffects()
+            return ownsCurrentAccountSession(owner)
+        } catch {
+            kiceSaveError = "기출 자료가 변경되어 이전 답안을 그대로 채점할 수 없습니다. 원본을 보관한 뒤 이 기출을 새로 시작해주세요."
+            return false
+        }
+    }
+
+    private func changeKiceArchive(_ change: (inout KiceStudyArchive) throws -> Void) {
+        guard canEditKice, var archive = kiceArchive, let handle = kiceHandle else { return }
+        do {
+            try change(&archive)
+            guard KiceStudyRepository.schedule(archive, for: handle) else { throw KiceStudyArchive.Failure.notReady }
+            publishKiceArchive(archive, durable: false)
+        } catch { kiceSaveError = "기출 입력을 저장하지 못했습니다. 입력값을 유지하고 있으니 다시 저장해주세요." }
+    }
+    func setKiceAnswer(examID: String, key: String, value: String) {
+        guard kiceExamID == examID else { return }
+        changeKiceArchive { try $0.answer(examID: examID, key: key, value: value) }
+    }
+    func setKiceSubject(_ subject: String, exam: KiceExam) {
+        guard kiceExamID == exam.id else { return }
+        changeKiceArchive { try $0.selectSubject(examID: exam.id, subject: subject, definition: .init(exam: exam)) }
+    }
+    func checkpointKice(elapsedMs: Int, page: Int? = nil) {
+        guard canEditKice, let id = kiceExamID, var archive = kiceArchive, let handle = kiceHandle else { return }
+        do {
+            try archive.checkpoint(examID: id, elapsedMs: elapsedMs, page: page)
+            guard KiceStudyRepository.schedule(archive, for: handle) else { throw KiceStudyArchive.Failure.notReady }
+            // The screen's timer already publishes once per second. Persist its
+            // immutable checkpoint without republishing the entire AppStore or
+            // feeding an onReceive -> objectWillChange resubscription loop.
+            kiceArchive = archive
+        } catch { kicePersistenceFailed(handle) }
+    }
+    func kicePersistenceFailed(_ handle: KiceStudyRepository.Handle) {
+        guard kiceHandle == handle, handle.slot == DataScope.slot else { return }
+        kiceSaveError = "기출 기록을 기기에 저장하지 못했습니다. 입력값을 유지하고 있습니다. 저장 공간을 확인한 뒤 다시 저장해주세요."
+    }
+    @discardableResult func flushKiceStudy() async -> Bool {
+        let owner = captureAccountSessionBoundary()
+        guard let handle = kiceHandle, handle.slot == owner.slot else { return false }
+        let saved = await KiceStudyRepository.flush(slot: owner.slot)
+        guard ownsCurrentAccountSession(owner), KiceStudyRepository.accepts(handle) else { return false }
+        guard saved else { kicePersistenceFailed(handle); return false }
+        let loaded = await KiceStudyRepository.load(handle)
+        guard ownsCurrentAccountSession(owner) else { return false }
+        if case .archive(let value) = loaded {
+            publishKiceArchive(value, durable: true); kiceSaveError = nil; kiceRecoveryRequired = false
+            return true
+        }
+        return false
+    }
+    func retryKicePersistence(expectedOwner: AccountSessionBoundary) async {
+        guard ownsCurrentAccountSession(expectedOwner) else { return }
+        if await flushKiceStudy() { await drainKiceReceiptEffects() }
+        else if !kiceStudyReady { _ = await loadKiceStudyIfNeeded() }
+    }
+    func leaveKiceStudy(elapsedMs: Int, page: Int, expectedOwner: AccountSessionBoundary) async {
+        guard ownsCurrentAccountSession(expectedOwner), !kiceBusy, !kiceEffectsTransactionInFlight else { return }
+        let owner = expectedOwner
+        checkpointKice(elapsedMs: elapsedMs, page: page)
+        kiceBusy = true
+        defer { if ownsCurrentAccountSession(owner) { kiceBusy = false } }
+        if !kiceStudyReady { route = .assess; return }
+        guard await flushKiceStudy(), ownsCurrentAccountSession(owner) else { return }
+        route = .assess
+    }
+    func gradeKice(_ exam: KiceExam, elapsedMs: Int, expectedOwner: AccountSessionBoundary, expectedAttemptID: String) async {
+        guard ownsCurrentAccountSession(expectedOwner), canEditKice, kiceExamID == exam.id,
+              kiceCurrentAttempt?.id == expectedAttemptID else { return }
+        let owner = expectedOwner
+        kiceBusy = true
+        defer { if ownsCurrentAccountSession(owner) { kiceBusy = false } }
+        let priorStateSaved = await flushLearningPersistence()
+        guard ownsCurrentAccountSession(owner), var archive = kiceArchive, let handle = kiceHandle else { return }
+        guard priorStateSaved else { kiceSaveError = "채점 전 학습 기록을 안전하게 저장하지 못했습니다. 저장 공간을 확인하고 다시 시도해주세요."; return }
+        do {
+            let receipt = KiceWrongNoteEffects.planned(try archive.grade(.init(exam: exam), elapsedMs: elapsedMs), existing: wrongNotes)
+            archive.receipts[receipt.id] = receipt
+            publishKiceArchive(archive, durable: false)
+            let saved = await KiceStudyRepository.save(archive, for: handle)
+            guard ownsCurrentAccountSession(owner) else { return }
+            guard saved else { kiceSaveError = "채점 결과의 저장을 확인하지 못했습니다. 답안을 유지하고 있으니 다시 저장해주세요."; return }
+            publishKiceArchive(archive, durable: true)
+            _ = await recordKice(receipt)
+        } catch { kiceSaveError = "기출 자료와 답안을 확인하지 못해 채점을 중단했습니다. 기존 기록은 유지됩니다." }
+    }
+    func beginKiceAgain(_ exam: KiceExam, expectedOwner: AccountSessionBoundary, expectedReceiptID: String) async {
+        guard ownsCurrentAccountSession(expectedOwner), !kiceBusy, let receipt = kiceCurrentReceipt,
+              receipt.id == expectedReceiptID, receipt.effectsApplied,
+              var archive = kiceArchive, let handle = kiceHandle else { return }
+        let owner = expectedOwner; kiceBusy = true
+        defer { if ownsCurrentAccountSession(owner) { kiceBusy = false } }
+        do {
+            try archive.beginAgain(.init(exam: exam))
+            let saved = await KiceStudyRepository.save(archive, for: handle)
+            guard ownsCurrentAccountSession(owner) else { return }
+            guard saved else { kiceSaveError = "새 기출 응시를 저장하지 못했습니다. 이전 결과는 유지됩니다."; return }
+            publishKiceArchive(archive, durable: true); kiceSaveError = nil
+        } catch { kiceSaveError = "이전 채점 기록을 반영한 뒤 새 응시를 시작할 수 있습니다." }
+    }
+    func resetKicePreservingOriginal(expectedOwner: AccountSessionBoundary) async {
+        guard ownsCurrentAccountSession(expectedOwner), !kiceBusy, !kiceEffectsTransactionInFlight,
+              let handle = kiceHandle, handle.slot == DataScope.slot else { return }
+        let owner = expectedOwner; kiceBusy = true
+        defer { if ownsCurrentAccountSession(owner) { kiceBusy = false } }
+        let archive = await KiceStudyRepository.resetPreservingOriginal(handle)
+        guard ownsCurrentAccountSession(owner), let archive else { kiceSaveError = "원본 보관 또는 초기화에 실패했습니다. 원본은 삭제하지 않았습니다."; return }
+        kiceHandle = KiceStudyRepository.handle(slot: owner.slot)
+        publishKiceArchive(archive, durable: true); kiceSaveError = nil; kiceRecoveryRequired = false
+        if let exam = kiceExam { kiceBusy = false; _ = await prepareKiceStudy(exam) }
+    }
+    private func resetKiceStatisticsForCurrentSlot() async -> Bool {
+        let owner = captureAccountSessionBoundary()
+        guard await loadKiceStudyIfNeeded(), ownsCurrentAccountSession(owner), var archive = kiceArchive, let handle = kiceHandle else { return false }
+        archive.resetStatistics()
+        publishKiceArchive(archive, durable: false)
+        let saved = await KiceStudyRepository.save(archive, for: handle)
+        guard ownsCurrentAccountSession(owner) else { return false }
+        if saved { publishKiceArchive(archive, durable: true) }
+        else { kicePersistenceFailed(handle) }
+        return saved
+    }
+    private func drainKiceReceiptEffects() async {
+        guard kiceAuthenticationTransitions == 0, !kiceEffectsTransactionInFlight,
+              let pending = kiceArchive?.pendingEffects, !pending.isEmpty else { return }
+        for receipt in pending { if !(await recordKice(receipt)) { return } }
     }
 
     // MARK: 오늘의 학습 계획 (웹 DailyPlan — 로컬 생성)
@@ -2872,53 +3608,78 @@ final class AppStore: ObservableObject {
     /// 기출 채점 후 실데이터 반영 — 누적 통계·학습일·최고점·오답노트 적재.
     /// 오답노트 항목은 문제 본문 대신 "문제지 PDF 로 다시 풀라" 는 지시문을 담는다
     /// (기출 발제문은 저작물이라 앱 텍스트로 복제하지 않는다).
-    func recordKice(exam: KiceExam, score: Int, correct: Int, total: Int,
-                    elapsedMs: Int,
-                    wrong: [(KiceItem, String, String)]) {
-        guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
-        EventLog.appendGrading(correct: correct, total: total, durationMs: elapsedMs)
-        SyncEngine.shared.enqueueGradingEvents(
-            correct: correct, total: total, durationMs: elapsedMs)
-        solvedTotal += total
-        correctTotal += correct
-        UserDefaults.standard.set(solvedTotal, forKey: AppStore.slotKey("matths.solved"))
-        UserDefaults.standard.set(correctTotal, forKey: AppStore.slotKey("matths.correct"))
-        activityDays = ActivityLog.recordToday()
-        KiceBank.recordScore(exam.id, score: score)
-
-        let choiceKeys = ["a", "b", "c", "d", "e"]
-        for (item, section, myInput) in wrong {
-            let pid = "\(exam.id)-\(section)-\(item.no)"
-            if let i = wrongNotes.firstIndex(where: { $0.problemID == pid && !$0.isMastered }) {
-                WrongNoteSRS.afterWrong(&wrongNotes[i])
-                // 이번 회차에 쓴 답으로 갱신 — 진단은 "가장 최근에 뭘 썼는지" 를 본다
-                if !myInput.isEmpty { wrongNotes[i].myAnswer = myInput }
-                SyncEngine.shared.enqueueReviewResult(wrongNotes[i], correct: false)
-            } else {
-                wrongNotes.insert(WrongNoteEntry(
-                    id: UUID().uuidString, problemID: pid, typeKey: "kice-\(exam.id)",
-                    typeName: "\(exam.short) \(section) \(item.no)번",
-                    unit: "기출 \(exam.short)",
-                    statement: "“\(exam.title)” 수학 영역\(exam.displayForm.map { "(\($0))" } ?? "") \(section) \(item.no)번, \(item.points)점 문항입니다. 평가센터의 기출에서 문제지 PDF를 열어 다시 풀어보세요.",
-                    // 선다는 SolveScreen 의 5지선다 키(a~e), 단답은 숫자 그대로
-                    answer: item.isChoice ? choiceKeys[(Int(item.answer) ?? 1) - 1] : item.answer,
-                    steps: ["기출 문항은 앱이 모범 풀이를 제공하지 않습니다. 문제지 PDF로 다시 푼 뒤, 해설이 필요하면 EBSi 무료 해설 강의를 참고하세요."],
-                    seed: 0, divergenceStep: nil, drawingPNGBase64: nil,
-                    srsStage: 0, nextReviewAt: Date(),   // 최초 복습은 당일
-                    wrongCount: 1, createdAt: Date(),
-                    // 발제문 없는 선다 복습용 — 빈 텍스트 선지는 ①~⑤ 버블만 그린다
-                    choices: item.isChoice ? ["", "", "", "", ""] : nil,
-                    isTex: item.isChoice,
-                    // 그때 학생이 쓴 답 — 없으면 AI 진단이 무엇이 어긋났는지 못 짚는다
-                    myAnswer: myInput.isEmpty ? nil : myInput
-                ), at: 0)
-                // 기출 오답도 서버 오답노트에 올린다. 여기만 배선이 빠져 있어서
-                // 로그인 이후에 생긴 기출 오답은 기기를 바꾸면 통째로 사라졌다
-                // (로그인 순간의 스냅샷 1회 업로드에만 얹혀 있었다 — 감사 적발).
-                if let fresh = wrongNotes.first { SyncEngine.shared.enqueueWrongNote(fresh) }
-            }
+    @discardableResult
+    func recordKice(_ supplied: KiceStudyReceipt) async -> Bool {
+        guard isLearningAccountOperationActive(for: DataScope.slot), !kiceEffectsTransactionInFlight,
+              let handle = kiceHandle, var archive = kiceArchive,
+              handle.slot == DataScope.slot, archive.slot == DataScope.slot,
+              var receipt = archive.receipts[supplied.id], kiceDurableReceiptIDs.contains(receipt.id) else { return false }
+        if receipt.effectsApplied { return true }
+        let owner = captureAccountSessionBoundary()
+        kiceEffectsTransactionInFlight = true
+        defer { kiceEffectsTransactionInFlight = false }
+        func ownsTransaction() -> Bool {
+            ownsCurrentAccountSession(owner) && !disabledLearningPersistenceSlots.contains(owner.slot)
+                && transitioningLearningPersistenceSlots[owner.slot] == nil && KiceStudyRepository.accepts(handle)
         }
-        saveWrongNotes()
+        do {
+            if receipt.wrongAnswers.contains(where: { $0.notePlan == nil }) {
+                receipt = KiceWrongNoteEffects.planned(receipt, existing: wrongNotes)
+                archive.receipts[receipt.id] = receipt; archive.revision &+= 1
+                publishKiceArchive(archive, durable: false)
+                let planned = await KiceStudyRepository.save(archive, for: handle)
+                guard ownsTransaction(), planned else { throw KiceStudyArchive.Failure.notReady }
+                publishKiceArchive(archive, durable: true)
+            }
+            if !receipt.localEffectsApplied {
+                let staged = try KiceWrongNoteEffects.applying(receipt, to: wrongNotes)
+                let notesSaved = await persistLearningImmediately(.wrongNotes(staged), for: owner.slot)
+                guard ownsTransaction(), notesSaved else { throw KiceStudyArchive.Failure.notReady }
+                wrongNotes = staged
+                archive.markLocalEffectsApplied(receipt.id)
+                publishKiceArchive(archive, durable: false)
+                let localMarked = await KiceStudyRepository.save(archive, for: handle)
+                guard ownsTransaction(), localMarked else { throw KiceStudyArchive.Failure.notReady }
+                publishKiceArchive(archive, durable: true)
+                guard let locallyApplied = archive.receipts[receipt.id] else { throw KiceStudyArchive.Failure.invalid }
+                receipt = locallyApplied
+            }
+            // Stable event IDs and the original date survive an interrupted
+            // cross-file effect commit. Local/server readers deduplicate IDs.
+            EventLog.appendGrading(correct: receipt.result.correctCount, total: receipt.result.total,
+                durationMs: receipt.elapsedMs, receiptID: receipt.gradingEventID, occurredAt: receipt.gradedAt)
+            SyncEngine.shared.enqueueGradingEvents(correct: receipt.result.correctCount, total: receipt.result.total,
+                durationMs: receipt.elapsedMs, receiptID: receipt.gradingEventID, occurredAt: receipt.gradedAt)
+            for wrong in receipt.wrongAnswers {
+                guard let plan = wrong.notePlan, let note = wrongNotes.first(where: { $0.id == plan.noteID }) else { continue }
+                let effectID = receipt.wrongNoteEffectID(wrong.question.key)
+                if plan.wasNew {
+                    SyncEngine.shared.enqueueWrongNote(note, receiptID: effectID, occurredAt: receipt.gradedAt)
+                } else {
+                    SyncEngine.shared.enqueueReviewResult(note, correct: note.isMastered,
+                        receiptID: effectID, occurredAt: receipt.gradedAt)
+                }
+            }
+            activityDays = ActivityLog.record(at: receipt.gradedAt)
+            KiceBank.recordScore(receipt.examID, score: receipt.result.score)
+            let eventsSaved = await EventLog.flushPendingWrites(for: owner.slot)
+            guard ownsTransaction(), eventsSaved else { throw KiceStudyArchive.Failure.notReady }
+            if authProvider == "server" {
+                let queueSaved = await SyncEngine.shared.flushLocalQueuePersistence()
+                guard ownsTransaction(), queueSaved else { throw KiceStudyArchive.Failure.notReady }
+            }
+            archive.markEffectsApplied(receipt.id)
+            publishKiceArchive(archive, durable: false)
+            let finished = await KiceStudyRepository.save(archive, for: handle)
+            guard ownsTransaction(), finished else { throw KiceStudyArchive.Failure.notReady }
+            publishKiceArchive(archive, durable: true); kiceSaveError = nil
+            return true
+        } catch {
+            if ownsTransaction() {
+                kiceSaveError = "채점 결과는 보관했지만 오답·학습 기록의 저장 확인이 끝나지 않았습니다. 다시 저장을 누르면 중복 없이 이어서 반영합니다."
+            }
+            return false
+        }
     }
 
     /// 결과 화면에서 고른 "틀린 이유"(7종) — 방금 적재된 오답 항목에 기록 (웹 errorType)
@@ -3015,12 +3776,16 @@ final class AppStore: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            guard let expirationID = notification.userInfo?["expirationID"] as? UUID else { return }
             Task { @MainActor in
-                guard let self, self.authProvider == "server" else { return }
+                guard let self, self.authProvider == "server",
+                      ServerAPI.ownsAuthenticationExpiration(expirationID) else { return }
                 let serverMessage = String(
                     notification.userInfo?["message"] as? String ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                self.signOut()
+                guard await self.transitionToSignedOut(
+                    discardingCurrentSlot: false, expirationID: expirationID) else { return }
+                guard self.authProvider == nil, ServerAPI.mayShowAuthenticationExpiredNotice else { return }
                 self.authenticationNotice = serverMessage.isEmpty
                     ? "로그인이 만료되었습니다. 다시 로그인해주세요."
                     : serverMessage

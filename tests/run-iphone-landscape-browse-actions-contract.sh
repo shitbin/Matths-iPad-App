@@ -85,12 +85,17 @@ grep -q 'CompactHeightColumns(spacing: Tokens.Space.s5, stackedSpacing: Tokens.S
 grep -q 'Text("예상 시간 약 \\(dueAll.count \* 4)분")' "$SCREENS"
 grep -q 'Button("복습 시작")' "$SCREENS"
 
-# 교사 출결은 반·날짜·저장이 한 화면에 남고, 작업대의 이상적 폭이 Dynamic Island
-# 안전영역 밖으로 팽창하지 않아야 한다. 양쪽 인셋을 각각 사용해야 회전 방향도 안전하다.
-grep -q 'let compactWorkWidth = max(' "$TEACHER_ACADEMY"
-grep -q '.frame(width: compactWorkWidth, alignment: .topLeading)' "$TEACHER_ACADEMY"
-grep -q 'viewport.safeAreaInsets.leading + 12' "$TEACHER_ACADEMY"
-grep -q 'viewport.safeAreaInsets.trailing + 12' "$TEACHER_ACADEMY"
+# The staff container replaced manual device-wide subtraction. Its GeometryReader
+# receives the actual safe-area proposal and does not opt out of safe areas; the
+# bottom task bar uses safeAreaInset rather than painting over the content.
+grep -Fq 'StaffWorkspaceContainer(' "$TEACHER_ACADEMY"
+grep -Fq '.frame(maxWidth: .infinity, maxHeight: .infinity)' "$TEACHER_ACADEMY"
+grep -Fq 'StaffWorkspaceMetrics.usesSidebar(width: viewport.size.width)' "$ROOT/Matths/StaffWorkspaceComponents.swift"
+grep -Fq '.safeAreaInset(edge: .bottom, spacing: 0)' "$ROOT/Matths/StaffWorkspaceComponents.swift"
+if grep -Eq 'ignoresSafeArea|edgesIgnoringSafeArea' "$ROOT/Matths/StaffWorkspaceComponents.swift"; then
+  echo 'staff container must retain the safe-area proposal' >&2
+  exit 1
+fi
 grep -q 'else if compactLandscape {' "$TEACHER_ACADEMY"
 grep -q '.frame(width: compactLandscape ? 144 : nil, alignment: .leading)' "$TEACHER_ACADEMY"
 grep -q '.frame(minWidth: compactLandscape ? 72 : 92, minHeight: 44)' "$TEACHER_ACADEMY"

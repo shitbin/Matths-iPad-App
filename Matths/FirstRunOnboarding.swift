@@ -11,6 +11,38 @@ struct FirstRunOnboardingOverlay: View {
     @State private var selectedCoach: SpiceLevel = .mild
     @State private var saving = false
     @State private var errorMessage: String?
+    private struct PresentationOwner {
+        let id: UUID
+        let request: AccountRequestOwner
+        let role: String
+    }
+    @State private var presentationOwner: PresentationOwner?
+    @State private var saveTask: Task<Void, Never>?
+
+    private func owns(_ owner: PresentationOwner) -> Bool {
+        presentationOwner?.id == owner.id && owner.request.isCurrent(in: store)
+            && owner.role == accountRole && store.authProvider == "server"
+            && store.nativeTutorialPresentationOwner == owner.id
+    }
+
+    @MainActor private func claimPresentation() -> Bool {
+        guard store.authProvider == "server", let request = AccountRequestOwner(store: store) else { return false }
+        let owner = PresentationOwner(id: UUID(), request: request, role: accountRole)
+        presentationOwner = owner
+        store.claimNativeTutorialPresentation(owner.id)
+        return true
+    }
+
+    @MainActor private func clearPresentation(ifOwnedBy expectedID: UUID? = nil) {
+        guard expectedID == nil || presentationOwner?.id == expectedID else { return }
+        let previous = presentationOwner
+        let shouldClearRequest = previous?.request.isCurrent(in: store) == true
+            && store.nativeTutorialPresentationOwner == previous?.id
+        saveTask?.cancel(); saveTask = nil
+        presentationOwner = nil; isPresented = false; saving = false; errorMessage = nil
+        if let previous { store.releaseNativeTutorialPresentation(previous.id) }
+        if shouldClearRequest { store.requestedDashboardTutorial = false }
+    }
 
     private var accountRole: String {
         #if DEBUG
@@ -81,6 +113,9 @@ struct FirstRunOnboardingOverlay: View {
 
     private var triggerKey: String {
         [
+            String(describing: store.captureAccountSessionBoundary()),
+            store.nativeTutorialPresentationOwner?.uuidString ?? "",
+            DataScope.slot,
             store.authProvider ?? "",
             accountRole,
             store.serverProfile?.dashboardTutorial?.status ?? "",
@@ -91,7 +126,7 @@ struct FirstRunOnboardingOverlay: View {
 
     var body: some View {
         Group {
-            if isPresented {
+            if let owner = presentationOwner, owns(owner), isPresented {
                 GeometryReader { proxy in
                     ZStack {
                         Color.black.opacity(0.64)
@@ -111,6 +146,10 @@ struct FirstRunOnboardingOverlay: View {
             }
         }
         .task(id: triggerKey) { presentIfNeeded() }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            if let owner = presentationOwner, !owns(owner) { clearPresentation(ifOwnedBy: owner.id) }
+        }
+        .onDisappear { clearPresentation() }
     }
 
     private func onboardingCard(compactHeight: Bool) -> some View {
@@ -315,10 +354,13 @@ struct FirstRunOnboardingOverlay: View {
 
     @MainActor
     private func presentIfNeeded() {
+        if let owner = presentationOwner, !owns(owner) {
+            clearPresentation(ifOwnedBy: owner.id)
+            return
+        }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-firstRunFixture") {
-            guard !isPresented else { return }
-            store.isTutorialPresentationActive = true
+            guard !isPresented, claimPresentation() else { return }
             isPresented = true
             return
         }
@@ -329,36 +371,43 @@ struct FirstRunOnboardingOverlay: View {
               !store.requestedDashboardTutorial,
               store.serverProfile?.dashboardTutorial?.shouldAutoStart == true else { return }
         selectedCoach = SpiceLevel.fromServer(store.serverProfile?.coachMode)
-        store.isTutorialPresentationActive = true
+        guard claimPresentation() else { return }
         withAnimation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.2)) {
             isPresented = true
         }
     }
 
     private func finish(skipped: Bool) {
-        guard !saving else { return }
+        guard let owner = presentationOwner, !saving else { return }
+        guard owns(owner) else { clearPresentation(ifOwnedBy: owner.id); return }
+        let coach = selectedCoach
+        let destination: AppStore.Route = skipped ? .home : (isStaffAccount ? .academy : selectedIntent.destination)
+        let shouldUpdateCoach = !skipped && !isStaffAccount
         saving = true
         errorMessage = nil
-        Task { @MainActor in
+        saveTask = Task { @MainActor in
+            guard owns(owner) else { clearPresentation(ifOwnedBy: owner.id); return }
             do {
-                if !skipped && !isStaffAccount {
-                    try await ServerAPI.updateCoachMode(selectedCoach.serverValue)
-                    store.coach.level = selectedCoach
+                if shouldUpdateCoach {
+                    try await ServerAPI.updateCoachMode(coach.serverValue, authorization: owner.request.authorization)
+                    guard owns(owner) else { clearPresentation(ifOwnedBy: owner.id); return }
+                    store.coach.level = coach
                 }
-                _ = try await ServerAPI.updateDashboardTutorial(skipped ? "SKIP" : "COMPLETE")
-                await store.refreshServerProfile()
+                _ = try await ServerAPI.updateDashboardTutorial(skipped ? "SKIP" : "COMPLETE", authorization: owner.request.authorization)
+                guard owns(owner) else { clearPresentation(ifOwnedBy: owner.id); return }
+                let profile = try await ServerAPI.me(authorization: owner.request.authorization)
+                guard owns(owner) else { clearPresentation(ifOwnedBy: owner.id); return }
+                store.acceptServerProfile(profile, owner: owner.request)
             } catch {
+                guard owns(owner) else { clearPresentation(ifOwnedBy: owner.id); return }
                 saving = false
                 errorMessage = (error as? ServerAPIError)?.errorDescription
                     ?? "첫 설정을 저장하지 못했습니다. 다시 시도해 주세요."
                 return
             }
-            store.requestedDashboardTutorial = false
-            store.isTutorialPresentationActive = false
-            store.route = skipped ? .home : (isStaffAccount ? .academy : selectedIntent.destination)
-            saving = false
+            store.route = destination
             withAnimation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.18)) {
-                isPresented = false
+                clearPresentation(ifOwnedBy: owner.id)
             }
         }
     }

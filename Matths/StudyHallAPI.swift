@@ -103,42 +103,43 @@ extension ServerAPI {
         var content: StudyHallContent
     }
 
-    static func studyHall(tab: String = "NJE") async throws -> StudyHall {
+    static func studyHall(tab: String = "NJE", authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> StudyHall {
         let value: StudyHallEnvelope = try await request(
             "GET", "/api/v1/study-hall", body: nil, authed: true,
-            query: ["tab": tab])
+            query: ["tab": tab], authorization: authorization)
         try validateStudyHallSchema(value.schemaVersion)
         return value.hall
     }
 
-    static func studyHallContent(_ contentID: String) async throws -> StudyHallContent {
+    static func studyHallContent(_ contentID: String, authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()) async throws -> StudyHallContent {
         let value: StudyHallContentEnvelope = try await request(
-            "GET", "/api/v1/study-hall/content/\(contentID)", body: nil, authed: true)
+            "GET", "/api/v1/study-hall/content/\(contentID)", body: nil, authed: true, authorization: authorization)
         try validateStudyHallSchema(value.schemaVersion)
+        try validateStudyHallContent(value.content, expectedID: contentID)
         return value.content
     }
 
     static func saveStudyHallAnswers(
         contentID: String,
-        answers: [StudyHallAnswer]
+        answers: [StudyHallAnswer], authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()
     ) async throws -> StudyHallContent {
         try await updateStudyHallAnswers(
-            method: "PUT", suffix: "answers", contentID: contentID, answers: answers)
+            method: "PUT", suffix: "answers", contentID: contentID, answers: answers, authorization: authorization)
     }
 
     static func submitStudyHallAnswers(
         contentID: String,
-        answers: [StudyHallAnswer]
+        answers: [StudyHallAnswer], authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()
     ) async throws -> StudyHallContent {
         try await updateStudyHallAnswers(
-            method: "POST", suffix: "submit", contentID: contentID, answers: answers)
+            method: "POST", suffix: "submit", contentID: contentID, answers: answers, authorization: authorization)
     }
 
     private static func updateStudyHallAnswers(
         method: String,
         suffix: String,
         contentID: String,
-        answers: [StudyHallAnswer]
+        answers: [StudyHallAnswer], authorization: AuthorizationSnapshot
     ) async throws -> StudyHallContent {
         let rows: [[String: Any]] = answers.map {
             ["number": $0.number, "answer": String($0.answer.prefix(100))]
@@ -147,29 +148,36 @@ extension ServerAPI {
             method,
             "/api/v1/study-hall/content/\(contentID)/\(suffix)",
             body: ["answers": rows],
-            authed: true)
+            authed: true, authorization: authorization)
         try validateStudyHallSchema(value.schemaVersion)
+        try validateStudyHallContent(value.content, expectedID: contentID)
         return value.content
     }
 
     static func downloadStudyHallAsset(
         contentID: String,
-        asset: StudyHallAsset
+        asset: StudyHallAsset, accountSlot: String = DataScope.slot,
+        authorization: AuthorizationSnapshot = ServerAPI.authorizationForCurrentRequest()
     ) async throws -> URL {
         let request = try authorizedRequest(
             "GET",
             "/api/v1/study-hall/content/\(contentID)/files/\(asset.id)",
-            timeout: 120)
+            timeout: 120, authorization: authorization)
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        let errorBody = (try? Data(contentsOf: temporaryURL)) ?? Data()
+        let errorBody: Data
+        if let status = (response as? HTTPURLResponse)?.statusCode, status >= 400,
+           let handle = try? FileHandle(forReadingFrom: temporaryURL) {
+            errorBody = (try? handle.read(upToCount: 65_536)) ?? Data(); try? handle.close()
+        } else { errorBody = Data() }
         let http = try validateAuthorizedResponse(
             response,
             errorBody: errorBody,
             requestToken: bearerToken(from: request))
 
+        guard !Task.isCancelled, DataScope.slot == accountSlot, isCurrentAuthorization(authorization) else { throw CancellationError() }
         let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("StudyHallDownloads", isDirectory: true)
-            .appendingPathComponent(DataScope.slot, isDirectory: true)
+            .appendingPathComponent(accountSlot, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
@@ -189,6 +197,15 @@ extension ServerAPI {
             throw ServerAPIError(
                 message: "학습 콘텐츠 응답 버전이 앱과 맞지 않습니다.",
                 code: "STUDY_HALL_SCHEMA_UNSUPPORTED")
+        }
+    }
+    private static func validateStudyHallContent(_ value: StudyHallContent, expectedID: String) throws {
+        guard value.id == expectedID, (0...500).contains(value.itemCount), value.questions.count <= 500,
+              Set(value.questions.map(\.number)).count == value.questions.count,
+              Set(value.progress.answers.map(\.number)).count == value.progress.answers.count,
+              value.questions.allSatisfy({ (1...500).contains($0.number) }), value.progress.answers.allSatisfy({ (1...500).contains($0.number) }),
+              (0...100).contains(value.progress.percent), (0...100).contains(value.progress.scorePercent) else {
+            throw ServerAPIError(message: "학습 내용과 답안 정보를 확인하지 못했습니다. 다시 불러와 주세요.", code: "STUDY_HALL_CONTENT_INVALID")
         }
     }
 }

@@ -70,7 +70,7 @@ struct ProfileScreen: View {
                 HStack(spacing: Tokens.Space.s3) {
                     ForEach(Self.profileAvatarPresets, id: \.0) { code, label in
                         Button {
-                            Task { await selectProfileAvatar(code) }
+                            selectProfileAvatar(code)
                         } label: {
                             VStack(spacing: 5) {
                                 Text(String(label.prefix(1)))
@@ -88,6 +88,9 @@ struct ProfileScreen: View {
                     }
 
                     Button {
+                        guard let owner = AccountRequestOwner(store: store) else { return }
+                        profilePhotoOwner = owner
+                        profilePhotoRequestID = UUID()
                         showProfilePhotoCropper = true
                     } label: {
                         VStack(spacing: 5) {
@@ -121,16 +124,21 @@ struct ProfileScreen: View {
     @ViewBuilder
     private var tutorialButtons: some View {
         Button("대시보드 튜토리얼 다시 시작") {
+            guard let owner = AccountRequestOwner(store: store) else { return }
             Task {
+                guard owner.isCurrent(in: store) else { return }
                 do {
-                    _ = try await ServerAPI.updateDashboardTutorial("RESTART")
-                    await refreshServerProfile()
+                    _ = try await ServerAPI.updateDashboardTutorial("RESTART", authorization: owner.authorization)
+                    guard owner.isCurrent(in: store) else { return }
+                    await refreshServerProfile(force: true)
+                    guard owner.isCurrent(in: store) else { return }
                     // 서버 상태만 PENDING으로 바꾸고 프로필에 머물면
                     // 사용자 눈에는 아무 일도 안 일어난다. 웹의 restart가
                     // `/main?tutorialStep=0`으로 돌아가듯 앱도 홈으로 이동한다.
                     store.requestedDashboardTutorial = true
                     store.route = .home
                 } catch {
+                    guard owner.isCurrent(in: store) else { return }
                     serverProfileError = (error as? ServerAPIError)?.errorDescription
                 }
             }
@@ -140,18 +148,23 @@ struct ProfileScreen: View {
         Menu("GOAT Arena 튜토리얼") {
             ForEach(serverProfile?.arenaTutorial?.availableChapters ?? [], id: \.self) { chapter in
                 Button(arenaTutorialLabel(chapter)) {
+                    guard let owner = AccountRequestOwner(store: store) else { return }
                     Task {
+                        guard owner.isCurrent(in: store) else { return }
                         do {
                             _ = try await ServerAPI.updateArenaTutorial(
                                 chapter: chapter,
-                                action: "RESTART")
-                            await refreshServerProfile()
+                                action: "RESTART", authorization: owner.authorization)
+                            guard owner.isCurrent(in: store) else { return }
+                            await refreshServerProfile(force: true)
+                            guard owner.isCurrent(in: store) else { return }
                             // 최신 서버는 의도적으로 autoChapter를 고르지 않는다.
                             // 사용자가 고른 편을 앱 로컬 launch request로 넘기고,
                             // 그 편이 있는 실제 화면으로 즉시 이동한다.
                             store.requestedArenaTutorialChapter = chapter
                             store.route = chapter == "ranked_shop" ? .arenaShop : .rank
                         } catch {
+                            guard owner.isCurrent(in: store) else { return }
                             serverProfileError = (error as? ServerAPIError)?.errorDescription
                         }
                     }
@@ -171,14 +184,15 @@ struct ProfileScreen: View {
     ]
 
     @MainActor
-    private func refreshServerProfile() async {
+    private func refreshServerProfile(force: Bool = false) async {
         guard store.authProvider == "server" else {
             serverProfile = nil
             return
         }
+        guard let owner = AccountRequestOwner(store: store) else { return }
         do {
-            await store.refreshServerProfile()
-            guard store.authProvider == "server" else { return }
+            await store.refreshServerProfile(force: force)
+            guard store.authProvider == "server", owner.isCurrent(in: store) else { return }
             guard let user = store.serverProfile else {
                 throw ServerAPIError(message: "프로필을 불러오지 못했습니다.", code: "PROFILE_UNAVAILABLE")
             }
@@ -186,31 +200,44 @@ struct ProfileScreen: View {
             if let mode = user.coachMode, let level = SpiceLevel(rawValue: mode) {
                 applyingServerProfile = true
                 store.coach.level = level
-                DispatchQueue.main.async { applyingServerProfile = false }
+                DispatchQueue.main.async {
+                    guard owner.isCurrent(in: store) else { return }
+                    applyingServerProfile = false
+                }
             }
             serverProfileError = nil
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             serverProfileError = (error as? ServerAPIError)?.errorDescription
         }
     }
 
     @MainActor
-    private func selectProfileAvatar(_ code: String) async {
+    private func selectProfileAvatar(_ code: String) {
+        guard !profileMutationInFlight, let owner = AccountRequestOwner(store: store) else { return }
         profileMutationInFlight = true
-        defer { profileMutationInFlight = false }
+        Task { @MainActor in
+        guard owner.isCurrent(in: store) else { return }
+        defer { if owner.isCurrent(in: store) { profileMutationInFlight = false } }
         do {
-            _ = try await ServerAPI.updateProfileAvatarPreset(code)
-            await refreshServerProfile()
+            _ = try await ServerAPI.updateProfileAvatarPreset(code, authorization: owner.authorization)
+            guard owner.isCurrent(in: store) else { return }
+            await refreshServerProfile(force: true)
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             serverProfileError = (error as? ServerAPIError)?.errorDescription
                 ?? "프로필 사진을 저장하지 못했습니다."
         }
+        }
     }
 
     @MainActor
-    private func uploadProfilePhoto(_ image: UIImage) async {
+    private func uploadProfilePhoto(_ image: UIImage, owner: AccountRequestOwner) {
+        guard !profileMutationInFlight, owner.isCurrent(in: store) else { return }
         profileMutationInFlight = true
-        defer { profileMutationInFlight = false }
+        Task { @MainActor in
+        guard owner.isCurrent(in: store) else { return }
+        defer { if owner.isCurrent(in: store) { profileMutationInFlight = false } }
         do {
             guard image.size.width > 0,
                   image.size.height > 0,
@@ -220,11 +247,14 @@ struct ProfileScreen: View {
                     message: "사진을 1:1로 자른 뒤 저장해 주세요.",
                     code: "PROFILE_AVATAR_IMAGE_INVALID")
             }
-            _ = try await ServerAPI.updateProfileAvatarCustom(jpegData: jpeg)
-            await refreshServerProfile()
+            _ = try await ServerAPI.updateProfileAvatarCustom(jpegData: jpeg, authorization: owner.authorization)
+            guard owner.isCurrent(in: store) else { return }
+            await refreshServerProfile(force: true)
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             serverProfileError = (error as? ServerAPIError)?.errorDescription
                 ?? "프로필 사진을 저장하지 못했습니다."
+        }
         }
     }
 
@@ -248,6 +278,7 @@ struct ProfileScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var confirmReset = false
+    @State private var resetConfirmationOwner: AppStore.AccountSessionBoundary?
     @State private var resetError: String?
     /// 8GB 기기에서 9B 경량판을 쓰겠다는 선택 (UserDefaults 직결)
     @State private var force9B = ModelDownloader.force9BOnSmallDevice
@@ -264,6 +295,9 @@ struct ProfileScreen: View {
     @State private var serverProfileError: String?
     @State private var profileMutationInFlight = false
     @State private var showProfilePhotoCropper = false
+    @State private var profilePhotoOwner: AccountRequestOwner?
+    @State private var profilePhotoRequestID: UUID?
+    @State private var nicknameEditorOwner: AccountRequestOwner?
     @State private var showNicknameEditor = {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("-nicknameEditor")
@@ -438,12 +472,15 @@ struct ProfileScreen: View {
                     .pickerStyle(.segmented).frame(maxWidth: 260)
                     .accessibilityLabel("코치 수위")
                     .onChange(of: store.coach.level) { _, level in
-                        guard !applyingServerProfile else { return }
+                        guard !applyingServerProfile, let owner = AccountRequestOwner(store: store) else { return }
                         Task {
+                            guard owner.isCurrent(in: store) else { return }
                             do {
-                                try await ServerAPI.updateCoachMode(level.rawValue)
-                                await refreshServerProfile()
+                                try await ServerAPI.updateCoachMode(level.rawValue, authorization: owner.authorization)
+                                guard owner.isCurrent(in: store) else { return }
+                                await refreshServerProfile(force: true)
                             } catch {
+                                guard owner.isCurrent(in: store) else { return }
                                 serverProfileError = (error as? ServerAPIError)?.errorDescription
                                     ?? "코치 모드를 저장하지 못했습니다."
                             }
@@ -637,23 +674,30 @@ struct ProfileScreen: View {
                     DottedRule()
                 }
 
-                Button { confirmReset = true } label: {
+                Button {
+                    resetConfirmationOwner = store.captureAccountSessionBoundary()
+                    confirmReset = true
+                } label: {
                     dataRow("진도 초기화",
                             tint: Tokens.dangerInk,
                             caption: "완료 개념 \(completedConceptCount)개, 통계 포함")
                 }
                 .buttonStyle(.plain)
                 .confirmationDialog("진도를 초기화할까요?", isPresented: $confirmReset, titleVisibility: .visible) {
+                    if let account = resetConfirmationOwner {
                     Button(store.authProvider == "server"
                            ? "계정과 이 기기의 진도 지우기"
                            : "완료 기록과 통계를 모두 지우기", role: .destructive) {
                         // AppStore가 구/v2 진도·통계와 즉시 내구 저장을 한 경계에서 끝낸다.
                         // 호출부가 v2를 한 번 더 비우면 pending 세대 순서가 다시 갈라진다.
+                        guard store.ownsCurrentAccountSession(account) else { return }
                         Task {
-                            if !(await store.resetProgress()) {
+                            guard store.ownsCurrentAccountSession(account) else { return }
+                            if !(await store.resetProgress(expectedAccount: account)), store.ownsCurrentAccountSession(account) {
                                 resetError = "초기화 기록을 안전하게 저장하지 못했습니다. 저장 공간을 확인하고 앱을 종료하지 않은 채 다시 시도해주세요."
                             }
                         }
+                    }
                     }
                     Button("취소", role: .cancel) {}
                 } message: {
@@ -742,14 +786,18 @@ struct ProfileScreen: View {
                 .foregroundStyle(Tokens.actionPrimary)
                 .accessibilityElement(children: .contain)
 
-                // 오픈소스 고지 — 온디바이스 AI 탑재로 필수가 된 항목 (Apache 2.0 고지 의무)
+                // 서드파티별 원 제작사의 라이선스를 구분한다. 변환 저장소의
+                // 메타데이터만으로 원 모델의 상업 이용 허가를 추정하지 않는다.
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                         ForEach(Self.licenses, id: \.0) { name, license, url in
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("\(name) (\(license))")
                                     .font(.mCaption).foregroundStyle(Tokens.text2)
-                                Text(url).font(.mMicro).foregroundStyle(Tokens.text4)
+                                if let destination = URL(string: "https://" + url) {
+                                    Link("관련 안내 원문", destination: destination)
+                                        .font(.mMicro).foregroundStyle(Tokens.primary)
+                                }
                             }
                         }
                         // KICE 원문은 권리 확인 전에 오픈소스 라이선스로 오인되면 안 된다.
@@ -786,20 +834,57 @@ struct ProfileScreen: View {
             Text(resetError ?? "")
         }
         .task(id: "\(store.authProvider ?? "guest")|\(DataScope.slot)") {
+            if showNicknameEditor, nicknameEditorOwner == nil {
+                nicknameEditorOwner = AccountRequestOwner(store: store)
+            }
             await refreshServerProfile()
         }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            closeAccountBoundEditors()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .matthsServerAuthenticationExpired)) { _ in
+            closeAccountBoundEditors()
+        }
+        .onChange(of: store.authProvider) { _, _ in closeAccountBoundEditors() }
         .compactHeightSheet(isPresented: $showProfilePhotoCropper) {
+            if let owner = profilePhotoOwner, let pickerID = profilePhotoRequestID {
             ProfilePhotoCropPicker(
-                onCancel: { showProfilePhotoCropper = false },
-                onPick: { image in
+                onCancel: {
+                    guard profilePhotoRequestID == pickerID else { return }
                     showProfilePhotoCropper = false
-                    Task { await uploadProfilePhoto(image) }
+                    profilePhotoOwner = nil; profilePhotoRequestID = nil
+                },
+                onPick: { image in
+                    guard profilePhotoRequestID == pickerID, owner.isCurrent(in: store) else {
+                        if profilePhotoRequestID == pickerID {
+                            showProfilePhotoCropper = false
+                            profilePhotoOwner = nil; profilePhotoRequestID = nil
+                            serverProfileError = "로그인 상태가 바뀌어 사진을 올리지 않았습니다. 현재 계정에서 다시 선택해 주세요."
+                        }
+                        return
+                    }
+                    showProfilePhotoCropper = false
+                    profilePhotoOwner = nil; profilePhotoRequestID = nil
+                    uploadProfilePhoto(image, owner: owner)
                 })
                 .ignoresSafeArea()
+            }
         }
         .compactHeightSheet(isPresented: $showNicknameEditor) {
             nicknameEditor
         }
+    }
+
+    private func closeAccountBoundEditors() {
+        showProfilePhotoCropper = false
+        profilePhotoOwner = nil; profilePhotoRequestID = nil
+        showNicknameEditor = false; nicknameEditorOwner = nil
+        nicknameDraft = ""; nicknameError = nil; nicknameSaving = false
+        showWithdraw = false; showsPasswordChange = false
+        confirmReset = false; resetConfirmationOwner = nil
+        resetError = nil
+        profileMutationInFlight = false; serverProfile = nil; serverProfileError = nil
+        applyingServerProfile = false
     }
 
     /// 가입 전 화면과 같은 세 정책·지원 진입점. 큰 글자에서는 부모
@@ -827,7 +912,7 @@ struct ProfileScreen: View {
     /// 사용자에게 보이지 않는 자산도 마찬가지다.
     private static let licenses: [(String, String, String)] = [
         ("Qwen3.5 (Alibaba Cloud)", "Apache License 2.0", "huggingface.co/Qwen"),
-        ("Qwen2.5-VL 3B (Alibaba Cloud)", "Apache License 2.0", "huggingface.co/Qwen"),
+        ("Qwen2.5-VL 3B (Alibaba Cloud)", "Qwen Research License · 비상업 연구·평가용, 상업 이용 별도 허가 필요", "huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/blob/37ce9f696340e294a5d3e0e806466addd1b22b3a/LICENSE"),
         ("DeepSeek-R1-Distill-Qwen-7B", "MIT License", "huggingface.co/deepseek-ai"),
         ("llama.cpp (ggml-org)", "MIT License", "github.com/ggml-org/llama.cpp"),
         ("KaTeX", "MIT License", "katex.org"),
@@ -1038,6 +1123,8 @@ struct ProfileScreen: View {
             }
             if store.authProvider == "server" {
                 Button {
+                    guard let owner = AccountRequestOwner(store: store) else { return }
+                    nicknameEditorOwner = owner
                     nicknameDraft = store.userName
                     nicknameError = nil
                     showNicknameEditor = true
@@ -1060,7 +1147,8 @@ struct ProfileScreen: View {
     }
 
     private var nicknameEditor: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+        let editorOwner = nicknameEditorOwner
+        return VStack(alignment: .leading, spacing: Tokens.Space.s4) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("닉네임 변경")
@@ -1071,17 +1159,25 @@ struct ProfileScreen: View {
                         .foregroundStyle(Tokens.text3)
                 }
                 Spacer()
-                Button("닫기") { showNicknameEditor = false }
+                Button("닫기") {
+                    guard nicknameEditorOwner?.id == editorOwner?.id else { return }
+                    showNicknameEditor = false
+                }
                     .frame(minHeight: 44)
                     .disabled(nicknameSaving)
             }
 
-            TextField("새 닉네임", text: $nicknameDraft)
+            TextField("새 닉네임", text: Binding(
+                get: { nicknameEditorOwner?.id == editorOwner?.id ? nicknameDraft : "" },
+                set: {
+                    guard let editorOwner, editorOwner.isCurrent(in: store), nicknameEditorOwner?.id == editorOwner.id else { return }
+                    nicknameDraft = $0
+                }))
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.done)
-                .onSubmit { Task { await saveNickname() } }
+                .onSubmit { saveNickname(owner: editorOwner) }
 
             HStack {
                 Text("2–30자 · 꺾쇠 문자(< >) 제외")
@@ -1101,7 +1197,7 @@ struct ProfileScreen: View {
             }
 
             Button {
-                Task { await saveNickname() }
+                saveNickname(owner: editorOwner)
             } label: {
                 HStack {
                     if nicknameSaving { ProgressView().tint(Tokens.onPrimary) }
@@ -1117,6 +1213,7 @@ struct ProfileScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Tokens.paper)
         .onAppear {
+            guard let editorOwner, editorOwner.isCurrent(in: store), nicknameEditorOwner?.id == editorOwner.id else { return }
             if nicknameDraft.isEmpty { nicknameDraft = store.userName }
         }
     }
@@ -1127,24 +1224,31 @@ struct ProfileScreen: View {
     }
 
     @MainActor
-    private func saveNickname() async {
-        guard nicknameDraftIsValid, !nicknameSaving else { return }
+    private func saveNickname(owner: AccountRequestOwner?) {
+        guard nicknameDraftIsValid, !nicknameSaving, let owner, nicknameEditorOwner?.id == owner.id,
+              owner.isCurrent(in: store) else { return }
+        let submittedNickname = nicknameDraft
         nicknameSaving = true
         nicknameError = nil
-        defer { nicknameSaving = false }
+        Task { @MainActor in
+        guard owner.isCurrent(in: store) else { return }
+        defer { if owner.isCurrent(in: store) { nicknameSaving = false } }
         do {
-            let user = try await ServerAPI.updateNickname(nicknameDraft)
+            let user = try await ServerAPI.updateNickname(submittedNickname, authorization: owner.authorization)
+            guard owner.isCurrent(in: store) else { return }
             let savedName = user.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !savedName.isEmpty else {
                 throw ServerAPIError(message: "저장된 닉네임을 확인하지 못했습니다.", code: "NICKNAME_RESPONSE_INVALID")
             }
-            store.userName = savedName
+            store.acceptServerProfile(user, owner: owner)
             serverProfile = user
             nicknameDraft = savedName
             showNicknameEditor = false
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             nicknameError = (error as? ServerAPIError)?.errorDescription
                 ?? "닉네임을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
+        }
         }
     }
 
@@ -1278,6 +1382,9 @@ struct SchoolPickerRow: View {
     @State private var showPicker = false
     @State private var saving = false
     @State private var errorText: String?
+    @State private var pickerAccount: AppStore.AccountSessionBoundary?
+    @State private var pickerOwner: AccountRequestOwner?
+    @State private var pickerID: UUID?
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -1295,14 +1402,23 @@ struct SchoolPickerRow: View {
         }
         .padding(.vertical, Tokens.Space.s2)
         .compactHeightSheet(isPresented: $showPicker) {
+            if let account = pickerAccount, let requestID = pickerID {
+            let owner = pickerOwner
             APISchoolPickerSheet { region, code, _ in
-                chooseSchool(region: region, code: code)
+                guard pickerID == requestID, store.ownsCurrentAccountSession(account) else { return }
+                chooseSchool(region: region, code: code, owner: owner)
+            }
             }
         }
         .onChange(of: DataScope.slot) { _, _ in
             // 계정을 바꾼 뒤 앞 계정 요청의 실패 문구가 새 프로필에 남지 않는다.
             saving = false
             errorText = nil
+            showPicker = false; pickerAccount = nil; pickerOwner = nil; pickerID = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            showPicker = false; pickerAccount = nil; pickerOwner = nil; pickerID = nil
+            saving = false; errorText = nil
         }
         .task(id: "\(store.authProvider ?? "guest")|\(DataScope.slot)") {
             await refreshServerSchool()
@@ -1337,6 +1453,9 @@ struct SchoolPickerRow: View {
         // 히트 영역만 44pt 까지 넓힌다. 손가락으로 눌러야 하는 표적이다.
         Button(saving ? "반영 중…" : (store.profileSchoolName == nil ? "학교 선택" : "변경")) {
             errorText = nil
+            pickerAccount = store.captureAccountSessionBoundary()
+            pickerOwner = AccountRequestOwner(store: store)
+            pickerID = UUID()
             showPicker = true
         }
             .font(.mCaption).foregroundStyle(Tokens.primary)
@@ -1349,7 +1468,7 @@ struct SchoolPickerRow: View {
             .disabled(saving)
     }
 
-    private func chooseSchool(region: String, code: String) {
+    private func chooseSchool(region: String, code: String, owner: AccountRequestOwner?) {
         errorText = nil
 
         // 게스트는 서버 정본이 없으므로 기존 로컬 저장이 맞다.
@@ -1359,14 +1478,16 @@ struct SchoolPickerRow: View {
         }
 
         let accountSlot = DataScope.slot
+        guard let owner, owner.isCurrent(in: store) else { return }
         saving = true
         Task {
+            guard owner.isCurrent(in: store) else { return }
             do {
-                let user = try await ServerAPI.updateSchool(region: region, code: code)
+                let user = try await ServerAPI.updateSchool(region: region, code: code, authorization: owner.authorization)
                 await MainActor.run {
                     // 요청 중 로그아웃·계정 전환이 일어났다면 앞 계정 응답을 새 계정에
                     // 붙이지 않는다. 서버에는 올바른 앞 계정으로 이미 반영되어 있다.
-                    guard store.authProvider == "server", DataScope.slot == accountSlot else {
+                    guard store.authProvider == "server", DataScope.slot == accountSlot, owner.isCurrent(in: store) else {
                         return
                     }
                     guard let school = user.school,
@@ -1384,7 +1505,7 @@ struct SchoolPickerRow: View {
                 }
             } catch {
                 await MainActor.run {
-                    guard store.authProvider == "server", DataScope.slot == accountSlot else {
+                    guard store.authProvider == "server", DataScope.slot == accountSlot, owner.isCurrent(in: store) else {
                         return
                     }
                     errorText = (error as? ServerAPIError)?.errorDescription
@@ -1392,7 +1513,7 @@ struct SchoolPickerRow: View {
                 }
             }
             await MainActor.run {
-                if DataScope.slot == accountSlot { saving = false }
+                if owner.isCurrent(in: store) { saving = false }
             }
         }
     }
@@ -1403,10 +1524,11 @@ struct SchoolPickerRow: View {
     private func refreshServerSchool() async {
         guard store.authProvider == "server" else { return }
         let accountSlot = DataScope.slot
+        guard let owner = AccountRequestOwner(store: store) else { return }
         do {
-            let user = try await ServerAPI.me()
+            let user = try await ServerAPI.me(authorization: owner.authorization)
             await MainActor.run {
-                guard store.authProvider == "server", DataScope.slot == accountSlot else { return }
+                guard store.authProvider == "server", DataScope.slot == accountSlot, owner.isCurrent(in: store) else { return }
                 guard let school = user.school else {
                     store.clearServerVerifiedSchool()
                     return
@@ -1481,6 +1603,7 @@ private struct WithdrawSheet: View {
     @State private var phrase = ""
     @State private var agreed = false
     @State private var busy = false
+    @State private var presentedAccount: AppStore.AccountSessionBoundary?
     @State private var errorText: String?
     @State private var options: ServerAPI.WithdrawalOptions?
     @State private var googleReauthentication:
@@ -1489,6 +1612,7 @@ private struct WithdrawSheet: View {
         ServerAPI.AppleWithdrawalReauthentication?
     @State private var kakaoReauthentication:
         ServerAPI.KakaoWithdrawalReauthentication?
+    @State private var reauthenticationOwner: AccountRequestOwner?
     @State private var googleBusy = false
     @State private var appleBusy = false
     @State private var kakaoBusy = false
@@ -1678,7 +1802,22 @@ private struct WithdrawSheet: View {
                     .overlay(alignment: .top) { Divider().overlay(Tokens.line) }
             }
         }
+        .onAppear {
+            if presentedAccount == nil { presentedAccount = store.captureAccountSessionBoundary() }
+        }
         .task { await loadWithdrawalOptions() }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            guard let presentedAccount, !store.ownsCurrentAccountSession(presentedAccount) else { return }
+            password = ""
+            phrase = ""
+            agreed = false
+            googleReauthentication = nil
+            appleReauthentication = nil
+            kakaoReauthentication = nil
+            reauthenticationOwner = nil
+            google.cancel(); apple.cancel(); kakao.cancel()
+            dismiss()
+        }
         .onDisappear {
             google.cancel()
             apple.cancel()
@@ -1688,7 +1827,7 @@ private struct WithdrawSheet: View {
 
     private var submitButton: some View {
         Button {
-            Task { await submit() }
+            submit()
         } label: {
             HStack {
                 if busy { ProgressView().controlSize(.small) }
@@ -1812,7 +1951,8 @@ private struct WithdrawSheet: View {
 
     private func googleButton(fullWidth: Bool) -> some View {
         Button {
-            Task { await verifyWithGoogle() }
+            guard let owner = AccountRequestOwner(store: store) else { return }
+            Task { await verifyWithGoogle(owner: owner) }
         } label: {
             HStack(spacing: Tokens.Space.s2) {
                 Image("GoogleGMark")
@@ -1839,7 +1979,8 @@ private struct WithdrawSheet: View {
 
     private func appleButton(fullWidth: Bool) -> some View {
         Button {
-            Task { await verifyWithApple() }
+            guard let owner = AccountRequestOwner(store: store) else { return }
+            Task { await verifyWithApple(owner: owner) }
         } label: {
             HStack(spacing: Tokens.Space.s2) {
                 Image(systemName: "apple.logo")
@@ -1864,7 +2005,8 @@ private struct WithdrawSheet: View {
 
     private func kakaoButton(fullWidth: Bool) -> some View {
         Button {
-            Task { await verifyWithKakao() }
+            guard let owner = AccountRequestOwner(store: store) else { return }
+            Task { await verifyWithKakao(owner: owner) }
         } label: {
             HStack(spacing: Tokens.Space.s2) {
                 Image(systemName: "message.fill")
@@ -1901,36 +2043,48 @@ private struct WithdrawSheet: View {
         }
     }
 
-    private func submit() async {
+    private func submit() {
+        guard let presentedAccount, store.ownsCurrentAccountSession(presentedAccount) else {
+            errorText = "로그인한 계정이 바뀌었습니다. 탈퇴 화면을 닫고 현재 계정에서 다시 시작해 주세요."
+            return
+        }
+        guard canSubmit, !busy, let owner = AccountRequestOwner(store: store) else { return }
+        let appleProof = appleReauthentication
+        let kakaoProof = kakaoReauthentication
+        let googleProof = googleReauthentication
+        let submittedPassword = password
+        let acknowledged = agreed
+        if appleProof != nil || kakaoProof != nil || googleProof != nil {
+            guard reauthenticationOwner?.isCurrent(in: store) == true else {
+                errorText = "로그인 상태가 바뀌었습니다. 본인 확인을 다시 진행해 주세요."
+                return
+            }
+        }
         busy = true
         errorText = nil
-        defer { busy = false }
+        Task { @MainActor in
+        guard owner.isCurrent(in: store) else { return }
+        defer { if store.ownsCurrentAccountSession(owner.account) { busy = false } }
         // 네트워크 await 전에 탈퇴 요청을 보낸 세션의 owner를 붙잡는다. 응답을 기다리는
         // 동안 401 로그아웃/새 로그인이 끼어도 guest나 새 계정 슬롯을 지우지 않는다.
-        let withdrawn = await MainActor.run {
-            (
-                slot: DataScope.slot,
-                directory: DataScope.directory,
-                session: store.captureAccountSessionBoundary()
-            )
-        }
+        let withdrawn = (slot: owner.slot, directory: owner.directory, session: owner.account)
         do {
-            if let appleReauthentication {
+            if let appleReauthentication = appleProof {
                 _ = try await ServerAPI.withdrawMe(
                     reauthentication: appleReauthentication,
-                    acknowledgeAnonymousRetention: agreed)
-            } else if let kakaoReauthentication {
+                    acknowledgeAnonymousRetention: acknowledged, authorization: owner.authorization)
+            } else if let kakaoReauthentication = kakaoProof {
                 _ = try await ServerAPI.withdrawMe(
                     reauthentication: kakaoReauthentication,
-                    acknowledgeAnonymousRetention: agreed)
-            } else if let googleReauthentication {
+                    acknowledgeAnonymousRetention: acknowledged, authorization: owner.authorization)
+            } else if let googleReauthentication = googleProof {
                 _ = try await ServerAPI.withdrawMe(
                     reauthentication: googleReauthentication,
-                    acknowledgeAnonymousRetention: agreed)
+                    acknowledgeAnonymousRetention: acknowledged, authorization: owner.authorization)
             } else {
                 _ = try await ServerAPI.withdrawMe(
-                    password: password,
-                    acknowledgeAnonymousRetention: agreed)
+                    password: submittedPassword,
+                    acknowledgeAnonymousRetention: acknowledged, authorization: owner.authorization)
             }
             // 서버가 토큰 버전을 올렸으므로 이 기기의 토큰도 이미 무효다.
             // 지연 writer를 먼저 cancel-and-drain해야 아래 디렉터리 삭제 뒤에
@@ -1956,7 +2110,9 @@ private struct WithdrawSheet: View {
                 dismiss()
             }
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             errorText = Self.withdrawalFailureMessage(error)
+        }
         }
     }
 
@@ -1982,14 +2138,17 @@ private struct WithdrawSheet: View {
     }
 
     private func loadWithdrawalOptions() async {
-        guard !loadingWithdrawalOptions else { return }
+        guard !loadingWithdrawalOptions, let owner = AccountRequestOwner(store: store) else { return }
         loadingWithdrawalOptions = true
-        defer { loadingWithdrawalOptions = false }
+        defer { if owner.isCurrent(in: store) { loadingWithdrawalOptions = false } }
         do {
-            options = try await ServerAPI.withdrawalOptions()
+            let loaded = try await ServerAPI.withdrawalOptions(authorization: owner.authorization)
+            guard owner.isCurrent(in: store) else { return }
+            options = loaded
             withdrawalOptionsUnsupported = false
             withdrawalOptionsLoadError = nil
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             // 기존 이메일/비밀번호 탈퇴는 options 조회와 독립적으로 유지한다.
             // 구버전 서버나 일시적인 네트워크 오류가 비밀번호 탈퇴까지 막으면 안 된다.
             // 라우트 없음(404)만 "이 서버는 소셜 재확인을 제공하지 않음" 안내로 바꾼다.
@@ -2001,14 +2160,18 @@ private struct WithdrawSheet: View {
         }
     }
 
-    private func verifyWithGoogle() async {
+    private func verifyWithGoogle(owner: AccountRequestOwner) async {
+        guard owner.isCurrent(in: store) else { return }
         google.cancel()
         googleBusy = true
         errorText = nil
-        defer { googleBusy = false }
+        defer { if owner.isCurrent(in: store) { googleBusy = false } }
         do {
-            googleReauthentication = try await google
+            let proof = try await google
                 .reauthenticateForAccountDeletion()
+            guard owner.isCurrent(in: store) else { return }
+            googleReauthentication = proof
+            reauthenticationOwner = owner
             appleReauthentication = nil
             kakaoReauthentication = nil
             password = ""
@@ -2016,38 +2179,48 @@ private struct WithdrawSheet: View {
             where error.code == .canceledLogin {
             return
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             errorText = (error as? ServerAPIError)?.errorDescription
                 ?? "Google 본인 확인을 완료하지 못했습니다."
         }
     }
 
-    private func verifyWithApple() async {
+    private func verifyWithApple(owner: AccountRequestOwner) async {
+        guard owner.isCurrent(in: store) else { return }
         apple.cancel()
         appleBusy = true
         errorText = nil
-        defer { appleBusy = false }
+        defer { if owner.isCurrent(in: store) { appleBusy = false } }
         do {
-            appleReauthentication = try await apple
+            let proof = try await apple
                 .reauthenticateForAccountDeletion()
+            guard owner.isCurrent(in: store) else { return }
+            appleReauthentication = proof
+            reauthenticationOwner = owner
             googleReauthentication = nil
             kakaoReauthentication = nil
             password = ""
         } catch let error as ASAuthorizationError where error.code == .canceled {
             return
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             errorText = (error as? ServerAPIError)?.errorDescription
                 ?? "Apple 본인 확인을 완료하지 못했습니다."
         }
     }
 
-    private func verifyWithKakao() async {
+    private func verifyWithKakao(owner: AccountRequestOwner) async {
+        guard owner.isCurrent(in: store) else { return }
         kakao.cancel()
         kakaoBusy = true
         errorText = nil
-        defer { kakaoBusy = false }
+        defer { if owner.isCurrent(in: store) { kakaoBusy = false } }
         do {
-            kakaoReauthentication = try await kakao
+            let proof = try await kakao
                 .reauthenticateForAccountDeletion()
+            guard owner.isCurrent(in: store) else { return }
+            kakaoReauthentication = proof
+            reauthenticationOwner = owner
             googleReauthentication = nil
             appleReauthentication = nil
             password = ""
@@ -2055,6 +2228,7 @@ private struct WithdrawSheet: View {
             where error.code == .canceledLogin {
             return
         } catch {
+            guard owner.isCurrent(in: store) else { return }
             errorText = (error as? ServerAPIError)?.errorDescription
                 ?? "카카오 본인 확인을 완료하지 못했습니다."
         }
@@ -2072,7 +2246,9 @@ private struct WithdrawSheet: View {
         } catch {
             // 이미 없으면 정상. 그 외 실패는 잔재가 남았다는 뜻이라 흔적을 남긴다
             // (콘솔 로그가 이 앱의 최소 증거 채널이다).
+            #if DEBUG
             print("Matths 탈퇴 정리: 슬롯 파일 삭제 실패 — \(error.localizedDescription)")
+            #endif
         }
         // 슬롯 스코프 UserDefaults — AppStore.slotKey 규약("<키>.<슬롯>")과
         // SyncEngine pull 커서("matths.sync.lastPull.<슬롯>") 모두 같은 접미사라
@@ -2082,6 +2258,8 @@ private struct WithdrawSheet: View {
         for key in defaults.dictionaryRepresentation().keys where key.hasSuffix(suffix) {
             defaults.removeObject(forKey: key)
         }
+        #if DEBUG
         print("Matths 탈퇴 정리: 슬롯 \(slot) 로컬 데이터 삭제 완료")
+        #endif
     }
 }

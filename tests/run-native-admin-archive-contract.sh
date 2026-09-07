@@ -11,5 +11,5 @@ for behavior in adminArchive createAdminArchiveFolder updateAdminArchiveFolder p
 for behavior in '자료실 관리' 'case files = "자료", trash = "휴지통"' '파일 선택 (최대 20개)' '등록 후 회원에게 공지' '파일 원본 영구 삭제' 'verticalSizeClass == .compact'; do grep -Fq "$behavior" "$screen" || { echo "FAIL missing UI $behavior" >&2; exit 1; }; done
 grep -Fq 'GET /api/v1/admin/archive' "$demo"
 grep -Fq '/api/v1/admin/archive/trash/{itemId}/purge' "$demo"
-grep -Fq '"자료실·배포 파일"' "$admin"
+grep -Fq '"자료실·배포 파일"' "$root/Matths/StaffWorkspaceState.swift"
 echo "native admin archive contract passed"

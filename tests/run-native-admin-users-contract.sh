@@ -44,7 +44,7 @@ for behavior in 'case users = "사용자"' 'case sanctions = "제재"' 'case aud
   grep -Fq "$behavior" "$screen" || { echo "FAIL: missing native user UI behavior $behavior" >&2; exit 1; }
 done
 
-grep -Fq '"사용자·제재 관리"' "$admin"
+grep -Fq '"사용자·제재 관리"' "$root/Matths/StaffWorkspaceState.swift"
 grep -Fq 'contains("-adminUsers")' "$root_view"
 grep -Fq 'contains("-adminSanctions")' "$root_view"
 grep -Fq 'contains("-adminAudit")' "$root_view"

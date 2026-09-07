@@ -30,7 +30,8 @@ for route in \
   grep -Fq "$route" "$api"
 done
 grep -Fq 'multipart/form-data; boundary=' "$api"
-grep -Fq 'name=\"communityFiles\"' "$api"
+grep -Fq 'name=\"communityFiles\"' "$root/Matths/CommunityMultipartBody.swift"
+grep -Fq 'upload(for: request, fromFile: prepared.fileURL)' "$api"
 grep -Fq 'COMMUNITY_NATIVE_V1' "$api"
 
 # 화면 기능과 앱 가로모드/계정 전환 안전장치.
@@ -43,7 +44,12 @@ grep -Fq 'blockCommunityAuthor' "$screen"
 grep -Fq 'deleteCommunityPost' "$screen"
 grep -Fq 'communityBlockedUsers' "$screen"
 grep -Fq 'DataScope.didSwitchNotification' "$screen"
-grep -Fq 'UIImage(data: source)' "$screen"
+# The behavior is image decoding/re-encoding, not the old full-resolution UIImage
+# constructor. The shared ImageIO implementation is exercised with EXIF fixtures
+# in run-native-service-recovery.sh.
+grep -Fq 'NativeServicePhotoPreparation.prepareJPEG(source)' "$screen"
+grep -Fq 'CGImageSourceCreateThumbnailAtIndex' "$root/Matths/NativeServicePhotoPreparation.swift"
+grep -Fq 'CGImageDestinationFinalize' "$root/Matths/NativeServicePhotoPreparation.swift"
 grep -Fq 'frame(maxWidth: 820)' "$screen"
 grep -Fq 'operationsCategories' "$screen"
 grep -Fq 'popularStrip' "$screen"

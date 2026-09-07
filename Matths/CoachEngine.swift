@@ -234,6 +234,18 @@ struct CoachEngine {
             ? ""
             : "이번 제출: “\(answerText)”\(shape.isEmpty ? "" : " (\(shape))")."
 
+        if problem.isMultipleChoice {
+            // A selected choice number is not a numerical result or a written
+            // calculation. Do not infer probability/sign errors from its label.
+            return CoachGuidance(
+                observation: sentence(["\(problem.typeName).", submissionFact,
+                    correct ? "정답 조건을 만족했습니다." : "선택한 보기를 다시 확인해 주세요."]),
+                reason: "선택한 보기의 내용을 문제의 조건과 차례로 대조하세요. 판단의 근거는 아래 해설에서 확인할 수 있습니다.",
+                nextAction: correct
+                    ? "보기와 조건의 연결을 확인했다면 다음 문제로 이어가세요."
+                    : "\(answerText)을 정답이라고 두고, 문제의 조건과 맞지 않는 부분이 있는지 확인해 보세요.")
+        }
+
         if correct {
             // "직전에 고쳤다" 는 **바로 앞 시도가 오답일 때만** 참이다.
             // 세 시도 전의 오답을 "직전" 이라고 부르면 그건 이미 추측이다.

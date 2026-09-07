@@ -323,7 +323,7 @@ enum DemoAccountFixtures {
         { "id": "demo-class-03", "name": "미적분 주말반", "schedule": { "weekdays": [6], "startTime": "10:00", "endTime": "13:00", "effectiveFrom": "2026-03-02", "timezone": "Asia/Seoul" }, "studentCount": 2 }
       ],
       "archivedClasses": [
-        { "id": "demo-class-archived-01", "name": "2025 고2 겨울특강", "schedule": { "weekdays": [7], "startTime": "10:00", "endTime": "12:00", "effectiveFrom": "2025-12-20", "timezone": "Asia/Seoul" }, "attendancePolicy": { "mode": "MANUAL", "opensBeforeMinutes": 10, "lateAfterMinutes": 5, "closesAfterMinutes": 20 }, "isActive": false, "studentCount": 0, "canManage": true }
+        { "id": "demo-class-archived-01", "name": "2025 고2 겨울특강", "schedule": { "weekdays": [6], "startTime": "10:00", "endTime": "12:00", "effectiveFrom": "2025-12-20", "timezone": "Asia/Seoul" }, "attendancePolicy": { "mode": "MANUAL", "opensBeforeMinutes": 10, "lateAfterMinutes": 5, "closesAfterMinutes": 20 }, "isActive": false, "studentCount": 0, "canManage": true }
       ],
       "requests": [
         { "id": "demo-request-01", "student": { "id": "demo-student-21", "name": "김민준", "nickname": "수학왕", "schoolGrade": 10, "school": { "name": "잠실고등학교", "region": "서울" } }, "academyClass": null, "requestedAt": "@T-2h@", "approvedAt": null },

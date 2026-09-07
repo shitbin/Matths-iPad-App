@@ -56,18 +56,16 @@ enum WidgetBridge {
         var kind: MatthsWidgetSnapshot.MissionKind
         var title: String, eyebrow: String, cta: String, url: String
         if ProductExperience.enabled, let action = store.resolvedTodayAction {
-            title = action.title; eyebrow = action.reason; cta = action.action
-            switch action.kind {
-            case .timedWork:
-                kind = .nextConcept; url = "matths://home"
-            case .academy:
+            title = action.title; eyebrow = action.visibleReason; cta = action.visibleAction
+            switch action.destination {
+            case .officialAssessment, .weeklyMock, .arena, .academyWeek, .academyAttendance, .assessments:
                 kind = .nextConcept; url = "matths://home"
             case .review:
                 kind = .review; url = "matths://review"
-            case .curriculum:
+            case .concept(let conceptID):
                 kind = preStart ? .firstConcept : .nextConcept
-                url = "matths://concept/\(action.id)"
-            case .explore:
+                url = "matths://concept/\(conceptID)"
+            case .learn:
                 kind = .nextConcept; url = "matths://curriculum"
             }
         } else if preStart, let (course, _, concept) = next {

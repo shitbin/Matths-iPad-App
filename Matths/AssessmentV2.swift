@@ -160,6 +160,34 @@ struct AssessmentAttemptV2: Codable, Identifiable, Sendable {
     /// 회차는 nil이라 그대로 보존하되 서버 해금 상태와 섞어 덮어쓰지 않는다.
     var serverBacked: Bool? = nil
     var serverUpdatedAt: Date? = nil
+    var serverDeadlineAt: Date? = nil
+    var pendingDraft: AssessmentDraftRecovery? = nil
+    var clientStartID: String? = nil
+    /// Older builds persisted answers without recording whether the server had
+    /// acknowledged them. Preserve that uncertainty separately: never display it
+    /// as the official answer or upload it until the student explicitly selects it.
+    var legacyDraftEvidence: [String: String]? = nil
+    /// Explicit server abandonment is not inferred from a latest-N list omission.
+    /// Keep its local evidence, but it is never an editable or passing assessment.
+    var serverCancelled: Bool? = nil
+    /// nil means the observed server did not provide a revision. Never guess zero.
+    var serverMutationRevision: Int? = nil
+
+    var hasLegacyDraftEvidence: Bool { legacyDraftEvidence?.isEmpty == false }
+    var isServerCancelled: Bool { serverCancelled == true }
+
+    mutating func preserveLegacyDraftIfNeeded() {
+        guard serverBacked == true, submittedAt == nil, pendingDraft == nil else { return }
+        var evidence = legacyDraftEvidence ?? [:]
+        for (index, question) in questions.enumerated() where answers.indices.contains(index) {
+            guard let id = question.serverQuestionId, !id.isEmpty, evidence[id] == nil else { continue }
+            // An empty old answer may be an offline clear. Do not silently assume
+            // it was never edited; a matching server value removes it on refresh.
+            evidence[id] = answers[index]
+        }
+        legacyDraftEvidence = evidence.isEmpty ? nil : evidence
+        pendingDraft = AssessmentDraftRecovery()
+    }
 
     var scopeKey: String { "\(scope.rawValue)/\(courseId)/\(unitId ?? "-")/\(subunitId ?? "-")" }
 
@@ -169,7 +197,8 @@ struct AssessmentAttemptV2: Codable, Identifiable, Sendable {
     /// 월클럭만 보면 기기 시각을 되돌려 실격을 피할 수 있고,
     /// 단조 시계만 보면 앱을 껐다 켠 시간이 빠져 무한정 늘어난다.
     func remainingSeconds(monotonicElapsed: TimeInterval) -> Int {
-        let limit = Double(timeLimitMs ?? AssessTimeLimit.ms(for: scope.rawValue)) / 1000
+        let limit = serverDeadlineAt.map { $0.timeIntervalSince(createdAt) }
+            ?? Double(timeLimitMs ?? AssessTimeLimit.ms(for: scope.rawValue)) / 1000
         let wall = Date().timeIntervalSince(createdAt)
         return Int((limit - max(wall, monotonicElapsed)).rounded(.down))
     }
@@ -186,7 +215,11 @@ struct AttemptStoreV2 {
         var s = AttemptStoreV2()
         if let data = try? Data(contentsOf: fileURL),
            let list = try? JSONDecoder().decode([AssessmentAttemptV2].self, from: data) {
-            s.attempts = list
+            s.attempts = list.map { source in
+                var attempt = source
+                attempt.preserveLegacyDraftIfNeeded()
+                return attempt
+            }
             let legacy = list.filter { $0.serverBacked != true }
             if !legacy.isEmpty {
                 let backup = DataScope.url("legacy-practice-assessments.json")
@@ -195,7 +228,7 @@ struct AttemptStoreV2 {
                     var ids = Set(preserved.map(\.id))
                     for item in legacy where ids.insert(item.id).inserted { preserved.append(item) }
                     try JSONEncoder().encode(preserved).write(to: backup, options: .atomic)
-                    s.attempts = list.filter { $0.serverBacked == true }
+                    s.attempts.removeAll { $0.serverBacked != true }
                 } catch {
                     // Keep the source file intact if preservation fails. Official
                     // query methods below still filter by serverBacked.
@@ -225,22 +258,168 @@ struct AttemptStoreV2 {
     }
 
     mutating func upsert(_ a: AssessmentAttemptV2) {
-        if let i = attempts.firstIndex(where: { $0.id == a.id }) { attempts[i] = a }
+        if let i = attempts.firstIndex(where: { $0.id == a.id }) {
+            // Abandonment is terminal. An old get/submit continuation may still
+            // return in-progress/submitted after that confirmation; never reopen it.
+            guard !attempts[i].isServerCancelled || a.isServerCancelled else { return }
+            var updated = a
+            // Direct submit/get continuations also use upsert, not snapshot merge.
+            // A server terminal receipt must not erase unreviewed old local work.
+            if updated.legacyDraftEvidence == nil {
+                updated.legacyDraftEvidence = attempts[i].legacyDraftEvidence
+            }
+            attempts[i] = updated
+        }
         else { attempts.append(a) }
     }
 
     /// 계정 서버 스냅샷을 원자적으로 교체한다. 동일 서버 id는 최신 응답으로
     /// 갱신하고, 구버전 로컬 회차는 마이그레이션 손실을 피하려 보존한다.
     mutating func replaceServerSnapshot(_ remote: [AssessmentAttemptV2]) {
-        let legacy = attempts.filter { $0.serverBacked != true }
-        var byID = Dictionary(uniqueKeysWithValues: legacy.map { ($0.id, $0) })
-        for item in remote { byID[item.id] = item }
+        mergeServerValues(remote, removeMissingCleanActive: true)
+    }
+
+    /// A GET /assessments/:id response says nothing about any other attempt.
+    /// Apply the same dirty/evidence/terminal rules without interpreting omission.
+    mutating func mergeServerAttempt(_ remote: AssessmentAttemptV2) {
+        mergeServerValues([remote], removeMissingCleanActive: false)
+    }
+
+    private mutating func mergeServerValues(_ remote: [AssessmentAttemptV2], removeMissingCleanActive: Bool) {
+        var existing: [String: AssessmentAttemptV2] = [:]
+        for source in attempts {
+            var item = source
+            item.preserveLegacyDraftIfNeeded()
+            existing[item.id] = item
+        }
+        // The API returns only the latest 100 attempts, not a deletion inventory.
+        // Keep older official pass receipts and every omitted dirty/review draft.
+        // Clean active records can be re-fetched on resume; blindly keeping them
+        // would also keep an attempt the web has since abandoned.
+        var byID = existing.filter {
+            !removeMissingCleanActive || $0.value.serverBacked != true || $0.value.submittedAt != nil || $0.value.isServerCancelled
+                || $0.value.pendingDraft?.isEmpty == false || $0.value.hasLegacyDraftEvidence
+        }
+        for item in remote {
+            guard let local = existing[item.id] else { byID[item.id] = item; continue }
+            if local.isServerCancelled && !item.isServerCancelled { byID[item.id] = local; continue }
+            guard AssessmentSnapshotPolicy.accepts(
+                localTerminal: local.submittedAt != nil, remoteTerminal: item.submittedAt != nil,
+                localUpdatedAt: local.serverUpdatedAt, remoteUpdatedAt: item.serverUpdatedAt,
+                localRevision: local.serverMutationRevision, remoteRevision: item.serverMutationRevision) else {
+                byID[item.id] = local
+                continue
+            }
+            var merged = item
+            merged.clientStartID = local.clientStartID
+            if let evidence = local.legacyDraftEvidence {
+                var serverAnswers: [String: String] = [:]
+                for (index, question) in item.questions.enumerated() where item.answers.indices.contains(index) {
+                    if let id = question.serverQuestionId { serverAnswers[id] = item.answers[index] }
+                }
+                // Equality is evidence of convergence, not permission to overwrite
+                // a different server answer. Unknown question IDs remain inspectable.
+                let conflicts = evidence.filter { serverAnswers[$0.key] != $0.value }
+                merged.legacyDraftEvidence = conflicts.isEmpty ? nil : conflicts
+            }
+            if let draft = local.pendingDraft, !draft.isEmpty {
+                merged.pendingDraft = draft
+                // Terminal server answers/score stay authoritative; retained draft
+                // is recovery evidence only and cannot change the official result.
+                if item.submittedAt == nil {
+                    merged.answers = draft.overlay(server: item.answers,
+                        questionIDs: item.questions.map { $0.serverQuestionId ?? "" })
+                }
+            }
+            byID[item.id] = merged
+        }
         attempts = Array(byID.values).sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Explicit review action only. Automatic sync never calls this method.
+    /// Terminal results cannot be changed even if old local evidence remains.
+    @discardableResult
+    mutating func applyLegacyDraftEvidence(id: String, questionIDs: Set<String>) -> Bool {
+        guard let index = attempts.firstIndex(where: { $0.id == id }),
+              attempts[index].serverBacked == true, attempts[index].submittedAt == nil,
+              !attempts[index].isServerCancelled,
+              let evidence = attempts[index].legacyDraftEvidence else { return false }
+        var attempt = attempts[index]
+        var remaining = evidence
+        var pending = attempt.pendingDraft ?? AssessmentDraftRecovery()
+        var changed = false
+        for (questionIndex, question) in attempt.questions.enumerated() {
+            guard let questionID = question.serverQuestionId, questionIDs.contains(questionID),
+                  let answer = evidence[questionID], attempt.answers.indices.contains(questionIndex) else { continue }
+            attempt.answers[questionIndex] = answer
+            pending.edit(questionID: questionID, answer: answer, expectedRevision: attempt.serverMutationRevision)
+            remaining.removeValue(forKey: questionID)
+            changed = true
+        }
+        guard changed else { return false }
+        attempt.pendingDraft = pending
+        attempt.legacyDraftEvidence = remaining.isEmpty ? nil : remaining
+        attempts[index] = attempt
+        return true
+    }
+
+    /// A rejected concurrent write is not acknowledged. Quarantine the latest
+    /// local edits for the existing answer-comparison UI before reading server
+    /// state, so neither queued retries nor a timer can overwrite the winner.
+    @discardableResult
+    mutating func holdPendingDraftForReview(id: String) -> Bool {
+        guard let index = attempts.firstIndex(where: { $0.id == id }),
+              attempts[index].serverBacked == true, attempts[index].submittedAt == nil,
+              !attempts[index].isServerCancelled else { return false }
+        let pending = attempts[index].pendingDraft?.pending ?? [:]
+        guard !pending.isEmpty else { return attempts[index].hasLegacyDraftEvidence }
+        var evidence = attempts[index].legacyDraftEvidence ?? [:]
+        for (questionID, answer) in pending { evidence[questionID] = answer }
+        attempts[index].legacyDraftEvidence = evidence
+        attempts[index].pendingDraft = AssessmentDraftRecovery()
+        return true
+    }
+
+    /// The student chose to keep the official/current answers after review.
+    @discardableResult
+    mutating func discardLegacyDraftEvidence(id: String) -> Bool {
+        guard let index = attempts.firstIndex(where: { $0.id == id }),
+              attempts[index].hasLegacyDraftEvidence else { return false }
+        attempts[index].legacyDraftEvidence = nil
+        return true
+    }
+
+    mutating func acknowledgeDraft(id: String, sent: [String: String], savedAt: Date?,
+                                   expectedRevision: Int? = nil, mutationRevision: Int? = nil) {
+        guard let index = attempts.firstIndex(where: { $0.id == id }),
+              attempts[index].submittedAt == nil, !attempts[index].isServerCancelled else { return }
+        if let mutationRevision, !AssessmentMutationRevision.isValidServerValue(mutationRevision) { return }
+        attempts[index].pendingDraft?.acknowledge(sent, expectedRevision: expectedRevision, mutationRevision: mutationRevision)
+        if let mutationRevision, mutationRevision >= (attempts[index].serverMutationRevision ?? -1) {
+            attempts[index].serverMutationRevision = mutationRevision
+        }
+        if let savedAt, savedAt > (attempts[index].serverUpdatedAt ?? .distantPast) {
+            attempts[index].serverUpdatedAt = savedAt
+        }
+    }
+
+    /// Called only after the API explicitly returns status=abandoned for this ID.
+    /// Preserve answers and recovery evidence; do not turn them into a new attempt.
+    @discardableResult
+    mutating func markServerAbandoned(id: String, updatedAt: Date?) -> Bool {
+        guard let index = attempts.firstIndex(where: { $0.id == id }),
+              attempts[index].serverBacked == true else { return false }
+        attempts[index].preserveLegacyDraftIfNeeded()
+        attempts[index].serverCancelled = true
+        if let updatedAt, updatedAt > (attempts[index].serverUpdatedAt ?? .distantPast) {
+            attempts[index].serverUpdatedAt = updatedAt
+        }
+        return true
     }
 
     // ── 웹 상태 계산과 동일한 조회들 ──────────────────────────────
     func submitted(scopeKey: String) -> [AssessmentAttemptV2] {
-        attempts.filter { $0.serverBacked == true && $0.scopeKey == scopeKey && $0.submittedAt != nil }
+        attempts.filter { $0.serverBacked == true && !$0.isServerCancelled && $0.scopeKey == scopeKey && $0.submittedAt != nil }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
@@ -252,7 +431,7 @@ struct AttemptStoreV2 {
     /// 생겼을 수 있어 답이 가장 많이 적힌 회차를 우선하고, 동률이면 최신 회차를 연다.
     func openAttempt(scopeKey: String) -> AssessmentAttemptV2? {
         attempts
-            .filter { $0.serverBacked == true && $0.scopeKey == scopeKey && $0.submittedAt == nil }
+            .filter { $0.serverBacked == true && !$0.isServerCancelled && $0.scopeKey == scopeKey && $0.submittedAt == nil }
             .max { lhs, rhs in
                 let lhsAnswered = lhs.answers.filter {
                     !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

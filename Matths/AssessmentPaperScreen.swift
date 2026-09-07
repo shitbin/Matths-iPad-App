@@ -22,12 +22,17 @@ struct AssessmentPaperScreen: View {
     @State private var scratchTool: SolutionCanvasTool = .pen
     @State private var scratchFinger = UIDevice.current.userInterfaceIdiom == .phone
     @State private var showsScratchpad = false
+    @State private var showsLegacyReview = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
             if let attempt = store.currentAttempt {
+                if attempt.hasLegacyDraftEvidence {
+                    Button("보관된 기기 답안 확인") { showsLegacyReview = true }
+                        .buttonStyle(SecondaryButtonStyle()).padding(Tokens.Space.s3)
+                }
                 GeometryReader { viewport in
                     if UniversalLayoutPolicy.usesProblemSplit(width: viewport.size.width, height: viewport.size.height, accessibilityText: typeSize.isAccessibilitySize) {
                         ResponsiveProblemWorkspace(spacing: Tokens.Space.s3) {
@@ -77,6 +82,11 @@ struct AssessmentPaperScreen: View {
         }
         .onChange(of: scenePhase) { _, value in if value != .active { Task { _ = await scratchpad.flush() } } }
         .onDisappear { Task { _ = await scratchpad.flush() } }
+        .sheet(isPresented: $showsLegacyReview) {
+            if let id = store.currentAttemptID, let owner = AccountRequestOwner(store: store) {
+                LegacyAssessmentDraftReviewScreen(attemptID: id, owner: owner)
+            }
+        }
         .fullScreenCover(isPresented: $showsScratchpad) {
             NavigationStack {
                 GeometryReader { viewport in
@@ -95,7 +105,9 @@ struct AssessmentPaperScreen: View {
         // 시간이 다 되면 **자동 제출**한다. 화면을 켜 둔 채 방치해도 실격 처리된다.
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             guard let a = store.currentAttempt, a.submittedAt == nil else { return }
-            if a.remainingSeconds(monotonicElapsed: Double(timer.elapsedSeconds)) <= 0 { submit() }
+            if a.remainingSeconds(monotonicElapsed: Double(timer.elapsedSeconds)) <= 0,
+               !a.hasLegacyDraftEvidence, !a.isServerCancelled,
+               store.assessmentSubmissionState.permitsAutomaticAttempt(a.id) { submit() }
         }
         .alert("아직 답하지 않은 문항이 있습니다. 제출할까요?",
                isPresented: $confirmSubmit) {
@@ -108,6 +120,9 @@ struct AssessmentPaperScreen: View {
             get: { store.assessmentSyncError != nil },
             set: { if !$0 { store.assessmentSyncError = nil } }
         )) {
+            if case .recovery = store.assessmentSubmissionState {
+                Button("서버 상태 다시 확인") { Task { await store.pullServerAssessments() } }
+            }
             Button("확인", role: .cancel) {}
         } message: {
             Text(store.assessmentSyncError ?? "")

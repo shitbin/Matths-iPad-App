@@ -11,11 +11,9 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/private var phoneLandscapeWorkspace:/,/private var landscapeProblemPane:/' \
   "$solve" > "$work/workspace"
 
-# iPhone 가로만 고정 작업대를 사용한다. compact width만 보면 iPhone 세로와
-# iPad Split View까지 섞이므로 기기군과 vertical compact를 함께 확인해야 한다.
-grep -Fq '@Environment(\.verticalSizeClass) private var verticalSizeClass' "$solve"
-grep -Fq 'verticalSizeClass == .compact && !workspaceTypeSize.isAccessibilitySize' "$solve"
-grep -Fq 'if usesPhoneLandscapeWorkspace' "$solve"
+# Same container policy serves phone landscape and a resized iPad window.
+grep -Fq 'UniversalLayoutPolicy.usesProblemSplit(width: viewport.size.width, height: viewport.size.height' "$solve"
+grep -Fq 'accessibilityText: workspaceTypeSize.isAccessibilitySize' "$solve"
 
 # 이 분기 안에는 바깥 ScrollView가 없어야 문제와 노트가 한 화면에서 고정된다.
 # 장문/Dynamic Type fallback은 landscapeProblemPane 안에서 문제만 독립 스크롤하고,
@@ -25,7 +23,8 @@ if grep -Fq 'ScrollView' "$work/workspace"; then
   exit 1
 fi
 grep -Fq 'ResponsiveProblemWorkspace(spacing: gutter' "$work/workspace"
-grep -Fq 'usableWidth * 0.44' "$work/workspace"
+grep -Fq 'UniversalLayoutPolicy.problemPaneWidth(usableWidth: usableWidth' "$work/workspace"
+grep -Fq 'hasChoices: !(store.currentProblem?.choices?.isEmpty ?? true)' "$work/workspace"
 grep -Fq 'landscapeProblemPane' "$work/workspace"
 grep -Fq 'landscapeNotePane(height: paneHeight)' "$work/workspace"
 grep -Fq 'if keyboardVisible {' "$work/workspace"
@@ -51,14 +50,15 @@ grep -Fq 'if store.leftHandedOn' "$work/workspace"
 grep -Fq 'constrainedHeight: height' "$solve"
 grep -Fq 'usesCompactToolbar: true' "$solve"
 grep -Fq '.frame(maxWidth: .infinity, maxHeight: height, alignment: .top)' "$solve"
-grep -Fq 'usesCompactLandscapeLayout: usesPhoneLandscapeWorkspace' "$solve"
+grep -Fq 'PracticeProblemContent(problem: problem, pickedKey: $workspaceDraft.pickedKey,' "$solve"
+grep -Fq 'minHeight: compact ? 44 : 48' "$root/Matths/PracticeProblemContent.swift"
 grep -Fq 'private var landscapeGradeBar:' "$solve"
 grep -Fq 'private var landscapeKeyboardProblemPane:' "$solve"
-grep -Fq 'Text(problem.statement)' "$solve"
+grep -Fq 'MathInline(text: problem.statement' "$root/Matths/PracticeProblemContent.swift"
+grep -Fq 'pickedKey = selected ? nil : key' "$root/Matths/PracticeProblemContent.swift"
 grep -Fq 'var needsMathTypesetting: Bool' "$problems"
 grep -Fq 'text.contains("\\(")' "$problems"
 grep -Fq 'text.contains("\\[")' "$problems"
-grep -Fq 'problem.needsMathTypesetting' "$solve"
 grep -Fq 'p.needsMathTypesetting' "$solve"
 grep -Fq 'isTex: p.needsMathTypesetting' "$app_store"
 grep -Fq 'UIResponder.keyboardWillShowNotification' "$solve"

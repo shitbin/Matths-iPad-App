@@ -98,7 +98,8 @@ grep -Fq '<string>applinks:matths.kr</string>' "$entitlements"
 
 # 앱 Bearer → 일회용 핸드오프 → 서버 세션 순서를 재사용하고, 결제 표면은 StoreKit으로 돌린다.
 grep -Fq 'func start(signedIn: Bool, path: String = "/community")' "$community"
-grep -Fq 'let handoff = try await ServerAPI.createCommerceHandoff(mode: "pricing")' "$community"
+grep -Fq 'ServerAPI.createCommerceHandoff(mode: "pricing", authorization: authorization)' "$community"
+grep -Fq 'ownership.owns(context.ticket, slot: DataScope.slot, viewIdentity: ObjectIdentifier(webView))' "$community"
 grep -Fq 'ServerAPI.isWebPurchasePath(trimmed)' "$community"
 grep -Fq 'ServerAPI.isWebPurchaseSurface(url)' "$community"
 grep -Fq '@Published var wantsNativeCommerce = false' "$community"
@@ -111,7 +112,7 @@ for path in /api/v1/academy/student /api/v1/academy/student/join-code /api/v1/ac
     exit 1
   }
 done
-for behavior in 'ServerAPI.academyDashboard()' 'ServerAPI.academyWeek(weekID)' 'ServerAPI.checkInAcademyAttendance' 'ServerAPI.downloadAcademyFile' 'store.openConceptV2(concept.conceptId)'; do
+for behavior in 'ServerAPI.academyDashboard(authorization: owner.authorization)' 'ServerAPI.academyWeek(weekID, authorization: owner.authorization)' 'ServerAPI.checkInAcademyAttendance' 'ServerAPI.downloadAcademyFile' 'store.openConceptV2(concept.conceptId)'; do
   grep -Fq "$behavior" "$academy" || {
     echo "FAIL: missing native academy behavior $behavior" >&2
     exit 1
@@ -131,7 +132,7 @@ for path in /api/v1/academy/teacher /api/v1/academy/teacher/setup /api/v1/academ
     exit 1
   }
 done
-for behavior in 'ServerAPI.teacherAcademyDashboard()' 'ServerAPI.reviewAcademyStudent' 'ServerAPI.assignAcademyStudent' 'ServerAPI.removeAcademyStudent' 'ServerAPI.createAcademyInvite' 'ServerAPI.revokeAcademyInvite' 'ServerAPI.teacherAcademyAttendance' 'ServerAPI.saveTeacherAcademyAttendance' 'ServerAPI.regenerateTeacherAttendanceCode'; do
+for behavior in 'ServerAPI.teacherAcademyDashboard(authorization: authorization)' 'ServerAPI.reviewAcademyStudent' 'ServerAPI.assignAcademyStudent' 'ServerAPI.removeAcademyStudent' 'ServerAPI.createAcademyInvite' 'ServerAPI.revokeAcademyInvite' 'ServerAPI.teacherAcademyAttendance' 'ServerAPI.saveTeacherAcademyAttendance' 'ServerAPI.regenerateTeacherAttendanceCode'; do
   grep -Fq "$behavior" "$teacher_academy" || {
     echo "FAIL: missing native teacher academy behavior $behavior" >&2
     exit 1
@@ -218,7 +219,7 @@ for behavior in 'ServerAPI.teacherAcademyStudents' 'ServerAPI.teacherAcademyStud
   }
 done
 grep -Fq 'TeacherStudentManagementPanel(initialMembershipID: focusedStudentID)' "$teacher_academy"
-grep -Fq 'verticalSizeClass == .compact' "$teacher_students"
+grep -Fq 'StaffWorkspaceMetrics.usesListDetail(width: containerWidth)' "$teacher_students"
 grep -Fq 'selectedIDs.count < 20' "$teacher_students"
 grep -Fq '학생 학습 기록을 불러오는 중입니다' "$teacher_students"
 grep -Fq '학부모 공유용 요약' "$teacher_students"
@@ -229,12 +230,13 @@ grep -Fq 'static let teacherStudentDetail' "$demo_account_fixtures"
 grep -Fq 'static let teacherStudentEmptyPage' "$demo_account_fixtures"
 grep -Fq '"-teacherStudentsFixture") == "error"' "$demo_mode"
 grep -Fq '"-teacherStudentsFixture") == "empty"' "$demo_mode"
-grep -Fq 'model.section == .students' "$teacher_academy"
+grep -Fq 'case .students:' "$teacher_academy"
+grep -Fq 'visitedSections.contains' "$teacher_academy"
 grep -Fq 'private func shortPeriod' "$teacher_students"
 grep -Fq 'case overview = "현황"' "$teacher_academy"
 grep -Fq 'TeacherAnalyticsPanel(classes: dashboard.classes)' "$teacher_academy"
 grep -Fq 'ServerAPI.teacherAcademyAnalytics' "$teacher_analytics"
-grep -Fq 'verticalSizeClass == .compact' "$teacher_analytics"
+grep -Fq 'StaffWorkspaceMetrics.usesListDetail(width: containerWidth)' "$teacher_analytics"
 grep -Fq '지금 확인할 학생' "$teacher_analytics"
 grep -Fq '반 수학 지도' "$teacher_analytics"
 grep -Fq 'DemoAccountFixtures.teacherAnalytics' "$demo_mode"
@@ -242,7 +244,7 @@ grep -Fq 'static let teacherAnalytics' "$demo_account_fixtures"
 grep -Fq 'static let teacherAnalyticsEmpty' "$demo_account_fixtures"
 grep -Fq '"-teacherAnalyticsFixture") == "error"' "$demo_mode"
 grep -Fq '"-teacherAnalyticsFixture") == "empty"' "$demo_mode"
-grep -Fq '|| model.section == .forensics' "$teacher_academy"
+grep -Fq 'case .forensics: TeacherAcademyForensicsPanel()' "$teacher_academy"
 grep -Fq 'TeacherAcademySetupPanel(setup: setup, model: model)' "$teacher_academy"
 grep -Fq 'error.code == "ACADEMY_SETUP_REQUIRED"' "$teacher_academy"
 for behavior in 'ServerAPI.teacherAcademySetup' 'ServerAPI.createTeacherAcademy' 'ServerAPI.requestTeacherAcademyJoin' 'ServerAPI.cancelTeacherAcademyJoin'; do
@@ -282,7 +284,7 @@ for path in /api/v1/academy/admin /api/v1/academy/admin/list /api/v1/academy/adm
     exit 1
   }
 done
-for behavior in 'ServerAPI.adminAcademyDashboard()' 'ServerAPI.reviewAcademyApplication'; do
+for behavior in 'ServerAPI.adminAcademyDashboard(authorization:' 'ServerAPI.reviewAcademyApplication'; do
   grep -Fq "$behavior" "$admin_academy" || {
     echo "FAIL: missing native admin academy behavior $behavior" >&2
     exit 1
@@ -369,7 +371,7 @@ grep -Fq 'verticalSizeClass == .compact' "$coach_suggestions"
 # 일반 지원문의는 Bearer API에서 접수·상태 확인을 끝낸다. 결제·환불은 문의 API로
 # 우회하지 않고 StoreKit 결제 화면으로 분리해 App Store 정책 표면을 유지한다.
 grep -Fq '/api/v1/support/inquiries' "$server_api"
-for behavior in 'ServerAPI.supportDashboard()' 'ServerAPI.createSupportInquiry'; do
+for behavior in 'ServerAPI.supportDashboard(' 'ServerAPI.createSupportInquiry'; do
   grep -Fq "$behavior" "$support" || {
     echo "FAIL: missing native support behavior $behavior" >&2
     exit 1

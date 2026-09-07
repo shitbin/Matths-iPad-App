@@ -35,9 +35,18 @@ enum LocalAIJobRecovery {
 
         let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
         let imageURL = directory.appendingPathComponent(imageFileName).standardizedFileURL
+        guard let attributes = try? fm.attributesOfItem(atPath: sourceURL.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let bytes = attributes[.size] as? NSNumber,
+              (1...50_000_000).contains(bytes.int64Value) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
         if sourceURL != imageURL {
             let data = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
-            try data.write(to: imageURL, options: [.atomic, .completeFileProtection])
+            try ProtectedFileWriter.write(data, to: imageURL)
+            // A new photograph starts a new journal, never mixes completed
+            // stages from the previous sheet, and cannot grow storage forever.
+            try? fm.removeItem(at: directory.appendingPathComponent("checkpoints-v1", isDirectory: true))
         } else if !fm.fileExists(atPath: imageURL.path) {
             throw CocoaError(.fileNoSuchFile)
         }
@@ -50,6 +59,10 @@ enum LocalAIJobRecovery {
             stageLabel: stageLabel,
             sourceFileName: imageFileName)
         try write(job, in: directory)
+        var protectedDirectory = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? protectedDirectory.setResourceValues(values)
         return imageURL.path
     }
 
@@ -73,12 +86,17 @@ enum LocalAIJobRecovery {
             clear(in: directory)
             return nil
         }
-        guard now.timeIntervalSince(job.createdAt) <= maximumAge else {
+        let age = now.timeIntervalSince(job.createdAt)
+        guard age >= -300, age <= maximumAge,
+              job.sourceFileName == imageFileName else {
             clear(in: directory)
             return nil
         }
         let imageURL = directory.appendingPathComponent(job.sourceFileName).standardizedFileURL
-        guard FileManager.default.fileExists(atPath: imageURL.path) else {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: imageURL.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let bytes = attributes[.size] as? NSNumber,
+              (1...50_000_000).contains(bytes.int64Value) else {
             clear(in: directory)
             return nil
         }
@@ -113,6 +131,6 @@ enum LocalAIJobRecovery {
 
     private static func write(_ job: PendingJob, in directory: URL) throws {
         let data = try JSONEncoder().encode(job)
-        try data.write(to: metadataURL(in: directory), options: [.atomic, .completeFileProtection])
+        try ProtectedFileWriter.write(data, to: metadataURL(in: directory))
     }
 }

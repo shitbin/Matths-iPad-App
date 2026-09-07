@@ -17,7 +17,7 @@ grep -Fq 'ownerSlot == DataScope.slot,' "$quick"
 grep -Fq 'statsRequestID == requestID' "$quick"
 
 # 문제 요청·제출·마감의 성공과 실패 모두 같은 소유권 게이트를 통과해야 한다.
-quick_operation_guards=$(grep -Fc 'guard ownsOperation(requestID, slot: ownerSlot)' "$quick")
+quick_operation_guards=$(grep -Fc 'guard owner.isCurrent(in: store), ownsOperation(requestID, slot: ownerSlot)' "$quick")
 if (( quick_operation_guards < 6 )); then
   echo "Quick Practice account/request guards regressed: $quick_operation_guards" >&2
   exit 1

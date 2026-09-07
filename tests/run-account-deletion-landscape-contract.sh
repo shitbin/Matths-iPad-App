@@ -34,7 +34,7 @@ grep -Fq 'Label("고객지원 열기", systemImage: "questionmark.circle")' "$sh
 grep -Fq 'ServerAPI.baseURL.appendingPathComponent("faq")' "$sheet"
 grep -Fq 'private var withdrawalOptionsRetry:' "$sheet"
 grep -Fq '"본인 확인 방법 다시 불러오기"' "$sheet"
-grep -Fq 'guard !loadingWithdrawalOptions else { return }' "$profile"
+grep -Fq 'guard !loadingWithdrawalOptions, let owner = AccountRequestOwner(store: store) else { return }' "$profile"
 grep -Fq 'withdrawalOptionsLoadError = unsupported ? nil' "$profile"
 grep -Fq '이메일 계정은 현재 비밀번호로 계속할 수 있습니다' "$profile"
 grep -Fq 'errorText = Self.withdrawalFailureMessage(error)' "$profile"

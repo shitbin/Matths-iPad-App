@@ -39,7 +39,10 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
-    private var waiters: [String: Waiter] = [:]
+    private var waiters: [String: [UUID: Waiter]] = [:]
+    private var startingKeys = Set<String>()
+    private var activeTaskIdentifiers: [String: Int] = [:]
+    private var retiredTaskIdentifiers = Set<Int>()
     private var backgroundCompletion: (() -> Void)?
     #if DEBUG
     private var selfTestResumeKeys = Set<String>()
@@ -55,38 +58,73 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
         key: String,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
+        try Task.checkCancellation()
         let stableKey = digest(key)
         if let completed = completedURL(for: stableKey) {
-            guard FileManager.default.fileExists(atPath: completed.path) else {
-                clearCompleted(stableKey)
-                throw DownloadError.missingCompletedFile
+            if FileManager.default.fileExists(atPath: completed.path) {
+                return completed
             }
-            return completed
+            // iOS may purge a staged artifact or the old cleanup may have removed
+            // it. A stale receipt is a cache miss, not a permanently failed retry.
+            clearCompleted(stableKey)
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            waiters[stableKey] = Waiter(continuation: continuation, progress: progress)
-            session.getAllTasks { tasks in
-                Task { @MainActor in
-                    if let task = tasks.first(where: { $0.taskDescription == stableKey }) {
+        let waiterID = UUID()
+        let result = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                waiters[stableKey, default: [:]][waiterID] = Waiter(
+                    continuation: continuation, progress: progress)
+                guard startingKeys.insert(stableKey).inserted else { return }
+                session.getAllTasks { tasks in
+                    Task { @MainActor in
+                        guard self.startingKeys.contains(stableKey) else { return }
+                        let matching = tasks.filter {
+                            $0.taskDescription == stableKey && $0.state != .completed && $0.state != .canceling
+                        }
+                        if let task = matching.first {
+                            self.activeTaskIdentifiers[stableKey] = task.taskIdentifier
+                            // Repair duplicate historical background tasks once.
+                            matching.dropFirst().forEach {
+                                self.retiredTaskIdentifiers.insert($0.taskIdentifier)
+                                $0.cancel()
+                            }
+                            task.resume()
+                            return
+                        }
+                        let resumeURL = self.resumeDataURL(for: stableKey)
+                        let task: URLSessionDownloadTask
+                        if let data = try? Data(contentsOf: resumeURL), !data.isEmpty {
+                            #if DEBUG
+                            self.selfTestResumeKeys.insert(stableKey)
+                            #endif
+                            task = self.session.downloadTask(withResumeData: data)
+                        } else {
+                            var request = URLRequest(url: url)
+                            // Byte offsets and Content-Length must describe the
+                            // GGUF itself, not a transparently inflated response.
+                            request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+                            task = self.session.downloadTask(with: request)
+                        }
+                        task.taskDescription = stableKey
+                        self.activeTaskIdentifiers[stableKey] = task.taskIdentifier
                         task.resume()
-                        return
                     }
-                    let resumeURL = self.resumeDataURL(for: stableKey)
-                    let task: URLSessionDownloadTask
-                    if let data = try? Data(contentsOf: resumeURL), !data.isEmpty {
-                        #if DEBUG
-                        self.selfTestResumeKeys.insert(stableKey)
-                        #endif
-                        task = self.session.downloadTask(withResumeData: data)
-                    } else {
-                        task = self.session.downloadTask(with: url)
-                    }
-                    task.taskDescription = stableKey
-                    task.resume()
                 }
             }
+        } onCancel: {
+            Task { @MainActor in
+                // A cancelled UI stops waiting; the single background download
+                // remains resumable and can serve another feature on this device.
+                self.waiters[stableKey]?.removeValue(forKey: waiterID)?
+                    .continuation.resume(throwing: CancellationError())
+            }
         }
+        try Task.checkCancellation()
+        return result
     }
 
     /// 검증·최종 설치가 끝난 뒤 staging 흔적과 resumeData를 지운다.
@@ -150,9 +188,12 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
             ? min(1, max(0, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
             : 0
         let key = downloadTask.taskDescription
+        let taskID = downloadTask.taskIdentifier
         Task { @MainActor in
-            guard let key else { return }
-            self.waiters[key]?.progress?(fraction)
+            guard let key, self.acceptsCallback(key: key, taskID: taskID) else { return }
+            for waiter in self.waiters[key]?.values ?? [:].values {
+                waiter.progress?(fraction)
+            }
         }
     }
 
@@ -162,10 +203,19 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
         didFinishDownloadingTo location: URL
     ) {
         let key = downloadTask.taskDescription
-        let status = (downloadTask.response as? HTTPURLResponse)?.statusCode
+        let response = downloadTask.response as? HTTPURLResponse
+        let taskID = downloadTask.taskIdentifier
         guard let key else { return }
-        guard let status, (200..<300).contains(status) else {
+        let bytes = ((try? FileManager.default.attributesOfItem(atPath: location.path)[.size]) as? NSNumber)?.int64Value ?? 0
+        guard let response,
+              ModelDownloadResponseValidation.accepts(
+                status: response.statusCode,
+                contentLength: response.value(forHTTPHeaderField: "Content-Length").flatMap(Int64.init),
+                contentRange: response.value(forHTTPHeaderField: "Content-Range"),
+                bytes: bytes) else {
             Task { @MainActor in
+                guard self.acceptsCallback(key: key, taskID: taskID) else { return }
+                try? FileManager.default.removeItem(at: self.resumeDataURL(for: key))
                 self.finish(key: key, result: .failure(DownloadError.invalidResponse))
             }
             return
@@ -178,18 +228,27 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
             for: .applicationSupportDirectory,
             in: .userDomainMask)[0]
             .appendingPathComponent("ModelDownloads", isDirectory: true)
-        let destination = root.appendingPathComponent("\(key).downloaded")
+        let destination = root.appendingPathComponent("\(key).\(taskID).downloaded")
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: location, to: destination)
             Task { @MainActor in
+                guard self.acceptsCallback(key: key, taskID: taskID) else {
+                    try? FileManager.default.removeItem(at: destination)
+                    return
+                }
+                var protectedRoot = root
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try? protectedRoot.setResourceValues(values)
                 self.setCompleted(destination, key: key)
                 try? FileManager.default.removeItem(at: self.resumeDataURL(for: key))
                 self.finish(key: key, result: .success(destination))
             }
         } catch {
             Task { @MainActor in
+                guard self.acceptsCallback(key: key, taskID: taskID) else { return }
                 self.finish(key: key, result: .failure(error))
             }
         }
@@ -201,10 +260,15 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
         didCompleteWithError error: Error?
     ) {
         guard let error, let key = task.taskDescription else { return }
+        let taskID = task.taskIdentifier
         let resumeData = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data
         Task { @MainActor in
+            guard self.acceptsCallback(key: key, taskID: taskID) else { return }
             if let resumeData, !resumeData.isEmpty {
                 try? resumeData.write(to: self.resumeDataURL(for: key), options: [.atomic])
+            } else {
+                // Invalid/obsolete resume data must not poison every retry.
+                try? FileManager.default.removeItem(at: self.resumeDataURL(for: key))
             }
             self.finish(key: key, result: .failure(error))
         }
@@ -219,11 +283,22 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
     }
 
     private func finish(key: String, result: Result<URL, Error>) {
-        guard let waiter = waiters.removeValue(forKey: key) else { return }
-        switch result {
-        case .success(let url): waiter.continuation.resume(returning: url)
-        case .failure(let error): waiter.continuation.resume(throwing: error)
+        startingKeys.remove(key)
+        if let taskID = activeTaskIdentifiers.removeValue(forKey: key) {
+            retiredTaskIdentifiers.insert(taskID)
         }
+        for waiter in waiters.removeValue(forKey: key)?.values ?? [:].values {
+            waiter.continuation.resume(with: result)
+        }
+    }
+
+    private func acceptsCallback(key: String, taskID: Int) -> Bool {
+        // No in-memory identifier is normal after background process relaunch.
+        // Once a caller has attached, only its exact task may finish the flight.
+        guard !retiredTaskIdentifiers.contains(taskID) else { return false }
+        if let current = activeTaskIdentifiers[key] { return current == taskID }
+        activeTaskIdentifiers[key] = taskID
+        return true
     }
 
     private var artifactDirectory: URL {
@@ -243,7 +318,14 @@ final class ResumableModelDownload: NSObject, URLSessionDownloadDelegate {
     private func completedURL(for key: String) -> URL? {
         guard let value = UserDefaults.standard.string(forKey: "matths.modelDownload.completed.\(key)")
         else { return nil }
-        return URL(fileURLWithPath: value)
+        let candidate = URL(fileURLWithPath: value).standardizedFileURL
+        guard candidate.deletingLastPathComponent() == artifactDirectory.standardizedFileURL,
+              candidate.lastPathComponent.hasPrefix(key),
+              candidate.pathExtension == "downloaded" else {
+            clearCompleted(key)
+            return nil
+        }
+        return candidate
     }
 
     private func setCompleted(_ url: URL, key: String) {

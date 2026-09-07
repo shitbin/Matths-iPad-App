@@ -81,6 +81,8 @@ struct AdminArenaScreen: View {
   }
   @Environment(\.verticalSizeClass) private var verticalSizeClass
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.staffWorkspaceActive) private var workspaceActive
+  @Environment(\.scenePhase) private var scenePhase
   @StateObject private var model = AdminArenaModel()
   @State private var area: Area = .live
   @State private var selectedID: String?
@@ -112,8 +114,8 @@ struct AdminArenaScreen: View {
       }
     }.background(Tokens.paper).dynamicTypeSize(...DynamicTypeSize.xxxLarge).task {
       await model.load()
-    }.task(id: area) {
-      guard area == .live else { return }
+    }.task(id: "\(area.rawValue)|\(workspaceActive)|\(scenePhase == .active)") {
+      guard area == .live, workspaceActive, scenePhase == .active else { return }
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(15))
         if !Task.isCancelled { await model.load(quiet: true) }

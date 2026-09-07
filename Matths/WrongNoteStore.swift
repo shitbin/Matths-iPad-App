@@ -50,6 +50,9 @@ struct WrongNoteEntry: Codable, Identifiable, Sendable {
     /// 결과를 다시 받을 때 로컬 필기/문제 스냅샷은 지키고 서버 상태만 최신으로
     /// 합치기 위한 커서다. 구버전 저장 파일에는 없어도 디코딩된다.
     var serverUpdatedAt: Date? = nil
+    /// Local KICE effect receipts are committed in the same wrong-note snapshot
+    /// as its SRS change. Retrying a saved grade never increments wrongCount twice.
+    var kiceReceiptIDs: [String]? = nil
 
     var isMastered: Bool { nextReviewAt == nil }
     var isDue: Bool {
@@ -155,9 +158,9 @@ enum WrongNoteSRS {
         entry.nextReviewAt = nil
     }
 
-    static func afterWrong(_ entry: inout WrongNoteEntry) {
+    static func afterWrong(_ entry: inout WrongNoteEntry, now: Date = Date()) {
         entry.wrongCount += 1
-        entry.nextReviewAt = nextKSTMidnight()   // 오늘 다시가 아니라 **내일 00:00**
+        entry.nextReviewAt = nextKSTMidnight(from: now)   // 오늘 다시가 아니라 **내일 00:00**
     }
 }
 
@@ -404,9 +407,15 @@ enum ActivityLog {
         Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
     }
 
-    static func recordToday() -> Set<String> {
+    static func recordToday() -> Set<String> { record(at: Date()) }
+
+    static func record(at date: Date) -> Set<String> { record(dates: [date]) }
+
+    /// Replay-safe mirror repair from durable learning receipts. A single
+    /// union/write avoids one preferences write per historical receipt.
+    static func record(dates: [Date]) -> Set<String> {
         var set = load()
-        set.insert(dayString())
+        set.formUnion(dates.map { dayString($0) })
         UserDefaults.standard.set(Array(set).sorted(), forKey: key)
         return set
     }

@@ -25,6 +25,7 @@ grep -Fq '오답노트를 저장하지 못했습니다. 기기의 저장 공간�
 xcrun swiftc \
   "$ROOT_DIR/tests/SyncAPIDecodeCases.swift" \
   "$ROOT_DIR/Matths/ServerAPI.swift" \
+  "$ROOT_DIR/Matths/AcademyAssignmentDomain.swift" \
   "$ROOT_DIR/Matths/DataScope.swift" \
   "$ROOT_DIR/Matths/ServerAuthenticationOwnership.swift" \
   "$ROOT_DIR/Matths/ServerTokenOwnership.swift" \

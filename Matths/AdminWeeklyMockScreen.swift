@@ -53,7 +53,7 @@ private final class AdminWeeklyMockModel: ObservableObject {
 }
 
 struct AdminWeeklyMockScreen: View {
-    private enum Section: String, CaseIterable, Identifiable { case exams = "회차·응시", objections = "이의신청"; var id: String { rawValue } }
+    private enum Section: String, CaseIterable, Identifiable { case exams = "회차·응시", objections = "이의신청", insights = "개념 분석"; var id: String { rawValue } }
     fileprivate enum Action: Identifiable {
         case integrityRequest(ServerAPI.AdminMockAttempt)
         case integrityReview(ServerAPI.AdminMockIntegrityCase)
@@ -93,7 +93,13 @@ struct AdminWeeklyMockScreen: View {
             header
             if let value = model.errorMessage { banner(value, Tokens.dangerInk, "exclamationmark.triangle.fill") }
             if let value = model.noticeMessage { banner(value, Tokens.successInk, "checkmark.circle.fill") }
-            if model.isLoading && model.dashboard == nil { Spacer(); ProgressView("모의고사 운영 정보를 불러오는 중입니다"); Spacer() }
+            if section == .insights {
+                ScrollView {
+                    WeeklyMockInsightsPanel(scope: .admin(academyID: nil))
+                        .readableWidth(Tokens.readableWidth).adaptiveHPadding().adaptiveVPadding()
+                }
+            }
+            else if model.isLoading && model.dashboard == nil { Spacer(); ProgressView("모의고사 운영 정보를 불러오는 중입니다"); Spacer() }
             else if section == .objections { objectionContent }
             else if compactLandscape {
                 HStack(spacing: 0) { examList.frame(width: 330); Divider(); examDetail.frame(maxWidth: .infinity, maxHeight: .infinity) }
@@ -227,6 +233,16 @@ struct AdminWeeklyMockScreen: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack { Text("\(question.number)번").font(.mBodyB); Spacer(); Text(question.isCorrect ? "정답" : "오답").foregroundStyle(question.isCorrect ? Tokens.successInk : Tokens.dangerInk) }
                         Text("제출 \(question.submittedAnswer.isEmpty ? "—" : question.submittedAnswer) · 정답 \(question.correctAnswer)").font(.mCaption.monospacedDigit())
+                        if let concept = question.concept, !concept.conceptTitle.isEmpty {
+                            Text(concept.conceptTitle).font(.mCaption.weight(.semibold)).foregroundStyle(Tokens.primary)
+                            Text([concept.courseTitle, concept.unitTitle].filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.mMicro).foregroundStyle(Tokens.text2)
+                            DisclosureGroup("교육과정 식별자") {
+                                Text([concept.curriculumId, concept.courseId, concept.unitId, concept.conceptId].joined(separator: " / "))
+                                    .font(.mMicro).textSelection(.enabled)
+                                if !concept.conceptKey.isEmpty { Text(concept.conceptKey).font(.mMicro).textSelection(.enabled) }
+                            }.font(.mMicro)
+                        }
                         if !question.isCorrect, let explanation = question.explanation, !explanation.summary.isEmpty { Text(explanation.summary).font(.mMicro).foregroundStyle(Tokens.text2).lineLimit(3) }
                     }.padding(10).background(Tokens.surface, in: RoundedRectangle(cornerRadius: 11))
                 }
@@ -398,6 +414,7 @@ private struct AdminMockExamUploadSheet: View {
                     fileButton("정답·배점·해설 JSON", url: answerKeyURL) { importTarget = .answerKey }
                     fileButton("확인용 답지 PDF (선택)", url: answerSheetURL) { importTarget = .answerSheet }
                 }
+                Section("답지 작성 자료") { AdminAnswerKeyResourcePanel() }
                 Section { Text("서버가 PDF·JSON 실제 내용을 검사하고, 정답 키와 문항 수가 맞지 않으면 등록을 거부합니다.").font(.mCaption).foregroundStyle(Tokens.text2) }
             }
             .navigationTitle("주간 모의고사 등록").navigationBarTitleDisplayMode(.inline)

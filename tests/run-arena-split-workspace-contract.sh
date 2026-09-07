@@ -17,16 +17,14 @@ require() {
 
 # iPad와 iPhone 가로 작업대는 실제 가용 크기를 보고 분할/스크롤 fallback을 결정한다.
 require 'GeometryReader { proxy in' "$match"
-require 'size.width >= 744 && size.height >= 540' "$match"
-require 'verticalSizeClass == .compact' "$match"
-require 'size.width >= 700' "$match"
-require 'size.height >= 260' "$match"
+require 'UniversalLayoutPolicy.usesProblemSplit(width: size.width, height: size.height' "$match"
+require 'accessibilityText: dynamicTypeSize.isAccessibilitySize' "$match"
 require 'splitWorkspace(size: proxy.size)' "$match"
 require 'scrollingPlayView' "$match"
 require 'workspaceQuestionColumn(height: workspaceHeight)' "$match"
 require 'workspaceBoardColumn(' "$match"
 require 'availableWorkspaceHeight' "$match"
-require '? max(220, availableWorkspaceHeight)' "$match"
+require 'max(100, availableWorkspaceHeight)' "$match"
 
 # 넓은 iPad의 좌우 작업대 자체에는 바깥 ScrollView를 다시 넣지 않는다.
 split_body="$(awk '

@@ -10,64 +10,23 @@
 import SwiftUI
 import PencilKit
 
-private struct GoatArenaSolutionBoardDraft: Codable {
-    var revision: Int
-    var drawingData: Data
-}
-
 private extension PKDrawing {
     func arenaEvidencePNG() -> Data? {
         // 빈 PKDrawing의 bounds는 CGRect.null이라 maxX/maxY가 무한대다. 그 값을
         // UIGraphicsImageRenderer 크기로 넘기면 bitmap 생성이 실패해, 암산하고
         // 답만 고른 학생이 다음 문항으로 넘어갈 수 없었다. 빈 판도 유효한 원본이다.
-        let drawingBounds = strokes.isEmpty ? .zero : bounds.insetBy(dx: -32, dy: -32)
-        let finiteMaxX = drawingBounds.maxX.isFinite ? drawingBounds.maxX : 0
-        let finiteMaxY = drawingBounds.maxY.isFinite ? drawingBounds.maxY : 0
-        let width = max(1200, ceil(finiteMaxX), 1)
-        let height = max(900, ceil(finiteMaxY), 1)
-        let page = CGRect(x: 0, y: 0, width: width, height: height)
+        guard let plan = ArenaEvidenceRenderPolicy.plan(bounds: bounds, isEmpty: strokes.isEmpty) else { return nil }
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: page.size, format: format)
+        let renderer = UIGraphicsImageRenderer(size: plan.pixels, format: format)
         return renderer.pngData { context in
             UIColor.white.setFill()
-            context.fill(page)
+            context.fill(CGRect(origin: .zero, size: plan.pixels))
             guard !strokes.isEmpty else { return }
-            image(from: page, scale: 1).draw(in: page)
-        }
-    }
-}
-
-private enum GoatArenaSolutionBoardDraftStore {
-    private static func url(matchId: String, slot: Int, accountSlot: String) -> URL {
-        DataScope.url(
-            "goat-arena-board-\(matchId)-\(slot).json",
-            for: accountSlot)
-    }
-
-    static func load(matchId: String, slot: Int, accountSlot: String) -> GoatArenaSolutionBoardDraft? {
-        guard let data = try? Data(contentsOf: url(
-            matchId: matchId, slot: slot, accountSlot: accountSlot)) else { return nil }
-        return try? JSONDecoder().decode(GoatArenaSolutionBoardDraft.self, from: data)
-    }
-
-    static func save(
-        _ draft: GoatArenaSolutionBoardDraft,
-        matchId: String,
-        slot: Int,
-        accountSlot: String
-    ) {
-        guard let data = try? JSONEncoder().encode(draft) else { return }
-        try? data.write(
-            to: url(matchId: matchId, slot: slot, accountSlot: accountSlot),
-            options: .atomic)
-    }
-
-    static func clear(matchId: String, accountSlot: String) {
-        for slot in 1...5 {
-            try? FileManager.default.removeItem(at: url(
-                matchId: matchId, slot: slot, accountSlot: accountSlot))
+            context.cgContext.scaleBy(x: plan.scale, y: plan.scale)
+            context.cgContext.translateBy(x: -plan.source.minX, y: -plan.source.minY)
+            image(from: plan.source, scale: plan.scale).draw(in: plan.source)
         }
     }
 }
@@ -117,10 +76,13 @@ struct GoatArenaMatchPlayScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let accountSlot: String
-    private let clientBuildVersion: String
+    @State private var clientBuildVersion: String
     @State private var eventChannel: GoatArenaEventChannel
     @State private var startCommandId: String
     @State private var submissionId: String
+    @State private var commandKeyError: String?
+    @State private var commandOriginalBackedUp = false
+    @State private var commandCleanupNotice: String?
 
     @State private var attempt: Attempt?
     @State private var questionPack: QuestionPack?
@@ -149,6 +111,13 @@ struct GoatArenaMatchPlayScreen: View {
     @State private var isSavingSolutionBoard = false
     @State private var solutionBoardSaveError: String?
     @State private var isInstallingSolutionDrawing = false
+    @State private var installedDrawing: PKDrawing?
+    @State private var boardRecoverySlots = Set<Int>()
+    @State private var boardRecoveryBusy = false
+    @State private var confirmBoardRecovery = false
+    @State private var confirmAnswerRecovery = false
+    @State private var localDraftError: String?
+    @State private var screenAccountOwner: AppStore.AccountSessionBoundary?
 
     @State private var isLoading = true
     @State private var didRequestStart = false
@@ -188,18 +157,20 @@ struct GoatArenaMatchPlayScreen: View {
         self.briefing = briefing
         // 브리핑이 없는 호출부(디버그 픽스처 등)는 종전대로 곧바로 시작한다.
         _lobbyPending = State(initialValue: briefing.map { !$0.skipsLobby } ?? false)
-        let commandKeys = GoatArenaCommandKeyStore.loadOrCreate(matchId: matchId)
         accountSlot = DataScope.slot
-        clientBuildVersion = commandKeys.clientBuildVersion
+        let commandKeys = try? GoatArenaCommandKeyStore.loadOrCreate(matchId: matchId,
+            directory: DataScope.directory(for: DataScope.slot), buildVersion: ServerAPI.clientBuildVersion)
+        _clientBuildVersion = State(initialValue: commandKeys?.clientBuildVersion ?? ServerAPI.clientBuildVersion)
+        _commandKeyError = State(initialValue: commandKeys == nil ? "경기 요청 기록을 읽거나 안전하게 저장하지 못했습니다. 중복 요청을 막기 위해 시작을 보류했습니다." : nil)
         _eventChannel = State(
             initialValue: GoatArenaEventChannel(
                 matchId: matchId,
-                clientBuildVersion: commandKeys.clientBuildVersion,
+                clientBuildVersion: commandKeys?.clientBuildVersion ?? ServerAPI.clientBuildVersion,
                 accountSlot: DataScope.slot
             )
         )
-        _startCommandId = State(initialValue: commandKeys.startCommandId)
-        _submissionId = State(initialValue: commandKeys.submissionId)
+        _startCommandId = State(initialValue: commandKeys?.startCommandId ?? "")
+        _submissionId = State(initialValue: commandKeys?.submissionId ?? "")
     }
 
     private var questions: [Question] {
@@ -248,7 +219,7 @@ struct GoatArenaMatchPlayScreen: View {
     }
 
     private var answerInteractionDisabled: Bool {
-        interactionBusy || deadlineReached
+        interactionBusy || deadlineReached || localDraftError != nil
     }
 
     private var attemptIsSubmitted: Bool {
@@ -271,8 +242,9 @@ struct GoatArenaMatchPlayScreen: View {
     }
 
     private var accountIsCurrent: Bool {
-        DataScope.slot == accountSlot
+        DataScope.slot == accountSlot && (screenAccountOwner.map { store.ownsCurrentAccountSession($0) } ?? true)
     }
+    private var currentBoardNeedsRecovery: Bool { currentQuestion.map { boardRecoverySlots.contains($0.slot) } ?? false }
 
     private var usesDebugFixture: Bool {
         #if DEBUG
@@ -289,9 +261,49 @@ struct GoatArenaMatchPlayScreen: View {
 
             VStack(spacing: 0) {
                 header
+                if let commandCleanupNotice {
+                    HStack {
+                        Text(commandCleanupNotice).font(.mCaption)
+                        Button("다시 정리") { clearCommandKeysAfterReceipt() }.frame(minHeight: 44)
+                    }.padding(.horizontal, Tokens.Space.s3).foregroundStyle(Tokens.warningInk)
+                }
+                if let localDraftError {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        Text(localDraftError).font(.mCaption).foregroundStyle(Tokens.warningInk)
+                        HStack {
+                            Button("기기 저장 다시 시도") { Task {
+                                if let url = try? GoatArenaDraftStore.url(accountSlot: accountSlot), ArenaDraftPersistence.needsRecovery(url) {
+                                    confirmAnswerRecovery = true
+                                    return
+                                }
+                                if await ArenaDraftPersistence.flush(slot: accountSlot), accountIsCurrent {
+                                    self.localDraftError = nil
+                                }
+                            } }
+                            Button("원본 보관 후 복구") { confirmAnswerRecovery = true }
+                        }.font(.mCaption)
+                    }.padding(Tokens.Space.s3).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Tokens.warningSoft)
+                }
 
                 Group {
-                    if lobbyPending {
+                    if let commandKeyError {
+                        VStack(spacing: Tokens.Space.s3) {
+                            Text(commandKeyError).font(.mBody).multilineTextAlignment(.center)
+                            Button("저장 상태 다시 확인") { Task {
+                                if prepareCommandKeys(), !lobbyPending { await beginMatchIfNeeded() }
+                            } }.buttonStyle(PrimaryButtonStyle())
+                            Button(commandOriginalBackedUp ? "원본 보관됨" : "요청 기록 원본 보관") {
+                                guard accountIsCurrent else { return }
+                                do {
+                                    try GoatArenaCommandKeyStore.backUpOriginal(directory: DataScope.directory(for: accountSlot))
+                                    commandOriginalBackedUp = true
+                                } catch { self.commandKeyError = "요청 기록 원본을 보관하지 못했습니다. 저장 공간을 확인해 주세요. 기록을 지우거나 새 요청 키를 만들지 않았습니다." }
+                            }.disabled(commandOriginalBackedUp || !accountIsCurrent)
+                            Text("손상된 요청 기록은 자동 초기화하지 않습니다. 원본을 보관한 뒤 고객지원에 복구를 요청할 수 있습니다.")
+                                .font(.mCaption).foregroundStyle(Tokens.text2)
+                        }.padding(Tokens.Space.s4).frame(maxWidth: 560)
+                    } else if lobbyPending {
                         lobbyView
                     } else if isLoading {
                         loadingView
@@ -319,6 +331,7 @@ struct GoatArenaMatchPlayScreen: View {
             }
         }
         .task {
+            if screenAccountOwner == nil { screenAccountOwner = store.captureAccountSessionBoundary() }
             // 로비를 지나야 시작한다. 로비가 없는 경로(재개·증거 제출·픽스처)만
             // 종전처럼 화면이 뜨자마자 서버 타이머를 건다.
             guard !lobbyPending else { return }
@@ -352,6 +365,35 @@ struct GoatArenaMatchPlayScreen: View {
                   newSlot != accountSlot else { return }
             dismiss()
         }
+        .onReceive(NotificationCenter.default.publisher(for: ArenaDraftPersistence.failureNotification)) { notice in
+            guard accountIsCurrent, notice.userInfo?["accountSlot"] as? String == accountSlot,
+                  let url = notice.object as? URL else { return }
+            if url.lastPathComponent.hasPrefix("goat-arena-board-\(matchId)-") {
+                solutionBoardSaveError = "필기를 기기에 저장하지 못했습니다. 화면의 필기는 유지하고 있습니다."
+                if ArenaDraftPersistence.needsRecovery(url), let slot = currentQuestion?.slot { boardRecoverySlots.insert(slot) }
+            } else if url.lastPathComponent == "goat-arena-match-drafts.json" {
+                localDraftError = "답안 초안을 기기에 저장하지 못했습니다. 원본과 화면의 답안은 유지하고 있습니다."
+            }
+        }
+        .confirmationDialog("원본 파일을 보관하고 메모를 복구할까요?", isPresented: $confirmBoardRecovery, titleVisibility: .visible) {
+            Button("원본 보관 후 서버 메모 복구") { Task { await recoverCurrentSolutionBoard() } }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("읽지 못한 원본을 별도로 보관한 뒤 서버 저장본을 엽니다. 서버 저장본도 없으면 빈 메모로 시작합니다. 원본 보관에 실패하면 교체하지 않습니다.")
+        }
+        .confirmationDialog("Arena 답안 초안 원본을 보관할까요?", isPresented: $confirmAnswerRecovery, titleVisibility: .visible) {
+            Button("원본 보관 후 서버 답안 사용") { Task {
+                guard accountIsCurrent else { return }
+                if await GoatArenaDraftStore.recover(accountSlot: accountSlot), accountIsCurrent {
+                    localDraftError = nil
+                    didRequestStart = false
+                    await beginMatchIfNeeded()
+                }
+            } }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("이 기기의 Arena 답안 초안 목록 원본을 별도로 보관합니다. 저장되지 않은 답안을 임의로 전송하지 않고 서버의 현재 답안을 다시 확인합니다.")
+        }
         .confirmationDialog(
             "답안을 제출할까요?",
             isPresented: $confirmSubmit,
@@ -379,7 +421,10 @@ struct GoatArenaMatchPlayScreen: View {
             }
             Button("나중에 이어하기", role: .destructive) {
                 persistDraft()
-                dismiss()
+                Task {
+                    if await ArenaDraftPersistence.flush(slot: accountSlot), accountIsCurrent { dismiss() }
+                    else { localDraftError = "마지막 답안을 기기에 저장하지 못했습니다. 저장 공간을 확인해 주세요." }
+                }
             }
             Button("계속 풀기", role: .cancel) {}
         } message: {
@@ -1080,11 +1125,8 @@ struct GoatArenaMatchPlayScreen: View {
     }
 
     private func usesSplitWorkspace(_ size: CGSize) -> Bool {
-        let phoneLandscape = verticalSizeClass == .compact
-            && size.width >= 700
-            && size.height >= 260
-        let roomyWindow = size.width >= 744 && size.height >= 540
-        return (phoneLandscape || roomyWindow) && !dynamicTypeSize.isAccessibilitySize
+        UniversalLayoutPolicy.usesProblemSplit(width: size.width, height: size.height,
+            accessibilityText: dynamicTypeSize.isAccessibilitySize)
     }
 
     private var scrollingPlayView: some View {
@@ -1117,7 +1159,7 @@ struct GoatArenaMatchPlayScreen: View {
     /// 넓은 iPad·Stage Manager용 고정 작업대.
     /// 시험지는 왼쪽, 필기 공책은 오른쪽에 계속 보이며 바깥 스크롤을 만들지 않는다.
     private func splitWorkspace(size: CGSize) -> some View {
-        let phoneLandscape = verticalSizeClass == .compact && size.height < 540
+        let phoneLandscape = size.height < 540
         let outerPadding: CGFloat = phoneLandscape ? 8 : (size.height < 600 ? 10 : 14)
         let statusHeight: CGFloat = phoneLandscape ? 36 : 44
         let gap: CGFloat = phoneLandscape ? 8 : (size.width < 900 ? 10 : 14)
@@ -1127,11 +1169,9 @@ struct GoatArenaMatchPlayScreen: View {
             - gap
         // iPad에서는 충분한 필기 높이를 지키되, iPhone 가로의 실제 300pt 안팎
         // 뷰포트에 360pt를 강제해 아래를 잘라 내지 않는다.
-        let workspaceHeight = phoneLandscape
-            ? max(220, availableWorkspaceHeight)
-            : max(360, availableWorkspaceHeight)
+        let workspaceHeight = max(100, availableWorkspaceHeight)
         let problemWidth = min(
-            max(340, size.width * 0.44),
+            max(240, (size.width - outerPadding * 2 - gap) * 0.42),
             560
         )
         let boardWidth = size.width - (outerPadding * 2) - gap - problemWidth
@@ -1359,7 +1399,9 @@ struct GoatArenaMatchPlayScreen: View {
                     .lineLimit(1)
             }
 
-            SolutionNote(
+            if currentBoardNeedsRecovery {
+                boardRecoveryView
+            } else { SolutionNote(
                 drawing: $solutionDrawing,
                 allowsFinger: $solutionAllowsFinger,
                 zoom: $solutionZoom,
@@ -1371,7 +1413,7 @@ struct GoatArenaMatchPlayScreen: View {
                 showsHeader: false,
                 usesCompactToolbar: usesCompactToolbar,
                 minimumConstrainedCanvasHeight: phoneLandscape ? 150 : 180
-            )
+            ).allowsHitTesting(!boardRecoveryBusy && !isMovingQuestion && !isSubmitting) }
         }
         .padding(boardPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1549,14 +1591,15 @@ struct GoatArenaMatchPlayScreen: View {
                         .font(.mCaption)
                         .foregroundStyle(Tokens.text2)
                         .fixedSize(horizontal: false, vertical: true)
-                    SolutionNote(
+                    if currentBoardNeedsRecovery { boardRecoveryView }
+                    else { SolutionNote(
                         drawing: $solutionDrawing,
                         allowsFinger: $solutionAllowsFinger,
                         zoom: $solutionZoom,
                         selectedTool: $solutionTool,
                         inkWidth: $solutionInkWidth,
                         undoStack: $solutionUndoStack,
-                        redoStack: $solutionRedoStack)
+                        redoStack: $solutionRedoStack).allowsHitTesting(!boardRecoveryBusy && !isMovingQuestion && !isSubmitting) }
                 }
             }
             .padding(horizontalSizeClass == .compact ? Tokens.Space.s5 : Tokens.Space.s6)
@@ -1617,7 +1660,7 @@ struct GoatArenaMatchPlayScreen: View {
                     .frame(width: 7, height: 7)
             }
             Text(solutionBoardSaveError != nil
-                 ? "서버 저장 재시도 필요"
+                 ? "저장 확인 필요"
                  : (!hasBoardRevision ? "필기 없음"
                     : (saved >= revision ? "풀이판 저장됨" : "풀이판 저장 대기")))
                 .font(.mMicro)
@@ -1628,6 +1671,18 @@ struct GoatArenaMatchPlayScreen: View {
             !hasBoardRevision && solutionBoardSaveError == nil
                 ? "필기 없음, 다음 문항으로 이동할 때 빈 풀이판을 저장합니다"
                 : "풀이판 저장 상태")
+    }
+
+    private var boardRecoveryView: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            Label("메모 원본을 덮어쓰지 않고 보관했습니다", systemImage: "doc.badge.exclamationmark")
+                .font(.mBodyB).foregroundStyle(Tokens.warningInk)
+            Text(solutionBoardSaveError ?? "기기 메모를 읽지 못했거나 서버 저장본과 충돌했습니다. 복구 전에는 빈 메모로 덮어쓰지 않습니다.")
+                .font(.mCaption).fixedSize(horizontal: false, vertical: true)
+            Button(boardRecoveryBusy ? "원본 보관 및 복구 중…" : "원본 보관 후 복구") { confirmBoardRecovery = true }
+                .buttonStyle(SecondaryButtonStyle()).disabled(boardRecoveryBusy)
+        }.padding(Tokens.Space.s3).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Tokens.warningSoft)
     }
 
     private func answerSaveStatus(_ question: Question) -> some View {
@@ -1821,12 +1876,49 @@ struct GoatArenaMatchPlayScreen: View {
 
     // MARK: Start and validation
 
+    @MainActor private func prepareCommandKeys() -> Bool {
+        guard accountIsCurrent else { return false }
+        do {
+            if !startCommandId.isEmpty, !submissionId.isEmpty {
+                guard let existing = try GoatArenaCommandKeyStore.existing(matchId: matchId, directory: DataScope.directory(for: accountSlot)),
+                      existing.startCommandId == startCommandId, existing.submissionId == submissionId,
+                      existing.clientBuildVersion == clientBuildVersion else { throw CocoaError(.fileReadCorruptFile) }
+                commandKeyError = nil
+                return true
+            }
+            let keys = try GoatArenaCommandKeyStore.loadOrCreate(matchId: matchId,
+                directory: DataScope.directory(for: accountSlot), buildVersion: ServerAPI.clientBuildVersion)
+            if startCommandId.isEmpty || submissionId.isEmpty {
+                startCommandId = keys.startCommandId; submissionId = keys.submissionId
+                clientBuildVersion = keys.clientBuildVersion
+                eventChannel = GoatArenaEventChannel(matchId: matchId, clientBuildVersion: keys.clientBuildVersion, accountSlot: accountSlot)
+            }
+            commandKeyError = nil
+            return true
+        } catch {
+            commandKeyError = "경기 요청 기록을 읽거나 안전하게 저장하지 못했습니다. 중복 요청을 막기 위해 시작을 보류했습니다."
+            isLoading = false
+            return false
+        }
+    }
+
+    @MainActor private func clearCommandKeysAfterReceipt() {
+        guard accountIsCurrent,
+              GoatArenaCommandKeyStore.canDiscard(attemptStatus: attempt?.status,
+                                                   evidenceRequired: submission?.evidenceRequired) else { return }
+        do {
+            try GoatArenaCommandKeyStore.clear(matchId: matchId, directory: DataScope.directory(for: accountSlot))
+            commandCleanupNotice = nil
+        } catch { commandCleanupNotice = "서버 처리는 완료됐습니다. 기기 요청 기록 정리는 보류했으며 기존 기록을 보존하고 있습니다." }
+    }
+
     @MainActor
     private func beginMatchIfNeeded() async {
         guard !didRequestStart, accountIsCurrent else {
             if !accountIsCurrent { dismiss() }
             return
         }
+        guard prepareCommandKeys() else { return }
         didRequestStart = true
         isLoading = true
         startError = nil
@@ -1899,19 +1991,17 @@ struct GoatArenaMatchPlayScreen: View {
             }
 
             if ["EVIDENCE_REQUIRED", "SUBMITTED"].contains(response.attempt.status) {
-                GoatArenaDraftStore.clear(
-                    matchId: matchId,
-                    attemptId: response.attempt.attemptId
-                )
-                GoatArenaCommandKeyStore.clear(matchId: matchId)
+                clearLocalAnswerDraft(attemptId: response.attempt.attemptId)
+                clearCommandKeysAfterReceipt()
                 isLoading = false
                 return
             }
 
-            if let draft = GoatArenaDraftStore.load(
+            do { if let draft = try GoatArenaDraftStore.load(
                 matchId: matchId,
                 attemptId: response.attempt.attemptId,
-                questionPackId: response.questionPack.questionPackId
+                questionPackId: response.questionPack.questionPackId,
+                accountSlot: accountSlot
             ) {
                 let validSlots = Set(response.questionPack.questions.map(\.slot))
                 answers = draft.answers
@@ -1930,6 +2020,8 @@ struct GoatArenaMatchPlayScreen: View {
                 )
                 captureCurrentQuestionForLocalReview()
                 persistDraft()
+            } } catch {
+                localDraftError = "Arena 답안 초안을 읽지 못했습니다. 원본을 보존했으며 서버 답안으로 자동 덮어쓰지 않습니다."
             }
 
             isLoading = false
@@ -2015,19 +2107,21 @@ struct GoatArenaMatchPlayScreen: View {
 
     @MainActor
     private func solutionDrawingChanged(_ drawing: PKDrawing) {
-        guard !isInstallingSolutionDrawing,
+        if installedDrawing == drawing { installedDrawing = nil; return }
+        installedDrawing = nil
+        guard accountIsCurrent, !isInstallingSolutionDrawing, !currentBoardNeedsRecovery,
               attempt?.status == "IN_PROGRESS",
               let slot = currentQuestion?.slot else { return }
         let revision = max(1, (solutionBoardRevisions[slot] ?? 0) + 1)
         solutionBoardRevisions[slot] = revision
-        GoatArenaSolutionBoardDraftStore.save(
-            GoatArenaSolutionBoardDraft(
-                revision: revision,
-                drawingData: drawing.dataRepresentation()),
-            matchId: matchId,
-            slot: slot,
-            accountSlot: accountSlot)
-        solutionBoardSaveError = nil
+        do {
+            try GoatArenaSolutionBoardDraftStore.saveSnapshot(matchId: matchId, slot: slot, accountSlot: accountSlot) {
+                GoatArenaSolutionBoardDraft(revision: revision, drawingData: drawing.dataRepresentation())
+            }
+        } catch {
+            solutionBoardSaveError = "필기 초안을 기기에 보관하지 못했습니다. 화면의 필기는 유지하고 있습니다."
+            return
+        }
         solutionBoardSaveTask?.cancel()
         solutionBoardSaveTask = Task {
             try? await Task.sleep(for: .milliseconds(900))
@@ -2038,32 +2132,46 @@ struct GoatArenaMatchPlayScreen: View {
 
     @MainActor
     private func installSolutionDrawing(for slot: Int) {
+        guard accountIsCurrent else { return }
         solutionBoardSaveTask?.cancel()
-        let draft = GoatArenaSolutionBoardDraftStore.load(
-            matchId: matchId,
-            slot: slot,
-            accountSlot: accountSlot)
         isInstallingSolutionDrawing = true
-        solutionDrawing = draft.flatMap { try? PKDrawing(data: $0.drawingData) } ?? PKDrawing()
-        solutionBoardRevisions[slot] = draft?.revision ?? 0
-        solutionUndoStack.removeAll()
-        solutionRedoStack.removeAll()
-        solutionZoom = 1
-        DispatchQueue.main.async { isInstallingSolutionDrawing = false }
+        defer { isInstallingSolutionDrawing = false }
+        do {
+            let draft = try GoatArenaSolutionBoardDraftStore.load(matchId: matchId, slot: slot, accountSlot: accountSlot)
+            let drawing = try draft.map { try PKDrawing(data: $0.drawingData) } ?? PKDrawing()
+            installedDrawing = drawing; solutionDrawing = drawing
+            solutionBoardRevisions[slot] = draft?.revision ?? 0
+            solutionUndoStack.removeAll(); solutionRedoStack.removeAll(); solutionZoom = 1
+            boardRecoverySlots.remove(slot)
+        } catch {
+            if let url = try? GoatArenaSolutionBoardDraftStore.url(matchId: matchId, slot: slot, accountSlot: accountSlot) {
+                ArenaDraftPersistence.markDamaged(url, slot: accountSlot)
+            }
+            boardRecoverySlots.insert(slot)
+            solutionBoardSaveError = "기기 메모를 읽지 못했습니다. 원본을 보관했으며 빈 필기로 덮어쓰지 않습니다."
+        }
     }
 
     @MainActor
     private func restoreSolutionBoardsFromServer(currentSlot: Int) async {
-        if let boards = try? await ServerAPI.getGoatArenaSolutionBoards(matchId: matchId) {
+        guard accountIsCurrent, let authorization = ServerAPI.captureAuthorization() else { return }
+        do {
+            let boards = try await ServerAPI.getGoatArenaSolutionBoards(matchId: matchId, authorization: authorization)
+            guard accountIsCurrent, ServerAPI.isCurrentAuthorization(authorization) else { return }
             for board in boards {
                 guard let encoded = board.drawingDataBase64,
-                      let data = Data(base64Encoded: encoded) else { continue }
-                let local = GoatArenaSolutionBoardDraftStore.load(
-                    matchId: matchId,
-                    slot: board.questionSlot,
-                    accountSlot: accountSlot)
-                if local == nil || board.revision >= (local?.revision ?? 0) {
-                    GoatArenaSolutionBoardDraftStore.save(
+                      let data = Data(base64Encoded: encoded), (1...5).contains(board.questionSlot) else { continue }
+                do {
+                    _ = try PKDrawing(data: data)
+                    let local = try GoatArenaSolutionBoardDraftStore.load(matchId: matchId, slot: board.questionSlot, accountSlot: accountSlot)
+                    if let local, local.drawingData != data {
+                        if board.revision > local.revision {
+                            boardRecoverySlots.insert(board.questionSlot)
+                            solutionBoardSaveError = "서버와 기기의 메모가 달라 자동 교체하지 않았습니다. 원본을 보관하고 복구할 수 있습니다."
+                        }
+                        continue
+                    }
+                    try GoatArenaSolutionBoardDraftStore.save(
                         GoatArenaSolutionBoardDraft(
                             revision: board.revision,
                             drawingData: data),
@@ -2073,10 +2181,49 @@ struct GoatArenaMatchPlayScreen: View {
                     solutionBoardRevisions[board.questionSlot] = board.revision
                     solutionBoardSavedRevisions[board.questionSlot] = board.revision
                     solutionBoardSavedHashes[board.questionSlot] = board.sha256
+                } catch {
+                    boardRecoverySlots.insert(board.questionSlot)
+                    solutionBoardSaveError = "메모 원본 또는 서버 저장본을 읽지 못해 자동 교체를 멈췄습니다."
                 }
             }
+        } catch {
+            guard accountIsCurrent else { return }
+            solutionBoardSaveError = "서버 메모를 확인하지 못했습니다. 기기의 원본을 유지합니다."
         }
+        guard accountIsCurrent else { return }
+        if boardRecoverySlots.contains(currentSlot) { return }
         installSolutionDrawing(for: currentSlot)
+    }
+
+    @MainActor private func recoverCurrentSolutionBoard() async {
+        guard accountIsCurrent, !boardRecoveryBusy, let slot = currentQuestion?.slot,
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        boardRecoveryBusy = true
+        defer { boardRecoveryBusy = false }
+        do {
+            let boards = try await ServerAPI.getGoatArenaSolutionBoards(matchId: matchId, authorization: authorization)
+            guard accountIsCurrent, ServerAPI.isCurrentAuthorization(authorization), currentQuestion?.slot == slot else { return }
+            let board = boards.first { $0.questionSlot == slot }
+            let drawing: PKDrawing
+            if let encoded = board?.drawingDataBase64 {
+                guard let bytes = Data(base64Encoded: encoded) else { throw ArenaDraftStorageError.damaged }
+                drawing = try PKDrawing(data: bytes)
+            } else { drawing = PKDrawing() }
+            let draft = GoatArenaSolutionBoardDraft(revision: board?.revision ?? 0, drawingData: drawing.dataRepresentation())
+            guard await GoatArenaSolutionBoardDraftStore.recover(draft, matchId: matchId, slot: slot, accountSlot: accountSlot),
+                  accountIsCurrent, currentQuestion?.slot == slot else {
+                solutionBoardSaveError = "원본을 안전하게 보관하지 못해 메모를 교체하지 않았습니다. 저장 공간을 확인해 주세요."
+                return
+            }
+            boardRecoverySlots.remove(slot)
+            solutionBoardSavedRevisions[slot] = board?.revision ?? 0
+            solutionBoardSavedHashes[slot] = board?.sha256
+            installSolutionDrawing(for: slot)
+            solutionBoardSaveError = nil
+        } catch {
+            guard accountIsCurrent else { return }
+            solutionBoardSaveError = "서버 저장본을 확인하지 못했습니다. 기기 원본은 교체하지 않았습니다."
+        }
     }
 
     @MainActor
@@ -2084,51 +2231,71 @@ struct GoatArenaMatchPlayScreen: View {
     private func saveCurrentSolutionBoard(force: Bool) async -> Bool {
         guard accountIsCurrent,
               attempt?.status == "IN_PROGRESS",
+              !currentBoardNeedsRecovery, !isInstallingSolutionDrawing,
               let slot = currentQuestion?.slot else { return false }
         if isSavingSolutionBoard {
             while isSavingSolutionBoard {
                 try? await Task.sleep(for: .milliseconds(40))
+                guard !Task.isCancelled, accountIsCurrent else { return false }
             }
         }
+        guard accountIsCurrent, currentQuestion?.slot == slot, !boardRecoverySlots.contains(slot),
+              attempt?.status == "IN_PROGRESS", let authorization = ServerAPI.captureAuthorization() else { return false }
+        isSavingSolutionBoard = true
+        defer { isSavingSolutionBoard = false }
         var revision = solutionBoardRevisions[slot] ?? 0
         if revision == 0 {
             guard force else { return true }
             revision = 1
             solutionBoardRevisions[slot] = revision
-            GoatArenaSolutionBoardDraftStore.save(
+            do { try GoatArenaSolutionBoardDraftStore.save(
                 GoatArenaSolutionBoardDraft(
                     revision: revision,
                     drawingData: solutionDrawing.dataRepresentation()),
                 matchId: matchId,
                 slot: slot,
-                accountSlot: accountSlot)
+                accountSlot: accountSlot) } catch {
+                solutionBoardSaveError = "마지막 필기를 기기에 저장하지 못했습니다."
+                return false
+            }
+        }
+        let drawingSnapshot = solutionDrawing
+        guard await ArenaDraftPersistence.flush(slot: accountSlot), accountIsCurrent, currentQuestion?.slot == slot else {
+            solutionBoardSaveError = "마지막 필기를 기기에 저장하지 못했습니다. 저장 공간을 확인해 주세요."
+            return false
         }
         if !force, (solutionBoardSavedRevisions[slot] ?? 0) >= revision { return true }
-        guard let png = solutionDrawing.arenaEvidencePNG() else {
+        guard let png = drawingSnapshot.arenaEvidencePNG() else {
             solutionBoardSaveError = "풀이판 이미지를 만들 수 없습니다."
             return false
         }
-        let drawingData = solutionDrawing.dataRepresentation()
-        isSavingSolutionBoard = true
-        defer { isSavingSolutionBoard = false }
+        let drawingData = drawingSnapshot.dataRepresentation()
         do {
             let board = try await ServerAPI.saveGoatArenaSolutionBoard(
                 matchId: matchId,
                 questionSlot: slot,
                 revision: revision,
-                strokeCount: solutionDrawing.strokes.count,
+                strokeCount: drawingSnapshot.strokes.count,
                 drawingData: drawingData,
                 previewPNG: png,
                 commandId: "arena-board-\(matchId)-\(slot)-\(revision)",
-                clientBuildVersion: clientBuildVersion)
+                clientBuildVersion: clientBuildVersion,
+                authorization: authorization)
+            guard accountIsCurrent, ServerAPI.isCurrentAuthorization(authorization), currentQuestion?.slot == slot else { return false }
+            guard board.questionSlot == slot, board.revision == revision else { throw GoatArenaPlayError.invalidContract }
             solutionBoardSavedRevisions[slot] = max(
                 solutionBoardSavedRevisions[slot] ?? 0,
                 board.revision)
             solutionBoardSavedHashes[slot] = board.sha256
             solutionBoardSaveError = nil
             markConnectionRestoredIfNeeded()
+            if force, solutionBoardRevisions[slot] != revision {
+                solutionBoardSaveError = "저장 중 새 필기가 추가되었습니다. 최신 필기를 저장한 뒤 다시 진행해 주세요."
+                return false
+            }
             return true
         } catch {
+            guard accountIsCurrent else { return false }
             solutionBoardSaveError = playErrorMessage(error, operation: .answer)
             noteConnectionFailure()
             return false
@@ -2143,7 +2310,7 @@ struct GoatArenaMatchPlayScreen: View {
     }
 
     private func updateAnswer(_ value: String, for slot: Int) {
-        guard answers[slot] != value else { return }
+        guard accountIsCurrent, localDraftError == nil, answers[slot] != value else { return }
         answers[slot] = value
         dirtySlots.insert(slot)
         answerCommandIds[slot] = UUID().uuidString
@@ -2154,7 +2321,7 @@ struct GoatArenaMatchPlayScreen: View {
     @MainActor
     @discardableResult
     private func saveAnswer(slot: Int, reportFailure: Bool) async -> Bool {
-        guard accountIsCurrent, attempt?.status == "IN_PROGRESS",
+        guard accountIsCurrent, localDraftError == nil, attempt?.status == "IN_PROGRESS",
               submission == nil else { return false }
         while isSavingAnswer {
             do {
@@ -2247,18 +2414,17 @@ struct GoatArenaMatchPlayScreen: View {
         introducedQuestionNumber = max(introducedQuestionNumber, openedNumber)
 
         if ["EVIDENCE_REQUIRED", "SUBMITTED"].contains(response.attempt.status) {
-            GoatArenaDraftStore.clear(
-                matchId: matchId,
-                attemptId: response.attempt.attemptId
-            )
-            GoatArenaCommandKeyStore.clear(matchId: matchId)
+            clearLocalAnswerDraft(attemptId: response.attempt.attemptId)
+            clearCommandKeysAfterReceipt()
             if response.attempt.status == "SUBMITTED" {
                 // 서버가 다섯 풀이판을 원본 증거로 승격한 성공 경계 뒤에만 지운다.
                 // EVIDENCE_REQUIRED에서 지우면 finalize 재시도 중 연결이 끊겼을 때
                 // 복구할 원본 필기가 사라진다.
-                GoatArenaSolutionBoardDraftStore.clear(
-                    matchId: matchId,
-                    accountSlot: accountSlot)
+                Task {
+                    if !(await GoatArenaSolutionBoardDraftStore.clear(matchId: matchId, accountSlot: accountSlot)), accountIsCurrent {
+                        localDraftError = "서버 제출은 완료됐으며 기기 메모 정리는 보류했습니다. 원본은 기기에 남아 있습니다."
+                    }
+                }
             }
         } else {
             persistDraft()
@@ -2535,11 +2701,8 @@ struct GoatArenaMatchPlayScreen: View {
                 throw GoatArenaPlayError.invalidContract
             }
             submission = result
-            GoatArenaDraftStore.clear(
-                matchId: matchId,
-                attemptId: result.attemptId
-            )
-            GoatArenaCommandKeyStore.clear(matchId: matchId)
+            clearLocalAnswerDraft(attemptId: result.attemptId)
+            clearCommandKeysAfterReceipt()
             connectionNotice = nil
         } catch {
             guard accountIsCurrent else {
@@ -2569,13 +2732,22 @@ struct GoatArenaMatchPlayScreen: View {
         }
         await sendNetworkState("BACKGROUND")
         persistDraft()
+        guard await ArenaDraftPersistence.flush(slot: accountSlot), accountIsCurrent else {
+            localDraftError = "마지막 답안이나 필기를 기기에 저장하지 못했습니다. 화면의 원본은 유지하고 있습니다."
+            return
+        }
         dismiss()
+    }
+
+    private func clearLocalAnswerDraft(attemptId: String) {
+        do { try GoatArenaDraftStore.clear(matchId: matchId, attemptId: attemptId, accountSlot: accountSlot) }
+        catch { localDraftError = "서버 처리 결과는 유지되며, 기기 초안 정리는 보류했습니다. 원본을 보존하고 있습니다." }
     }
 
     private func persistDraft() {
         guard accountIsCurrent, let attempt, let questionPack,
               attempt.status == "IN_PROGRESS", submission == nil else { return }
-        GoatArenaDraftStore.save(
+        do { try GoatArenaDraftStore.save(
             .init(
                 matchId: matchId,
                 attemptId: attempt.attemptId,
@@ -2586,8 +2758,10 @@ struct GoatArenaMatchPlayScreen: View {
                 answerCommandIds: answerCommandIds.filter {
                     dirtySlots.contains($0.key)
                 }
-            )
-        )
+            ), accountSlot: accountSlot
+        ) } catch {
+            localDraftError = "Arena 답안 초안을 기기에 보관하지 못했습니다. 원본과 현재 답안을 유지하고 있습니다."
+        }
     }
 
     private func captureCurrentQuestionForLocalReview() {
@@ -2949,159 +3123,5 @@ private enum GoatArenaPlayError: LocalizedError {
         case .accountChanged:
             return "로그인 계정이 변경되었습니다."
         }
-    }
-}
-
-// MARK: - Account-scoped local draft
-
-private struct GoatArenaDraft: Codable {
-    let matchId: String
-    let attemptId: String
-    let questionPackId: String
-    let currentQuestionIndex: Int
-    let answers: [Int: String]
-    /// nil은 구버전 초안이다. 구버전은 저장 완료 여부를 남기지 않았으므로 모든
-    /// 답안을 미저장으로 간주해 한 번 안전하게 재전송한다.
-    let dirtySlots: [Int]?
-    /// 응답 유실 뒤에도 같은 답·같은 멱등키를 보내기 위해 초안과 함께 보존한다.
-    let answerCommandIds: [Int: String]?
-}
-
-private enum GoatArenaDraftStore {
-    private static let fileName = "goat-arena-match-drafts.json"
-
-    private static var fileURL: URL {
-        DataScope.url(fileName)
-    }
-
-    static func load(
-        matchId: String,
-        attemptId: String,
-        questionPackId: String
-    ) -> GoatArenaDraft? {
-        guard let data = try? Data(contentsOf: fileURL),
-              let drafts = try? JSONDecoder().decode([GoatArenaDraft].self, from: data)
-        else {
-            return nil
-        }
-        return drafts.first {
-            $0.matchId == matchId
-                && $0.attemptId == attemptId
-                && $0.questionPackId == questionPackId
-        }
-    }
-
-    static func save(_ draft: GoatArenaDraft) {
-        var drafts = readAll().filter {
-            !($0.matchId == draft.matchId && $0.attemptId == draft.attemptId)
-        }
-        drafts.append(draft)
-        write(drafts)
-    }
-
-    static func clear(matchId: String, attemptId: String) {
-        let remaining = readAll().filter {
-            !($0.matchId == matchId && $0.attemptId == attemptId)
-        }
-        write(remaining)
-    }
-
-    private static func readAll() -> [GoatArenaDraft] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let drafts = try? JSONDecoder().decode([GoatArenaDraft].self, from: data)
-        else {
-            return []
-        }
-        return drafts
-    }
-
-    private static func write(_ drafts: [GoatArenaDraft]) {
-        guard let data = try? JSONEncoder().encode(drafts) else { return }
-        try? data.write(to: fileURL, options: .atomic)
-    }
-}
-
-// MARK: - Stable idempotency keys
-
-private struct GoatArenaCommandKeys: Codable {
-    let matchId: String
-    let startCommandId: String
-    let submissionId: String
-    let clientBuildVersion: String
-
-    private enum CodingKeys: String, CodingKey {
-        case matchId, startCommandId, submissionId, clientBuildVersion
-    }
-
-    init(
-        matchId: String,
-        startCommandId: String,
-        submissionId: String,
-        clientBuildVersion: String
-    ) {
-        self.matchId = matchId
-        self.startCommandId = startCommandId
-        self.submissionId = submissionId
-        self.clientBuildVersion = clientBuildVersion
-    }
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        matchId = try values.decode(String.self, forKey: .matchId)
-        startCommandId = try values.decode(String.self, forKey: .startCommandId)
-        submissionId = try values.decode(String.self, forKey: .submissionId)
-        clientBuildVersion = try values.decodeIfPresent(
-            String.self,
-            forKey: .clientBuildVersion
-        ) ?? ServerAPI.clientBuildVersion
-    }
-}
-
-private enum GoatArenaCommandKeyStore {
-    private static let fileName = "goat-arena-command-keys.json"
-
-    private static var fileURL: URL {
-        DataScope.url(fileName)
-    }
-
-    static func loadOrCreate(matchId: String) -> GoatArenaCommandKeys {
-        var values = readAll()
-        if let existing = values.first(where: { $0.matchId == matchId }) {
-            // clientBuildVersion이 없던 구버전 파일도 현재 값을 한 번 기록해 이후 앱
-            // 업데이트에서 같은 명령 fingerprint가 달라지지 않게 한다.
-            write(values)
-            return existing
-        }
-
-        let created = GoatArenaCommandKeys(
-            matchId: matchId,
-            startCommandId: UUID().uuidString,
-            submissionId: UUID().uuidString,
-            clientBuildVersion: ServerAPI.clientBuildVersion
-        )
-        values.append(created)
-        write(values)
-        return created
-    }
-
-    static func clear(matchId: String) {
-        write(readAll().filter { $0.matchId != matchId })
-    }
-
-    private static func readAll() -> [GoatArenaCommandKeys] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let values = try? JSONDecoder().decode(
-                [GoatArenaCommandKeys].self,
-                from: data
-              )
-        else {
-            return []
-        }
-        return values
-    }
-
-    private static func write(_ values: [GoatArenaCommandKeys]) {
-        guard let data = try? JSONEncoder().encode(values) else { return }
-        try? data.write(to: fileURL, options: .atomic)
     }
 }

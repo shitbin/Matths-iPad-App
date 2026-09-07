@@ -133,9 +133,6 @@ enum GoatArenaLocalReviewContextStore {
 
     private static func write(_ values: [GoatArenaLocalReviewContext]) {
         guard let data = try? JSONEncoder().encode(values) else { return }
-        try? data.write(
-            to: fileURL,
-            options: [.atomic, .completeFileProtection]
-        )
+        try? ProtectedFileWriter.write(data, to: fileURL)
     }
 }

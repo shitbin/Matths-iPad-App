@@ -40,8 +40,6 @@ final class LocalAIModelPack: ObservableObject {
 
     /// 여러 화면이 같은 순간 모델팩 준비를 요청해도 수 GB 파일을 중복으로 받지 않는다.
     /// async 함수는 다운로드를 기다리는 동안 재진입할 수 있으므로 state만으로는 부족하다.
-    private var preparation: (id: UUID, task: Task<Void, Error>)?
-
     private init() {}
 
     var statusText: String {
@@ -57,22 +55,11 @@ final class LocalAIModelPack: ObservableObject {
     /// 필요한 파일을 모두 준비한다. 같은 모델이 두 역할을 맡는 12GB 이상 기기는
     /// 중복 다운로드하지 않는다.
     func prepareForSheetAnalysis() async throws {
-        if let running = preparation {
-            try await running.task.value
-            return
-        }
-
-        let id = UUID()
-        let task = Task { @MainActor [weak self] in
+        let key = "sheet-pack|\(ModelDownloader.analysisVisionSpec.file)|\(ModelDownloader.analysisReasoningSpec.file)"
+        try await LocalAIArtifactFlight.shared.perform(key: key) { [weak self] in
             guard let self else { throw CancellationError() }
             try await self.performPreparation()
         }
-        preparation = (id, task)
-        defer {
-            // 같은 작업을 기다리던 호출이 늦게 돌아와 새 작업을 지우지 않게 id를 확인한다.
-            if preparation?.id == id { preparation = nil }
-        }
-        try await task.value
     }
 
     private func performPreparation() async throws {
@@ -119,7 +106,7 @@ final class LocalAIModelPack: ObservableObject {
 
             for artifact in missing {
                 state = .downloading(artifact.name)
-                try await Self.download(artifact)
+                try await Self.prepareArtifact(url: artifact.url, file: artifact.file)
             }
             state = .ready
         } catch {
@@ -169,15 +156,19 @@ final class LocalAIModelPack: ObservableObject {
         ) {
             return true
         }
-        let actualSHA256 = try? await Task.detached(priority: .utility) {
-            try sha256(of: url)
-        }.value
-        guard actualSHA256 == expectedSHA256.lowercased() else { return false }
         do {
-            try writeIntegrityReceipt(
-                for: url,
-                sha256: expectedSHA256,
-                byteCount: size.int64Value)
+            try await LocalAIArtifactFlight.shared.perform(key: "verify|\(url.path)") {
+                // An independent tutor/model-pack waiter may have completed it.
+                if ModelIntegrityReceipt.read(for: url, expectedSHA256: expectedSHA256) { return }
+                try await Task.detached(priority: .utility) {
+                    let identity = try ModelIntegrityReceipt.Identity.read(at: url)
+                    guard try sha256(of: url) == expectedSHA256.lowercased() else {
+                        throw PackError.invalidFile(file)
+                    }
+                    try ModelIntegrityReceipt.write(
+                        for: url, sha256: expectedSHA256, verifiedIdentity: identity)
+                }.value
+            }
             return true
         } catch {
             return false
@@ -203,11 +194,7 @@ final class LocalAIModelPack: ObservableObject {
         expectedSHA256: String,
         byteCount: Int64
     ) -> Bool {
-        guard let value = try? String(
-            contentsOf: integrityReceiptURL(for: modelURL),
-            encoding: .utf8)
-        else { return false }
-        return value == "\(expectedSHA256.lowercased())\n\(byteCount)\n"
+        ModelIntegrityReceipt.read(for: modelURL, expectedSHA256: expectedSHA256)
     }
 
     private nonisolated static func writeIntegrityReceipt(
@@ -215,10 +202,9 @@ final class LocalAIModelPack: ObservableObject {
         sha256: String,
         byteCount: Int64
     ) throws {
-        try "\(sha256.lowercased())\n\(byteCount)\n".write(
-            to: integrityReceiptURL(for: modelURL),
-            atomically: true,
-            encoding: .utf8)
+        let identity = try ModelIntegrityReceipt.Identity.read(at: modelURL)
+        guard identity.bytes == byteCount else { throw PackError.invalidFile(modelURL.lastPathComponent) }
+        try ModelIntegrityReceipt.write(for: modelURL, sha256: sha256, verifiedIdentity: identity)
     }
 
     /// 크기가 큰 HTML 오류 페이지나 중간 프록시 응답을 모델로 열면 llama.cpp가
@@ -286,6 +272,7 @@ final class LocalAIModelPack: ObservableObject {
         defer { try? handle.close() }
         var hasher = SHA256()
         while let chunk = try handle.read(upToCount: 4 * 1_048_576), !chunk.isEmpty {
+            try Task.checkCancellation()
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -315,13 +302,32 @@ final class LocalAIModelPack: ObservableObject {
         }
     }
 
+    /// Both the tutor downloader and the analysis pack must enter this boundary.
+    /// A single network task alone does not protect its destructive install step.
+    nonisolated static func prepareArtifact(
+        url: URL,
+        file: String,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws {
+        let expectedBytes = expectedBytes(for: file)
+        let sha = expectedSHA256(for: file)
+        let key = "artifact|\(url.absoluteString)|\(file)|\(expectedBytes)|\(sha ?? "unverified")"
+        try await LocalAIArtifactFlight.shared.perform(key: key) {
+            guard !(await verifyExistingArtifact(file, expectedBytes: expectedBytes)) else { return }
+            try requireStorage(for: expectedBytes)
+            try await download((file, file, url, expectedBytes, sha), progress: progress)
+        }
+    }
+
     private nonisolated static func download(
-        _ artifact: (name: String, file: String, url: URL, expectedBytes: Int64, sha256: String?)
+        _ artifact: (name: String, file: String, url: URL, expectedBytes: Int64, sha256: String?),
+        progress: (@Sendable (Double) -> Void)?
     ) async throws {
         let downloadKey = "\(artifact.url.absoluteString)|\(artifact.file)|\(artifact.expectedBytes)"
         let temporary = try await ResumableModelDownload.shared.download(
             from: artifact.url,
-            key: downloadKey)
+            key: downloadKey,
+            progress: progress)
         defer { Task { @MainActor in ResumableModelDownload.shared.discardArtifact(for: downloadKey) } }
         let minimum = Int64(Double(artifact.expectedBytes) * 0.97)
         let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
@@ -337,11 +343,13 @@ final class LocalAIModelPack: ObservableObject {
         let destination = directory.appendingPathComponent(artifact.file)
         let staged = directory.appendingPathComponent("staged-\(UUID().uuidString).part")
         try FileManager.default.moveItem(at: temporary, to: staged)
-        try Self.installValidatedGGUF(
-            staged: staged,
-            destination: destination,
-            minimumBytes: minimum,
-            expectedSHA256: artifact.sha256)
+        try await Task.detached(priority: .utility) {
+            try Self.installValidatedGGUF(
+                staged: staged,
+                destination: destination,
+                minimumBytes: minimum,
+                expectedSHA256: artifact.sha256)
+        }.value
     }
 
     nonisolated static func expectedBytes(for file: String) -> Int64 {

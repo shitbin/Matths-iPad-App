@@ -10,26 +10,39 @@ final class ArchiveLibraryScreenModel: ObservableObject {
     @Published var lockedFolder: ServerAPI.ArchiveFolder?
 
     private var generation = UUID()
+    private var downloadGeneration = UUID()
+    private weak var store: AppStore?
+    private var owner: AppStore.AccountSessionBoundary?
+    func bind(_ store: AppStore) {
+        self.store = store
+        guard owner == nil || owner.map({ !store.ownsCurrentAccountSession($0) }) == true else { return }
+        owner = store.captureAccountSessionBoundary()
+        generation = UUID(); downloadGeneration = UUID()
+        dashboard = nil; previewFile = nil; lockedFolder = nil; downloadingItemID = nil
+    }
 
     func load(folderID: String? = nil, reset: Bool = false) async {
+        if let store { bind(store) }
         if reset {
-            generation = UUID()
             dashboard = nil
         }
+        guard let store, let owner, let authorization = ServerAPI.captureAuthorization() else { return }
+        generation = UUID()
         let requestGeneration = generation
-        isLoading = dashboard == nil
+        isLoading = true
         errorMessage = nil
+        defer { if requestGeneration == generation { isLoading = false } }
         do {
-            let value = try await ServerAPI.archiveDashboard(folderID: folderID)
-            guard requestGeneration == generation else { return }
+            let value = try await ServerAPI.archiveDashboard(folderID: folderID, authorization: authorization)
+            guard requestGeneration == generation, !Task.isCancelled,
+                  store.ownsCurrentAccountSession(owner), ServerAPI.isCurrentAuthorization(authorization) else { return }
             dashboard = value
         } catch is CancellationError {
             return
         } catch {
-            guard requestGeneration == generation else { return }
+            guard requestGeneration == generation, store.ownsCurrentAccountSession(owner) else { return }
             errorMessage = readable(error)
         }
-        if requestGeneration == generation { isLoading = false }
     }
 
     func open(_ folder: ServerAPI.ArchiveFolder) async {
@@ -46,15 +59,22 @@ final class ArchiveLibraryScreenModel: ObservableObject {
     }
 
     func download(_ item: ServerAPI.ArchiveItem) async {
-        guard downloadingItemID == nil else { return }
+        guard downloadingItemID == nil, let store, let owner, store.ownsCurrentAccountSession(owner),
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let identity = UUID(); downloadGeneration = identity
+        let slot = DataScope.slot
         downloadingItemID = item.id
         errorMessage = nil
+        defer { if downloadGeneration == identity { downloadingItemID = nil } }
         do {
-            previewFile = AcademyPreviewFile(url: try await ServerAPI.downloadArchiveItem(item))
+            let url = try await ServerAPI.downloadArchiveItem(item, accountSlot: slot, authorization: authorization)
+            guard downloadGeneration == identity, !Task.isCancelled, store.ownsCurrentAccountSession(owner),
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
+            previewFile = AcademyPreviewFile(url: url)
         } catch {
+            guard downloadGeneration == identity, store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = readable(error)
         }
-        downloadingItemID = nil
     }
 
     private func readable(_ error: Error) -> String {
@@ -89,7 +109,7 @@ struct ArchiveLibraryScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Tokens.paper)
-        .task { if model.dashboard == nil { await model.load() } }
+        .task { model.bind(store); if model.dashboard == nil { await model.load() } }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
             Task { await model.load(reset: true) }
         }
@@ -258,7 +278,7 @@ struct ArchiveLibraryScreen: View {
                     Image(systemName: "doc.text.magnifyingglass")
                         .font(.system(size: 28, weight: .semibold)).foregroundStyle(Tokens.text3)
                     Text("이 폴더에는 파일이 없습니다.").font(.mBodyB).foregroundStyle(Tokens.ink)
-                    Text("왼쪽에서 다른 폴더를 선택해 보세요.")
+                    Text("다른 폴더를 선택해 보세요.")
                         .font(.mCaption).foregroundStyle(Tokens.text3)
                 }
                 .frame(maxWidth: .infinity, minHeight: 170)
@@ -279,7 +299,7 @@ struct ArchiveLibraryScreen: View {
     }
 
     private func itemRow(_ item: ServerAPI.ArchiveItem) -> some View {
-        Button { Task { await model.download(item) } } label: {
+        Button { NativeServiceActions.run(store: store) { await model.download(item) } } label: {
             HStack(spacing: Tokens.Space.s3) {
                 Image(systemName: fileIcon(item))
                     .font(.system(size: 18, weight: .semibold)).foregroundStyle(Tokens.primary)

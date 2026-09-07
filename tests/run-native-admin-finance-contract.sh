@@ -34,7 +34,8 @@ for behavior in \
 done
 
 rg -q -F 'DemoAdminFinanceFixtures.finance' "$demo"
-rg -q -F '"재무·환불·페이백"' "$entry"
+rg -q -F '"재무·환불·페이백"' "$root/Matths/StaffWorkspaceState.swift"
+rg -q -F 'case .finance: AdminFinanceScreen' "$entry"
 if rg -q 'WKWebView|SFSafariViewController|SafariView' "$screen"; then
   echo "admin finance screen must stay native" >&2
   exit 1

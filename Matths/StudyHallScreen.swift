@@ -4,7 +4,7 @@ import SwiftUI
 final class StudyHallScreenModel: ObservableObject {
     @Published var hall: ServerAPI.StudyHall?
     @Published var content: ServerAPI.StudyHallContent?
-    @Published var answers: [Int: String] = [:]
+    @Published var answers: [Int: String] = [:] { didSet { saveLocalDraft() } }
     @Published var isLoading = false
     @Published var isLoadingContent = false
     @Published var action: String?
@@ -12,140 +12,183 @@ final class StudyHallScreenModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
     @Published var previewFile: AcademyPreviewFile?
+    private weak var store: AppStore?
+    private var owner: AppStore.AccountSessionBoundary?
+    private var listRevision = NativeServiceRequestRevision()
+    private var detailRevision = NativeServiceRequestRevision()
+    private var mutationID = UUID()
+    private var downloadID = UUID()
+    private var restoring = false
+    private var localDraft: NativeServiceDraft?
 
-    private var generation = UUID()
-
+    func bind(_ value: AppStore) {
+        store = value
+        guard owner == nil || owner.map({ !value.ownsCurrentAccountSession($0) }) == true else { return }
+        owner = value.captureAccountSessionBoundary()
+        _ = listRevision.begin(); _ = detailRevision.begin(); mutationID = UUID(); downloadID = UUID()
+        restoring = true
+        hall = nil; content = nil; answers = [:]; localDraft = nil
+        restoring = false
+        isLoading = false; isLoadingContent = false; action = nil; downloadingID = nil; previewFile = nil
+        errorMessage = nil; noticeMessage = nil
+    }
     func load(tab: String = "NJE", reset: Bool = false) async {
-        if reset {
-            generation = UUID()
-            hall = nil
-            content = nil
-            answers = [:]
-        }
-        let current = generation
-        isLoading = hall == nil
-        errorMessage = nil
+        if let store { bind(store) }
+        guard let store, let owner, let authorization = ServerAPI.captureAuthorization() else { return }
+        let ticket = listRevision.begin()
+        isLoading = true; errorMessage = nil
+        defer { if listRevision.accepts(ticket) { isLoading = false } }
         do {
-            let value = try await ServerAPI.studyHall(tab: tab)
-            guard current == generation else { return }
+            let value = try await ServerAPI.studyHall(tab: tab, authorization: authorization)
+            guard listRevision.accepts(ticket), !Task.isCancelled, store.ownsCurrentAccountSession(owner),
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
             hall = value
-        } catch is CancellationError {
-            return
         } catch {
-            guard current == generation else { return }
+            guard listRevision.accepts(ticket), store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = readable(error)
         }
-        if current == generation { isLoading = false }
     }
-
     func selectTab(_ tab: ServerAPI.StudyHallTab) async {
         guard hall?.activeTab != tab.code, action == nil else { return }
-        content = nil
-        answers = [:]
+        closeContent()
         await load(tab: tab.code)
     }
-
-    func open(_ item: ServerAPI.StudyHallContent) async {
-        guard action == nil else { return }
-        isLoadingContent = true
-        errorMessage = nil
-        do {
-            install(try await ServerAPI.studyHallContent(item.id))
-        } catch is CancellationError {
-            return
-        } catch {
-            errorMessage = readable(error)
-        }
-        isLoadingContent = false
-    }
-
+    func open(_ item: ServerAPI.StudyHallContent) async { await open(contentID: item.id) }
     func open(contentID: String) async {
-        guard !contentID.isEmpty else { return }
-        isLoadingContent = true
-        errorMessage = nil
+        guard !contentID.isEmpty, action == nil, let store, let owner, store.ownsCurrentAccountSession(owner),
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let ticket = detailRevision.begin()
+        isLoadingContent = true; errorMessage = nil
+        defer { if detailRevision.accepts(ticket) { isLoadingContent = false } }
         do {
-            let value = try await ServerAPI.studyHallContent(contentID)
+            let value = try await ServerAPI.studyHallContent(contentID, authorization: authorization)
+            guard detailRevision.accepts(ticket), !Task.isCancelled, store.ownsCurrentAccountSession(owner),
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
             if hall?.activeTab != value.contentType { await load(tab: value.contentType) }
-            install(value)
-        } catch is CancellationError {
-            return
+            guard detailRevision.accepts(ticket), !Task.isCancelled, store.ownsCurrentAccountSession(owner) else { return }
+            install(value, restoringLocal: true)
         } catch {
+            guard detailRevision.accepts(ticket), store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = readable(error)
         }
-        isLoadingContent = false
     }
-
     func closeContent() {
-        content = nil
-        answers = [:]
+        guard action == nil else { return }
+        _ = detailRevision.begin()
+        isLoadingContent = false
+        restoring = true; content = nil; answers = [:]; localDraft = nil; restoring = false
         noticeMessage = nil
     }
-
     func save() async { await persist(submit: false) }
     func submit() async { await persist(submit: true) }
-
     func download(_ asset: ServerAPI.StudyHallAsset) async {
-        guard let content, downloadingID == nil else { return }
-        downloadingID = asset.id
-        errorMessage = nil
+        guard let content, downloadingID == nil, let store, let owner, store.ownsCurrentAccountSession(owner),
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let slot = DataScope.slot, identity = UUID()
+        downloadID = identity; downloadingID = asset.id; errorMessage = nil
+        defer { if downloadID == identity { downloadingID = nil } }
         do {
-            previewFile = AcademyPreviewFile(
-                url: try await ServerAPI.downloadStudyHallAsset(
-                    contentID: content.id, asset: asset))
+            let url = try await ServerAPI.downloadStudyHallAsset(contentID: content.id, asset: asset, accountSlot: slot, authorization: authorization)
+            guard downloadID == identity, !Task.isCancelled, store.ownsCurrentAccountSession(owner), ServerAPI.isCurrentAuthorization(authorization) else { return }
+            previewFile = AcademyPreviewFile(url: url)
         } catch {
+            guard downloadID == identity, store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = readable(error)
         }
-        downloadingID = nil
     }
-
     var answerRows: [ServerAPI.StudyHallAnswer] {
-        answers.keys.sorted().map {
-            ServerAPI.StudyHallAnswer(number: $0, answer: answers[$0] ?? "")
-        }
+        answers.keys.sorted().map { ServerAPI.StudyHallAnswer(number: $0, answer: answers[$0] ?? "") }
     }
-
+    private func saveLocalDraft() {
+        guard !restoring, let content, content.progress.status != "SUBMITTED", var draft = localDraft,
+              let store, let owner, store.ownsCurrentAccountSession(owner), draft.slot == DataScope.slot else { return }
+        draft.fields = Dictionary(uniqueKeysWithValues: answers.map { (String($0.key), $0.value) })
+        draft.fields["_contentVersion"] = contentVersion(content)
+        do { try NativeServiceDraftDisk.save(draft); localDraft = draft }
+        catch { errorMessage = "답안 초안을 이 기기에 저장하지 못했습니다. 저장 공간을 확인한 뒤 임시 저장해 주세요." }
+    }
     private func persist(submit: Bool) async {
-        guard let content, action == nil, content.progress.status != "SUBMITTED" else { return }
-        action = submit ? "submit" : "save"
-        errorMessage = nil
+        guard let content, action == nil, content.progress.status != "SUBMITTED",
+              let store, let owner, store.ownsCurrentAccountSession(owner),
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let sentAnswers = answers, rows = answerRows, identity = UUID()
+        mutationID = identity; _ = detailRevision.begin(); _ = listRevision.begin()
+        action = submit ? "submit" : "save"; errorMessage = nil
+        defer { if mutationID == identity { action = nil } }
         do {
             let value = submit
-                ? try await ServerAPI.submitStudyHallAnswers(
-                    contentID: content.id, answers: answerRows)
-                : try await ServerAPI.saveStudyHallAnswers(
-                    contentID: content.id, answers: answerRows)
-            install(value)
+                ? try await ServerAPI.submitStudyHallAnswers(contentID: content.id, answers: rows, authorization: authorization)
+                : try await ServerAPI.saveStudyHallAnswers(contentID: content.id, answers: rows, authorization: authorization)
+            guard mutationID == identity, !Task.isCancelled, store.ownsCurrentAccountSession(owner),
+                  ServerAPI.isCurrentAuthorization(authorization), self.content?.id == content.id else { return }
+            let newerAnswers = answers != sentAnswers ? answers : nil
+            install(value, restoringLocal: false)
+            if value.progress.status != "SUBMITTED", let newerAnswers {
+                answers = newerAnswers
+                noticeMessage = "보낸 답안을 저장했습니다. 그 뒤 수정한 답안은 기기에 보관 중입니다."
+            } else {
+                // Only clear the exact local revision that was sent. Another
+                // screen instance may have edited this content during the call.
+                if let disk = try? NativeServiceDraftDisk.load(slot: DataScope.slot, resource: "study:" + content.id),
+                   disk.fields.filter({ !$0.key.hasPrefix("_") }) == Dictionary(uniqueKeysWithValues: sentAnswers.map { (String($0.key), $0.value) }) {
+                    var cleared = disk; cleared.fields = [:]
+                    try? NativeServiceDraftDisk.save(cleared)
+                }
+                noticeMessage = submit ? "최종 제출했습니다. 정답과 해설을 확인하세요." : "현재 답안을 저장했습니다."
+            }
             replaceSummary(value)
-            noticeMessage = submit ? "최종 제출했습니다. 정답과 해설을 확인하세요." : "현재 답안을 저장했습니다."
         } catch {
+            guard mutationID == identity, store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = readable(error)
         }
-        action = nil
     }
-
-    private func install(_ value: ServerAPI.StudyHallContent) {
+    private func install(_ value: ServerAPI.StudyHallContent, restoringLocal: Bool) {
+        restoring = true
         content = value
-        answers = Dictionary(uniqueKeysWithValues: value.progress.answers.map {
-            ($0.number, $0.answer)
-        })
+        answers = Dictionary(value.progress.answers.map { ($0.number, $0.answer) }, uniquingKeysWith: { _, last in last })
+        if restoringLocal {
+            do {
+                let draft = try NativeServiceDraftDisk.load(slot: DataScope.slot, resource: "study:" + value.id)
+                localDraft = draft
+                if value.progress.status != "SUBMITTED", draft.fields["_contentVersion"] == contentVersion(value) {
+                    let allowedNumbers = Set(1...max(value.itemCount, value.questions.count, 1))
+                    for (key, answer) in draft.fields {
+                        if let number = Int(key), allowedNumbers.contains(number) { answers[number] = answer }
+                    }
+                    if !draft.fields.isEmpty { noticeMessage = "이 기기에 보관한 미전송 답안을 복원했습니다. 임시 저장으로 계정에 반영하세요." }
+                } else if !draft.fields.isEmpty && value.progress.status != "SUBMITTED" {
+                    try NativeServiceDraftDisk.backup(slot: DataScope.slot, resource: "study:" + value.id)
+                    localDraft = .init(slot: DataScope.slot, resource: "study:" + value.id)
+                    noticeMessage = "콘텐츠가 바뀌어 이전 초안을 합치지 않았습니다. 현재 서버 답안을 보여드립니다."
+                }
+            } catch {
+                do {
+                    try NativeServiceDraftDisk.backup(slot: DataScope.slot, resource: "study:" + value.id)
+                    localDraft = .init(slot: DataScope.slot, resource: "study:" + value.id)
+                    errorMessage = "이전 초안을 읽지 못해 별도 보관했습니다. 현재 서버 답안에서 다시 작성할 수 있어요."
+                } catch {
+                    localDraft = nil
+                    errorMessage = "이전 초안을 안전하게 보관하지 못했습니다. 새 답안은 임시 저장 버튼으로 계정에 저장해 주세요."
+                }
+            }
+        } else {
+            localDraft = NativeServiceDraft(slot: DataScope.slot, resource: "study:" + value.id)
+        }
+        restoring = false
     }
-
+    private func contentVersion(_ value: ServerAPI.StudyHallContent) -> String {
+        NativeServiceDraft.fingerprint(["id": value.id, "updated": value.updatedAt ?? "",
+                                       "questions": value.questions.map { String($0.number) + "|" + $0.id + "|" + $0.stem }.joined(separator: "\n")])
+    }
     private func replaceSummary(_ value: ServerAPI.StudyHallContent) {
         guard var hall else { return }
-        if let index = hall.items.firstIndex(where: { $0.id == value.id }) {
-            hall.items[index] = value
-        }
-        if hall.continuing?.id == value.id {
-            hall.continuing = value.progress.status == "SUBMITTED" ? nil : value
-        } else if value.progress.status == "IN_PROGRESS" {
-            hall.continuing = value
-        }
+        if let index = hall.items.firstIndex(where: { $0.id == value.id }) { hall.items[index] = value }
+        if hall.continuing?.id == value.id { hall.continuing = value.progress.status == "SUBMITTED" ? nil : value }
+        else if value.progress.status == "IN_PROGRESS" { hall.continuing = value }
         self.hall = hall
     }
-
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
-            ?? (error as NSError).localizedDescription
+        (error as? ServerAPIError)?.errorDescription ?? "요청을 처리하지 못했습니다. 연결을 확인하고 다시 시도해 주세요."
     }
 }
 
@@ -185,6 +228,7 @@ struct StudyHallScreen: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .task {
+                model.bind(store)
                 if model.hall == nil { await model.load() }
                 await consumeDeepLinkIfNeeded()
                 if split, model.content == nil, let first = model.hall?.continuing ?? model.hall?.items.first {
@@ -207,7 +251,7 @@ struct StudyHallScreen: View {
         }
         .alert("최종 제출할까요?", isPresented: $confirmingSubmission) {
             Button("취소", role: .cancel) {}
-            Button("제출", role: .destructive) { Task { await model.submit() } }
+            Button("제출", role: .destructive) { NativeServiceActions.run(store: store) { await model.submit() } }
         } message: {
             Text("제출 후에는 답안을 바꿀 수 없고, 채점 결과와 해설이 공개됩니다.")
         }
@@ -316,7 +360,7 @@ struct StudyHallScreen: View {
         } else if let content = model.content {
             detail(content)
         } else {
-            stateView("왼쪽에서 학습 콘텐츠를 선택하세요.", systemImage: "hand.tap")
+            stateView(model.errorMessage ?? "학습 콘텐츠를 선택하세요.", systemImage: model.errorMessage == nil ? "hand.tap" : "exclamationmark.triangle")
         }
     }
 
@@ -392,7 +436,7 @@ struct StudyHallScreen: View {
             Text("학습 자료").font(.mHeading).foregroundStyle(Tokens.ink)
             ForEach(content.assets.filter { $0.kind != "THUMBNAIL" }) { asset in
                 let locked = asset.kind == "SOLUTION_PDF" && content.progress.status != "SUBMITTED"
-                Button { if !locked { Task { await model.download(asset) } } } label: {
+                Button { if !locked { NativeServiceActions.run(store: store) { await model.download(asset) } } } label: {
                     HStack(spacing: Tokens.Space.s3) {
                         Image(systemName: locked ? "lock.fill" : fileIcon(asset))
                             .frame(width: 28).foregroundStyle(locked ? Tokens.text3 : Tokens.primary)
@@ -451,7 +495,7 @@ struct StudyHallScreen: View {
             HStack(alignment: .top, spacing: Tokens.Space.s3) {
                 Text("\(number)").font(.mHeading).foregroundStyle(Tokens.onPrimary)
                     .frame(width: 40, height: 40).background(Tokens.actionPrimary, in: Circle())
-                Text(item?.stem.isEmpty == false ? item!.stem : "\(number)번 답안을 입력하세요.")
+                Text(item?.stem.nonEmptyStudyHallText ?? "\(number)번 답안을 입력하세요.")
                     .font(.mBodyB).foregroundStyle(Tokens.ink).frame(maxWidth: .infinity, alignment: .leading)
                 if submitted, let correct = item?.isCorrect {
                     Text(correct ? "정답" : "오답").font(.mMicro)
@@ -465,7 +509,7 @@ struct StudyHallScreen: View {
             }
             if item?.answerType == "short-answer" {
                 TextField("답을 입력하세요", text: answerBinding(number))
-                    .textFieldStyle(.roundedBorder).disabled(submitted)
+                    .textFieldStyle(.roundedBorder).disabled(submitted || model.action == "submit")
                     .accessibilityLabel("\(number)번 답")
             } else {
                 HStack(spacing: Tokens.Space.s2) {
@@ -478,7 +522,7 @@ struct StudyHallScreen: View {
                                             in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                                 .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.md).strokeBorder(Tokens.line, lineWidth: 1) }
                         }
-                        .buttonStyle(.plain).disabled(submitted)
+                        .buttonStyle(.plain).disabled(submitted || model.action == "submit")
                         .accessibilityLabel("\(number)번 답 \(choice)")
                         .accessibilityAddTraits(model.answers[number] == String(choice) ? .isSelected : [])
                     }
@@ -488,8 +532,7 @@ struct StudyHallScreen: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("정답 \(item.correctAnswer ?? "-") · \(points(item.points))점")
                         .font(.mCaption).foregroundStyle(Tokens.ink)
-                    Text(item.explanation?.isEmpty == false
-                         ? item.explanation! : "해설 자료를 확인하세요.")
+                    Text(item.explanation?.nonEmptyStudyHallText ?? "해설 자료를 확인하세요.")
                         .font(.mCaption).foregroundStyle(Tokens.text2)
                 }
                 .padding(Tokens.Space.s3).frame(maxWidth: .infinity, alignment: .leading)
@@ -510,7 +553,7 @@ struct StudyHallScreen: View {
             }
             if content.progress.status != "SUBMITTED" {
                 HStack(spacing: Tokens.Space.s3) {
-                    Button { Task { await model.save() } } label: {
+                    Button { NativeServiceActions.run(store: store) { await model.save() } } label: {
                         if model.action == "save" { ProgressView() } else { Text("임시 저장") }
                     }
                     .buttonStyle(SecondaryButtonStyle()).disabled(model.action != nil)
@@ -552,7 +595,7 @@ struct StudyHallScreen: View {
     }
 
     private func points(_ value: Double) -> String {
-        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+        value.isFinite ? String(format: value.rounded() == value ? "%.0f" : "%.1f", value) : "—"
     }
 
     private func fileIcon(_ asset: ServerAPI.StudyHallAsset) -> String {
@@ -598,4 +641,8 @@ private struct StudyHallSurface: ViewModifier {
 
 private extension View {
     func studyHallSurface() -> some View { modifier(StudyHallSurface()) }
+}
+
+private extension String {
+    var nonEmptyStudyHallText: String? { isEmpty ? nil : self }
 }

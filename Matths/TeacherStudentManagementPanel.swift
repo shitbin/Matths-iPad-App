@@ -19,6 +19,8 @@ private final class TeacherStudentManagementModel: ObservableObject {
 
     func load(page: Int = 1, selectFirst: Bool = true) async {
         let requestGeneration = generation
+        let account = DataScope.slot
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         let requestID = UUID()
         listingRequestID = requestID
         // 기존 목록은 유지한 채 페이지 버튼만 잠근다. 연속 탭으로 서로 다른 페이지
@@ -26,15 +28,16 @@ private final class TeacherStudentManagementModel: ObservableObject {
         isLoading = true
         errorMessage = nil
         do {
-            let value = try await ServerAPI.teacherAcademyStudents(page: page)
-            guard requestGeneration == generation, requestID == listingRequestID else { return }
+            let value = try await ServerAPI.teacherAcademyStudents(page: page, authorization: authorization)
+            guard requestGeneration == generation, requestID == listingRequestID,
+                  account == DataScope.slot, ServerAPI.isCurrentAuthorization(authorization) else { return }
             listing = value
             selectedIDs = []
             if let selectedMembershipID,
                value.students.contains(where: { $0.id == selectedMembershipID }) {
-                await select(selectedMembershipID)
+                await select(selectedMembershipID, allowDuringMutation: true)
             } else if selectFirst, let first = value.students.first {
-                await select(first.id)
+                await select(first.id, allowDuringMutation: true)
             } else {
                 selectedMembershipID = nil
                 detail = nil
@@ -50,6 +53,9 @@ private final class TeacherStudentManagementModel: ObservableObject {
 
     func reloadForScopeChange() async {
         generation = UUID()
+        listingRequestID = UUID()
+        detailRequestID = UUID()
+        actionID = nil
         listing = nil
         detail = nil
         selectedMembershipID = nil
@@ -58,22 +64,28 @@ private final class TeacherStudentManagementModel: ObservableObject {
         await load()
     }
 
-    func select(_ membershipID: String, period: String? = nil) async {
+    func select(_ membershipID: String, period: String? = nil, allowDuringMutation: Bool = false) async {
+        guard actionID == nil || allowDuringMutation else { return }
+        let requestGeneration = generation
+        let account = DataScope.slot
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         let requestID = UUID()
         detailRequestID = requestID
+        if selectedMembershipID != membershipID { detail = nil }
         selectedMembershipID = membershipID
         isDetailLoading = true
         errorMessage = nil
         do {
             let value = try await ServerAPI.teacherAcademyStudentDetail(
                 membershipID: membershipID,
-                period: period)
-            guard selectedMembershipID == membershipID, requestID == detailRequestID else { return }
+                period: period, authorization: authorization)
+            guard requestGeneration == generation, selectedMembershipID == membershipID, requestID == detailRequestID,
+                  account == DataScope.slot, ServerAPI.isCurrentAuthorization(authorization) else { return }
             detail = value
         } catch is CancellationError {
             return
         } catch {
-            guard selectedMembershipID == membershipID, requestID == detailRequestID else { return }
+            guard requestGeneration == generation, selectedMembershipID == membershipID, requestID == detailRequestID else { return }
             errorMessage = readable(error)
         }
         if selectedMembershipID == membershipID, requestID == detailRequestID {
@@ -99,6 +111,9 @@ private final class TeacherStudentManagementModel: ObservableObject {
     func apply(action: String, classID: String? = nil) async -> Bool {
         let ids = Array(selectedIDs).sorted()
         guard !ids.isEmpty, actionID == nil else { return false }
+        let requestGeneration = generation
+        let account = DataScope.slot
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         actionID = "bulk-\(action)"
         errorMessage = nil
         noticeMessage = nil
@@ -106,18 +121,25 @@ private final class TeacherStudentManagementModel: ObservableObject {
             let result = try await ServerAPI.bulkManageAcademyStudents(
                 membershipIDs: ids,
                 action: action,
-                classID: classID)
+                classID: classID, authorization: authorization)
+            guard requestGeneration == generation, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return false }
             let label = switch result.action {
             case "ASSIGN_CLASS": "반 배정"
             case "UNASSIGN_CLASS": "반 배정 해제"
             default: "학원 소속 해제"
             }
-            noticeMessage = "학생 \(result.count)명의 \(label) 작업을 완료했습니다."
+            let complete = result.count == ids.count
+            noticeMessage = complete
+                ? "학생 \(result.count)명의 \(label) 작업을 완료했습니다."
+                : "\(ids.count)명 중 \(result.count)명 처리 결과를 받았습니다. 새로 불러온 명단에서 상태를 확인한 뒤 남은 학생만 선택해 주세요. 자동 재시도하지 않습니다."
             let currentPage = listing?.page ?? 1
             await load(page: currentPage)
+            guard requestGeneration == generation, account == DataScope.slot else { return false }
             actionID = nil
-            return true
+            return complete
         } catch {
+            guard requestGeneration == generation, account == DataScope.slot else { return false }
             errorMessage = readable(error)
             actionID = nil
             return false
@@ -125,7 +147,12 @@ private final class TeacherStudentManagementModel: ObservableObject {
     }
 
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
+        if (error as? ServerAPIError)?.statusCode == 403 {
+            generation = UUID(); listingRequestID = UUID(); detailRequestID = UUID()
+            listing = nil; detail = nil; selectedMembershipID = nil; selectedIDs = []
+            actionID = nil; isLoading = false; isDetailLoading = false
+        }
+        return (error as? ServerAPIError)?.errorDescription
             ?? (error as NSError).localizedDescription
     }
 }
@@ -150,9 +177,11 @@ struct TeacherStudentManagementPanel: View {
     @StateObject private var model = TeacherStudentManagementModel()
     @State private var selectionMode = false
     @State private var removingSelection = false
+    @State private var narrowShowsDetail = false
+    @State private var containerWidth: CGFloat = 0
 
     private var splitLayout: Bool {
-        verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize
+        StaffWorkspaceMetrics.usesListDetail(width: containerWidth) && !dynamicTypeSize.isAccessibilitySize
     }
 
     private var filteredStudents: [ServerAPI.TeacherAcademyMembership] {
@@ -172,6 +201,7 @@ struct TeacherStudentManagementPanel: View {
     }
 
     var body: some View {
+        GeometryReader { viewport in
         Group {
             if model.isLoading && model.listing == nil {
                 ProgressView("학생 명단을 불러오는 중입니다")
@@ -180,13 +210,16 @@ struct TeacherStudentManagementPanel: View {
                 if splitLayout {
                     HStack(alignment: .top, spacing: Tokens.Space.s3) {
                         rosterColumn(listing)
-                            .frame(width: 320)
+                            .frame(width: StaffWorkspaceMetrics.listWidth(width: viewport.size.width))
                         detailColumn
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                        rosterColumn(listing)
-                        detailColumn
+                    ZStack(alignment: .topLeading) {
+                        rosterColumn(listing).opacity(narrowShowsDetail ? 0 : 1).allowsHitTesting(!narrowShowsDetail)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Button { narrowShowsDetail = false } label: { Label("학생 목록", systemImage: "chevron.left") }.frame(minHeight: 44)
+                            detailColumn
+                        }.opacity(narrowShowsDetail ? 1 : 0).allowsHitTesting(narrowShowsDetail)
                     }
                 }
             } else {
@@ -203,6 +236,9 @@ struct TeacherStudentManagementPanel: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .onAppear { containerWidth = viewport.size.width }
+        .onChange(of: viewport.size.width) { _, width in containerWidth = width }
         }
         .task {
             if model.listing == nil {
@@ -221,7 +257,11 @@ struct TeacherStudentManagementPanel: View {
             #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            narrowShowsDetail = false
             Task { await model.reloadForScopeChange() }
+        }
+        .onChange(of: initialMembershipID) { _, membershipID in
+            if let membershipID { narrowShowsDetail = true; Task { await model.select(membershipID) } }
         }
         .confirmationDialog(
             "선택한 학생을 학원에서 제외할까요?",
@@ -292,7 +332,7 @@ struct TeacherStudentManagementPanel: View {
                     .padding(.vertical, 1)
                 }
                 .refreshable { await model.load(page: listing.page, selectFirst: false) }
-                .frame(maxHeight: splitLayout ? .infinity : 360)
+                .frame(maxHeight: .infinity)
             }
 
             if selectionMode && !model.selectedIDs.isEmpty {
@@ -309,7 +349,7 @@ struct TeacherStudentManagementPanel: View {
             RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous)
                 .strokeBorder(Tokens.line, lineWidth: 1)
         }
-        .frame(maxHeight: splitLayout ? .infinity : nil)
+        .frame(maxHeight: .infinity)
     }
 
     private func studentRow(_ membership: ServerAPI.TeacherAcademyMembership) -> some View {
@@ -317,6 +357,7 @@ struct TeacherStudentManagementPanel: View {
             if selectionMode {
                 model.toggle(membership.id)
             } else {
+                narrowShowsDetail = true
                 Task { await model.select(membership.id) }
             }
         } label: {

@@ -28,14 +28,25 @@ fail() {
 grep -Fq 'if DemoMode.isOn {' "$api" || fail "ServerAPI 에 데모 분기가 없습니다."
 grep -Fq 'private static let stateLock = NSLock()' "$demo" || fail "데모 공유 상태를 보호하는 lock이 없습니다."
 grep -Fq 'storedMissingRoutes.insert(key)' "$demo" || fail "missing route 기록이 잠금 대상 저장소를 쓰지 않습니다."
+for field in role name realName email; do
+  grep -Fq "user[\"$field\"] = identity.$field" "$demo" || fail "프로필 GET에서 데모 역할/계정이 달라집니다: $field"
+done
 grep -Fq 'private static let resolveLock = NSLock()' "$demo" || fail "동시 날짜 토큰 치환 보호가 없습니다."
 grep -Fq 'private static let routeLock = NSLock()' "$demo" || fail "동시 데모 라우팅 보호가 없습니다."
 # authorizedRequest 안의 분기가 토큰 검사보다 **앞**에 있어야 한다.
 auth_line=$(grep -n 'static func authorizedRequest' "$api" | head -1 | cut -d: -f1)
 demo_line=$(awk -v start="$auth_line" 'NR > start && /if DemoMode.isOn \{/ { print NR; exit }' "$api")
-token_line=$(awk -v start="$auth_line" 'NR > start && /guard let token = TokenBox.load\(\)/ { print NR; exit }' "$api")
+# Captured request authorization now selects requestToken before the missing-token
+# guard. The contract is still early DEBUG return before any credential check,
+# not a requirement to re-read the mutable Keychain directly at the final guard.
+token_line=$(awk -v start="$auth_line" 'NR > start && /guard let token = requestToken, !token.isEmpty/ { print NR; exit }' "$api")
+capture_line=$(awk -v start="$auth_line" 'NR > start && /guard let captured = authorization.token, !captured.isEmpty/ { print NR; exit }' "$api")
 [ -n "$demo_line" ] || fail "authorizedRequest 에 데모 분기가 없습니다(PDF 다운로드가 401 로 막힙니다)."
 [ -n "$token_line" ] || fail "authorizedRequest 의 토큰 검사를 찾지 못했습니다."
+[ -n "$capture_line" ] || fail "authorizedRequest 의 캡처 토큰 검사를 찾지 못했습니다."
+[ "$demo_line" -lt "$capture_line" ] || fail "데모 분기보다 먼저 캡처 토큰을 검사합니다."
+grep -Fq 'TokenBox.load() == captured else { throw CancellationError() }' "$api" \
+  || fail "계정 변경 뒤 캡처된 토큰으로 요청을 시작할 수 있습니다."
 [ "$demo_line" -lt "$token_line" ] \
   || fail "authorizedRequest 의 데모 분기가 토큰 검사보다 뒤에 있습니다(데모에 토큰이 없어 401 이 납니다)."
 

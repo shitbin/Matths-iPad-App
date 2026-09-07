@@ -749,7 +749,7 @@ enum DemoRouter {
     }
 
     private static func profileResponse() -> String {
-        DemoAccountFixtures.meResponse
+        let response = DemoAccountFixtures.meResponse
             .replacingOccurrences(
                 of: "@DASHBOARD_TUTORIAL_STATUS@",
                 with: dashboardTutorialStatus)
@@ -757,6 +757,19 @@ enum DemoRouter {
                 of: "@DASHBOARD_TUTORIAL_AUTOSTART@",
                 with: dashboardTutorialStatus == "PENDING" ? "true" : "false")
             .replacingOccurrences(of: "@ARENA_TUTORIAL@", with: arenaTutorialJSON())
+        // A profile refresh must not turn a teacher/admin QA session back into
+        // the static student fixture or role-specific UI checks become invalid.
+        guard let data = response.data(using: .utf8),
+              var envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var user = envelope["user"] as? [String: Any] else { return response }
+        let identity = DemoMode.demoUser
+        user["role"] = identity.role
+        user["name"] = identity.name
+        user["realName"] = identity.realName
+        user["email"] = identity.email
+        envelope["user"] = user
+        guard let encoded = try? JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys]) else { return response }
+        return String(data: encoded, encoding: .utf8) ?? response
     }
 
     private static func updateDashboardTutorial(_ body: [String: Any]?) -> String {

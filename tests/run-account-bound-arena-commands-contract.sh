@@ -60,7 +60,12 @@ grep -Fq 'DataScope.didSwitchNotification' "$play"
 grep -Fq 'let ownerSlot = accountSlot' "$evidence"
 grep -Fq 'uploadOperationID == operationID' "$evidence"
 grep -Fq 'DataScope.slot == ownerSlot' "$evidence"
-grep -Fq 'DataScope.url(fileName, for: accountSlot)' "$evidence"
+# Persistence moved out of the view. Follow the captured-slot path through its
+# repository instead of requiring the retired in-view fileName implementation.
+grep -Fq 'ArenaDraftPersistence.resourceURL("goat-arena-evidence-drafts.json", slot: accountSlot)' "$ROOT/Matths/ArenaLocalDrafts.swift"
+grep -Fq 'DataScope.url(name, for: slot)' "$ROOT/Matths/ArenaDraftPersistence.swift"
+grep -Fq 'ArenaDraftPersistence.owns(url, slot: accountSlot)' "$ROOT/Matths/ArenaLocalDrafts.swift"
+grep -Fq 'authorization: authorization)' "$evidence"
 grep -Fq 'DataScope.url(' "$evidence"
 grep -Fq 'for: accountSlot)' "$evidence"
 grep -Fq '"goat-arena-evidence-drafts.json"' "$scope"

@@ -59,6 +59,73 @@ printf '%s\n' "$clean_output" | grep -Fq 'Release 바이너리 감사 통과'
 PATH=/usr/bin:/bin NODE_BINARY=$(command -v node) \
   "$root/scripts/verify-curriculum-story-bundle.sh" "$app" >/dev/null
 
+# The product's one public App Store update link is not a second API server.
+# Test the real scanner against NUL-delimited binary bytes, not a parallel URL
+# allowlist implementation. The canonical API must remain present separately.
+printf '\000%s\000%s\000' 'https://www.matths.kr/api/v1' \
+  'https://apps.apple.com/app/id6803569629' > "$binary"
+update_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2>&1)
+printf '%s\n' "$update_output" | grep -Fq '공개 업데이트 링크(API 아님): https://apps.apple.com/app/id6803569629'
+printf '%s\n' "$update_output" | grep -Fq 'Release 바이너리 감사 통과'
+
+for rejected_url in \
+  'https://apps.apple.com/app/id6803569630' \
+  'https://apps.apple.com/app/id68035696290' \
+  'https://apps.apple.com/app/id6803569629-suffix' \
+  'https://apps.apple.com/app/id6803569629/extra' \
+  'https://apps.apple.com/app/id6803569629/' \
+  'https://apps.apple.com/app/id6803569629?source=app' \
+  'https://apps.apple.com/app/id6803569629#extra' \
+  'https://apps.apple.com/app/id6803569629%2Fextra' \
+  'https://apps.apple.com:443/app/id6803569629' \
+  'https://apps.apple.com.evil.test/app/id6803569629' \
+  'https://apps.apple.com@evil.test/app/id6803569629' \
+  'https://evil.test/apps.apple.com/app/id6803569629' \
+  'https://www.apple.com/app/id6803569629' \
+  'https://apps.apple.com/app/id6803569629/huggingface.co' \
+  'https://www.matths.kr.evil.test/app/id6803569629'; do
+  printf '\000%s\000%s\000' 'https://www.matths.kr/api/v1' "$rejected_url" > "$binary"
+  set +e
+  url_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2>&1)
+  url_exit=$?
+  set -e
+  if [ "$url_exit" -eq 0 ]; then
+    echo "허용되지 않은 업데이트 URL이 실제 바이너리 감사를 통과했습니다: $rejected_url" >&2
+    exit 1
+  fi
+  printf '%s\n' "$url_output" | grep -Fq "운영 정본이 아닌 API 주소다: $rejected_url"
+done
+
+printf '\000%s\000' 'https://apps.apple.com/app/id6803569629' > "$binary"
+set +e
+missing_api_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2>&1)
+missing_api_exit=$?
+set -e
+[ "$missing_api_exit" -ne 0 ]
+printf '%s\n' "$missing_api_output" | grep -Fq '공개 업데이트 링크는 API 주소가 아니다'
+
+# Every newly introduced DEBUG-only entry/environment/report marker must be
+# detected by the actual fixed-byte binary scanner, including NUL boundaries.
+for debug_marker in \
+  'LocalNativeIntegrationLogin' 'NativeLLMRuntimeSelfTest' 'ProNativeRuntimeSelfTest' \
+  'MATTHS_LOCAL_QA_EMAIL' 'MATTHS_LOCAL_QA_PASSWORD' \
+  'native-local-login-qa.json' 'native-llm-runtime-qa.json' 'ProNativeRuntimeQA'; do
+  printf '\000%s\000%s\000' 'https://www.matths.kr/api/v1' "$debug_marker" > "$binary"
+  set +e
+  debug_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2>&1)
+  debug_exit=$?
+  set -e
+  if [ "$debug_exit" -eq 0 ]; then
+    echo "새 DEBUG 표식이 실제 바이너리 감사를 통과했습니다: $debug_marker" >&2
+    exit 1
+  fi
+  printf '%s\n' "$debug_output" | grep -F "$debug_marker" | grep -Fq '1건 발견'
+  printf '%s\n' "$debug_output" | grep -Fq '실패 1 건'
+done
+printf '\000release-prefix\000%s\000release-suffix\000' \
+  'https://www.matths.kr/api/v1' > "$binary"
+echo 'Exact App Store update URL, 15 URL rejection cases, canonical API requirement and 8 DEBUG byte markers passed'
+
 # 번들 용량 정책 양성 대조: 동봉 대상이 아닌 남성 음성이 하나라도 섞이면 닫혀야 한다.
 mkdir -p "$cm/assets/voice/stub-1"
 : > "$cm/assets/voice/stub-1/full.mp3"

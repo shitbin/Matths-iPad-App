@@ -51,7 +51,10 @@ grep -Fq 'ViewThatFits(in: .horizontal)' "$root_view"
 grep -Fq 'tabRow(showTitles: true)' "$root_view"
 grep -Fq 'tabRow(showTitles: false)' "$root_view"
 grep -Fq 'accessibilityLabel(accessibilityLabel(for: item))' "$root_view"
-grep -Fq 'if !keyboardVisible && !usesSidebar(width: width) { bottomChrome }' "$root_view"
+# Staff workspaces own their task bar; students still hide it only for keyboard
+# or sidebar. Requiring the old exact condition would reintroduce a duplicate bar.
+grep -Fq 'if !keyboardVisible && !usesSidebar(width: width) && !hasStaffWorkspace { bottomChrome }' "$root_view"
+grep -Fq 'ProductExperience.enabled && store.workspace != .student && store.route == .academy' "$root_view"
 grep -Fq 'width >= 900 && !navigationTypeSize.isAccessibilitySize' "$root_view"
 grep -Fq 'keyboardVisible && verticalSizeClass == .compact' "$root_view"
 
@@ -83,8 +86,10 @@ grep -Fq 'minHeight: constrainedCanvasHeight == nil ? canvasMinimumHeight : nil'
 
 # iPhone 가로의 퀵 연습도 일반 풀이 화면과 같은 정보 배치를 지킨다. 발제문 아래로
 # 메모·답·제출을 세로로 밀어 다시 스크롤을 요구하는 회귀를 막는다.
-grep -Fq 'isShort && phase == .solving && !dynamicTypeSize.isAccessibilitySize' "$quick_practice"
-grep -Fq 'HStack(alignment: .top, spacing: Tokens.Space.s4)' "$quick_practice"
+grep -Fq 'phase == .solving && UniversalLayoutPolicy.usesProblemSplit(' "$quick_practice"
+grep -Fq 'width: workspaceViewport.width, height: workspaceViewport.height,' "$quick_practice"
+grep -Fq 'accessibilityText: dynamicTypeSize.isAccessibilitySize)' "$quick_practice"
+grep -Fq 'ResponsiveProblemWorkspace(spacing: Tokens.Space.s4)' "$quick_practice"
 grep -Fq 'toolbarTitle: "풀이 메모"' "$quick_practice"
 grep -A2 -F 'private var landscapeNoteCanvasHeight: CGFloat {' "$quick_practice" \
     | grep -Fq '76'

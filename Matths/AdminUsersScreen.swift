@@ -19,7 +19,7 @@ private struct AdminUserActivityRequest: Identifiable {
     var id: String { "\(userID):\(attemptID ?? "activity")" }
 }
 
-private struct AdminUserActionForm {
+private struct AdminUserActionForm: Equatable {
     var title = ""
     var message = ""
     var href = "/main"
@@ -43,6 +43,21 @@ private struct AdminUserActionForm {
 
 @MainActor
 final class AdminUsersScreenModel: ObservableObject {
+    // Immutable mounted-account owner: old confirmation-sheet Tasks retain only
+    // this account's model, never the next administrator's credentials.
+    private let accountOwner: AccountRequestOwner?
+    private weak var accountStore: AppStore?
+    init(store: AppStore) {
+        accountOwner = AccountRequestOwner(store: store)
+        accountStore = store
+    }
+    private var isMountedOwnerCurrent: Bool {
+        guard let accountOwner, let accountStore else { return false }
+        return accountOwner.isCurrent(in: accountStore)
+            && accountStore.authProvider == "server"
+            && accountStore.serverProfile?.role?.lowercased() == "admin"
+    }
+    // End mounted-account owner
     @Published var users: ServerAPI.AdminUserList?
     @Published var detail: ServerAPI.AdminUserDetail?
     @Published var sanctions: ServerAPI.AdminAuditPage?
@@ -51,14 +66,33 @@ final class AdminUsersScreenModel: ObservableObject {
     @Published var actionID: String?
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
+    @Published private(set) var accessRevoked = false
+    private var generation = UUID()
+    private var listRequestID = UUID()
+    private var detailRequestID = UUID()
+
+    func reset() {
+        generation = UUID(); listRequestID = UUID(); detailRequestID = UUID()
+        users = nil; detail = nil; sanctions = nil; audit = nil
+        actionID = nil; isLoading = false; errorMessage = nil; noticeMessage = nil
+        accessRevoked = false
+    }
 
     func loadUsers(query: String, role: String, state: String, grade: String,
                    page: Int = 1, selectFirst: Bool = true) async {
-        isLoading = users == nil
+        let expectedGeneration = generation
+        let requestID = UUID()
+        listRequestID = requestID
+        let account = DataScope.slot
+        let authorization = ServerAPI.authorizationForCurrentRequest()
+        isLoading = true
+        defer { if expectedGeneration == generation && requestID == listRequestID { isLoading = false } }
         errorMessage = nil
         do {
             let value = try await ServerAPI.adminUsers(
-                query: query, grade: grade, state: state, role: role, page: page)
+                query: query, grade: grade, state: state, role: role, page: page, authorization: authorization)
+            guard expectedGeneration == generation, requestID == listRequestID, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
             users = value
             if selectFirst, let first = value.items.first {
                 await loadDetail(first)
@@ -68,73 +102,106 @@ final class AdminUsersScreenModel: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
+            guard expectedGeneration == generation, requestID == listRequestID else { return }
             errorMessage = readable(error)
         }
         isLoading = false
     }
 
     func loadDetail(_ user: ServerAPI.AdminUserSummary) async {
+        guard actionID == nil || actionID?.hasPrefix("load:") == true else { return }
+        let expectedGeneration = generation
+        let requestID = UUID()
+        detailRequestID = requestID
+        if detail?.user.id != user.id { detail = nil }
+        let account = DataScope.slot
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         actionID = "load:\(user.id)"
+        defer { if expectedGeneration == generation && requestID == detailRequestID { actionID = nil } }
         errorMessage = nil
         do {
-            detail = user.entityType == "PARENT"
-                ? try await ServerAPI.adminParent(id: user.id)
-                : try await ServerAPI.adminUser(id: user.id)
+            let value = user.entityType == "PARENT"
+                ? try await ServerAPI.adminParent(id: user.id, authorization: authorization)
+                : try await ServerAPI.adminUser(id: user.id, authorization: authorization)
+            guard expectedGeneration == generation, requestID == detailRequestID, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
+            detail = value
         } catch is CancellationError {
             return
         } catch {
+            guard expectedGeneration == generation, requestID == detailRequestID else { return }
             errorMessage = readable(error)
         }
         actionID = nil
     }
 
     func loadSanctions(page: Int = 1) async {
+        let expectedGeneration = generation
+        let requestID = UUID(); listRequestID = requestID
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         isLoading = sanctions == nil
         errorMessage = nil
-        do { sanctions = try await ServerAPI.adminSanctions(page: page) }
+        defer { if expectedGeneration == generation && requestID == listRequestID { isLoading = false } }
+        do {
+            let value = try await ServerAPI.adminSanctions(page: page, authorization: authorization)
+            guard expectedGeneration == generation, requestID == listRequestID, ServerAPI.isCurrentAuthorization(authorization) else { return }
+            sanctions = value
+        }
         catch is CancellationError { return }
-        catch { errorMessage = readable(error) }
+        catch { if expectedGeneration == generation && requestID == listRequestID { errorMessage = readable(error) } }
         isLoading = false
     }
 
     func loadAudit(query: String, page: Int = 1) async {
+        let expectedGeneration = generation
+        let requestID = UUID(); listRequestID = requestID
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         isLoading = audit == nil
         errorMessage = nil
-        do { audit = try await ServerAPI.adminAudit(query: query, page: page) }
+        defer { if expectedGeneration == generation && requestID == listRequestID { isLoading = false } }
+        do {
+            let value = try await ServerAPI.adminAudit(query: query, page: page, authorization: authorization)
+            guard expectedGeneration == generation, requestID == listRequestID, ServerAPI.isCurrentAuthorization(authorization) else { return }
+            audit = value
+        }
         catch is CancellationError { return }
-        catch { errorMessage = readable(error) }
+        catch { if expectedGeneration == generation && requestID == listRequestID { errorMessage = readable(error) } }
         isLoading = false
     }
 
     fileprivate func perform(_ request: AdminUserActionRequest, form: AdminUserActionForm,
                              query: String, role: String, state: String, grade: String) async -> Bool {
-        guard actionID == nil else { return false }
+        guard isMountedOwnerCurrent, let authorization = accountOwner?.authorization, actionID == nil else { return false }
+        let expectedGeneration = generation
+        let account = DataScope.slot
+        defer { if expectedGeneration == generation { actionID = nil } }
         actionID = request.id
         errorMessage = nil
         noticeMessage = nil
         do {
             let updated: ServerAPI.AdminUserDetail?
+            var completionNotice = ""
             switch request.kind {
             case .notification:
                 try await ServerAPI.sendAdminUserNotification(
                     userID: request.user.id, title: form.title,
-                    message: form.message, href: form.href)
-                updated = try await reload(request.user)
-                noticeMessage = "앱 알림함에 메시지를 보냈습니다."
+                    message: form.message, href: form.href, authorization: authorization)
+                updated = try await reload(request.user, authorization: authorization, account: account)
+                completionNotice = "앱 알림함에 메시지를 보냈습니다."
             case .email:
                 let delivered = try await ServerAPI.sendAdminUserEmail(
-                    userID: request.user.id, subject: form.title, message: form.message)
-                updated = try await reload(request.user)
-                noticeMessage = delivered ? "가입 이메일로 전송했습니다." : "이메일 요청을 접수했지만 배달 상태를 확인해야 합니다."
+                    userID: request.user.id, subject: form.title, message: form.message, authorization: authorization)
+                updated = try await reload(request.user, authorization: authorization, account: account)
+                completionNotice = delivered ? "가입 이메일로 전송했습니다." : "이메일 요청을 접수했지만 배달 상태를 확인해야 합니다."
             case .passwordReset:
-                try await ServerAPI.sendAdminPasswordReset(userID: request.user.id)
-                updated = try await reload(request.user)
-                noticeMessage = "10분짜리 비밀번호 재설정 링크를 보냈습니다."
+                try await ServerAPI.sendAdminPasswordReset(userID: request.user.id, authorization: authorization)
+                updated = try await reload(request.user, authorization: authorization, account: account)
+                completionNotice = "10분짜리 비밀번호 재설정 링크를 보냈습니다."
             case .nickname:
                 try await ServerAPI.requestAdminNicknameChange(
-                    userID: request.user.id, reason: form.reason)
-                updated = try await reload(request.user)
-                noticeMessage = "닉네임 변경 요청 링크를 보냈습니다."
+                    userID: request.user.id, reason: form.reason, authorization: authorization)
+                updated = try await reload(request.user, authorization: authorization, account: account)
+                completionNotice = "닉네임 변경 요청 링크를 보냈습니다."
             case .role:
                 let formatter = DateFormatter()
                 formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -142,33 +209,32 @@ final class AdminUsersScreenModel: ObservableObject {
                 updated = try await ServerAPI.updateAdminUserRole(
                     userID: request.user.id, role: form.role,
                     teacherAccessExpiresAt: form.role == "teacher" ? formatter.string(from: form.teacherExpiry) : "",
-                    reason: form.reason)
-                noticeMessage = "역할을 변경하고 기존 로그인 세션을 갱신했습니다."
+                    reason: form.reason, authorization: authorization)
+                completionNotice = "역할을 변경하고 기존 로그인 세션을 갱신했습니다."
             case .status:
                 updated = try await ServerAPI.updateAdminUserAccountStatus(
                     userID: request.user.id, status: form.status,
                     suspensionDays: form.status == "suspended" ? form.suspensionDays : "",
-                    reason: form.reason)
-                noticeMessage = "계정 상태를 적용했습니다."
+                    reason: form.reason, authorization: authorization)
+                completionNotice = "계정 상태를 적용했습니다."
             case .warnings:
                 updated = try await ServerAPI.updateAdminUserWarnings(
-                    userID: request.user.id, warningCount: form.warningCount, reason: form.reason)
-                noticeMessage = "경고 횟수를 저장했습니다."
+                    userID: request.user.id, warningCount: form.warningCount, reason: form.reason, authorization: authorization)
+                completionNotice = "경고 횟수를 저장했습니다."
             case .package:
                 updated = try await ServerAPI.updateAdminUserPackage(
-                    userID: request.user.id, packageType: form.packageType, reason: form.reason)
-                noticeMessage = "패키지 권한을 적용했습니다."
+                    userID: request.user.id, packageType: form.packageType, reason: form.reason, authorization: authorization)
+                completionNotice = "패키지 권한을 적용했습니다."
             case .withdraw:
                 let purged = try await ServerAPI.withdrawAdminUser(
                     userID: request.user.id, reason: form.reason,
-                    dataRetention: form.dataRetention, confirmation: form.confirmation)
+                    dataRetention: form.dataRetention, confirmation: form.confirmation, authorization: authorization)
                 updated = nil
-                detail = nil
-                noticeMessage = purged ? "계정과 활동 데이터를 영구 삭제했습니다." : "개인정보를 제거하고 익명 활동 데이터만 보존했습니다."
+                completionNotice = purged ? "계정과 활동 데이터를 영구 삭제했습니다." : "개인정보를 제거하고 익명 활동 데이터만 보존했습니다."
             case .parentStatus:
                 updated = try await ServerAPI.updateAdminParentStatus(
-                    parentID: request.user.id, isActive: form.parentActive, reason: form.reason)
-                noticeMessage = "학부모 계정 상태를 저장했습니다."
+                    parentID: request.user.id, isActive: form.parentActive, reason: form.reason, authorization: authorization)
+                completionNotice = "학부모 계정 상태를 저장했습니다."
             case .parentNotifications:
                 guard let child = request.child else {
                     actionID = nil
@@ -182,8 +248,8 @@ final class AdminUsersScreenModel: ObservableObject {
                     minimumMinutesPerDay: form.minimumMinutesPerDay,
                     lowLearningConsecutiveDays: form.lowLearningConsecutiveDays,
                     inactivityEnabled: form.inactivityEnabled,
-                    inactivityDays: form.inactivityDays)
-                noticeMessage = "자녀별 학습 알림 기준을 저장했습니다."
+                    inactivityDays: form.inactivityDays, authorization: authorization)
+                completionNotice = "자녀별 학습 알림 기준을 저장했습니다."
             case .parentUnlink:
                 guard let child = request.child else {
                     actionID = nil
@@ -191,34 +257,53 @@ final class AdminUsersScreenModel: ObservableObject {
                     return false
                 }
                 updated = try await ServerAPI.unlinkAdminParentChild(
-                    parentID: request.user.id, childID: child.id, reason: form.reason)
-                noticeMessage = "자녀 연결을 해제했습니다. 학생 데이터는 유지됩니다."
+                    parentID: request.user.id, childID: child.id, reason: form.reason, authorization: authorization)
+                completionNotice = "자녀 연결을 해제했습니다. 학생 데이터는 유지됩니다."
             }
+            guard isMountedOwnerCurrent, expectedGeneration == generation, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return false }
+            noticeMessage = completionNotice
             if let updated { detail = updated }
+            if request.kind == .withdraw { detail = nil }
             let currentPage = users?.pagination.page ?? 1
-            users = try? await ServerAPI.adminUsers(
-                query: query, grade: grade, state: state, role: role, page: currentPage)
+            let refreshed = try? await ServerAPI.adminUsers(
+                query: query, grade: grade, state: state, role: role, page: currentPage, authorization: authorization)
+            guard isMountedOwnerCurrent, expectedGeneration == generation, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return false }
+            if let refreshed { users = refreshed }
             actionID = nil
             return true
         } catch {
+            guard isMountedOwnerCurrent, expectedGeneration == generation, account == DataScope.slot else { return false }
             errorMessage = readable(error)
             actionID = nil
             return false
         }
     }
 
-    private func reload(_ user: ServerAPI.AdminUserSummary) async throws -> ServerAPI.AdminUserDetail {
-        user.entityType == "PARENT"
-            ? try await ServerAPI.adminParent(id: user.id)
-            : try await ServerAPI.adminUser(id: user.id)
+    private func reload(_ user: ServerAPI.AdminUserSummary, authorization: ServerAPI.AuthorizationSnapshot, account: String) async throws -> ServerAPI.AdminUserDetail {
+        guard isMountedOwnerCurrent, account == DataScope.slot, ServerAPI.isCurrentAuthorization(authorization) else { throw CancellationError() }
+        return user.entityType == "PARENT"
+            ? try await ServerAPI.adminParent(id: user.id, authorization: authorization)
+            : try await ServerAPI.adminUser(id: user.id, authorization: authorization)
     }
 
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription ?? (error as NSError).localizedDescription
+        if (error as? ServerAPIError)?.statusCode == 403 { reset(); accessRevoked = true }
+        return (error as? ServerAPIError)?.errorDescription ?? (error as NSError).localizedDescription
     }
 }
 
 struct AdminUsersScreen: View {
+    let onClose: () -> Void
+    @EnvironmentObject private var store: AppStore
+    var body: some View {
+        AccountScopedAdminUsersScreen(store: store, onClose: onClose)
+            .id(String(describing: store.captureAccountSessionBoundary()) + "#" + (store.serverProfile?.role ?? ""))
+    }
+}
+
+private struct AccountScopedAdminUsersScreen: View {
     private enum Section: String, CaseIterable, Identifiable {
         case users = "사용자"
         case sanctions = "제재"
@@ -228,7 +313,11 @@ struct AdminUsersScreen: View {
 
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @StateObject private var model = AdminUsersScreenModel()
+    @StateObject private var model: AdminUsersScreenModel
+    init(store: AppStore, onClose: @escaping () -> Void) {
+        self.onClose = onClose
+        _model = StateObject(wrappedValue: AdminUsersScreenModel(store: store))
+    }
     @State private var section: Section = {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-adminSanctions") { return .sanctions }
@@ -244,6 +333,8 @@ struct AdminUsersScreen: View {
     @State private var selectedUserID: String?
     @State private var selectedAuditID: String?
     @State private var actionRequest: AdminUserActionRequest?
+    @State private var containerWidth: CGFloat = 0
+    @State private var narrowShowsDetail = false
     @State private var activityRequest: AdminUserActivityRequest? = {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-adminUserAssessment") {
@@ -276,6 +367,7 @@ struct AdminUsersScreen: View {
     }
 
     var body: some View {
+        GeometryReader { viewport in
         VStack(spacing: 0) {
             header
             feedback
@@ -289,9 +381,21 @@ struct AdminUsersScreen: View {
                 content
             }
         }
+        .onAppear { containerWidth = viewport.size.width }
+        .onChange(of: viewport.size.width) { _, width in containerWidth = width }
+        }
         .background(Tokens.paper)
         .task { await loadCurrentSection() }
         .onChange(of: section) { _, _ in Task { await loadCurrentSection() } }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            model.reset()
+            selectedUserID = nil; selectedAuditID = nil; actionRequest = nil; activityRequest = nil
+            query = ""; auditQuery = ""; role = ""; state = ""; grade = ""; narrowShowsDetail = false
+            Task { await loadCurrentSection() }
+        }
+        .onChange(of: model.accessRevoked) { _, revoked in
+            if revoked { actionRequest = nil; activityRequest = nil; narrowShowsDetail = false }
+        }
         .sheet(item: $actionRequest) { request in
             AdminUserActionSheet(request: request) { form in
                 await model.perform(request, form: form, query: query,
@@ -338,33 +442,27 @@ struct AdminUsersScreen: View {
     }
 
     @ViewBuilder private var content: some View {
-        if compactLandscape {
+        if StaffWorkspaceMetrics.usesListDetail(width: containerWidth) && !dynamicTypeSize.isAccessibilitySize {
             HStack(spacing: 0) {
-                listColumn.frame(width: 390)
+                listColumn.frame(width: StaffWorkspaceMetrics.listWidth(width: containerWidth))
                 Divider()
                 detailColumn.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                    listColumn
+            ZStack(alignment: .topLeading) {
+                listColumn.opacity(narrowShowsDetail ? 0 : 1).allowsHitTesting(!narrowShowsDetail)
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Button { narrowShowsDetail = false } label: { Label("목록으로", systemImage: "chevron.left") }.frame(minHeight: 44)
                     detailColumn
-                }
-                .readableWidth(Tokens.readableWidth)
-                .adaptiveHPadding().adaptiveVPadding()
+                }.opacity(narrowShowsDetail ? 1 : 0).allowsHitTesting(narrowShowsDetail)
             }
-            .refreshable { await refreshCurrentSection() }
         }
     }
 
     private var listColumn: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if section == .users { userFilters } else { auditFilters }
-            if compactLandscape {
-                ScrollView { listRows }
-            } else {
-                listRows
-            }
+            ScrollView { listRows }.refreshable { await refreshCurrentSection() }
             pagination
         }
         .padding(Tokens.Space.s3)
@@ -393,6 +491,7 @@ struct AdminUsersScreen: View {
                 Button("검색") { applyUserFilters() }.buttonStyle(.borderedProminent)
             }
             HStack(spacing: Tokens.Space.s2) {
+                Menu {
                 Menu(roleLabel) {
                     filterButton("전체 역할", value: "", binding: $role)
                     filterButton("학생", value: "student", binding: $role)
@@ -414,6 +513,16 @@ struct AdminUsersScreen: View {
                         filterButton(gradeName(value), value: String(value), binding: $grade)
                     }
                 }
+                if !role.isEmpty || !state.isEmpty || !grade.isEmpty {
+                    Divider()
+                    Button("필터 초기화") { role = ""; state = ""; grade = ""; applyUserFilters() }
+                }
+                } label: {
+                    let count = [role, state, grade].filter { !$0.isEmpty }.count
+                    Label(count == 0 ? "필터" : "필터 \(count)", systemImage: "line.3.horizontal.decrease")
+                        .font(.mCaption).frame(minHeight: 44)
+                }
+                .accessibilityValue([roleLabel, stateLabel, gradeLabel].joined(separator: ", "))
                 Spacer()
                 Text("\(model.users?.pagination.total ?? 0)명")
                     .font(.mMicro.monospacedDigit()).foregroundStyle(Tokens.text3)
@@ -444,6 +553,7 @@ struct AdminUsersScreen: View {
     private func userRow(_ user: ServerAPI.AdminUserSummary) -> some View {
         Button {
             selectedUserID = user.id
+            narrowShowsDetail = true
             Task { await model.loadDetail(user) }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -463,18 +573,19 @@ struct AdminUsersScreen: View {
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(model.actionID != nil && model.actionID?.hasPrefix("load:") != true)
         .accessibilityHint("사용자 상세와 관리 작업을 표시합니다")
     }
 
     private func auditRow(_ item: ServerAPI.AdminAuditItem) -> some View {
-        Button { selectedAuditID = item.id } label: {
+        Button { selectedAuditID = item.id; narrowShowsDetail = true } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(item.actionLabel).font(.mMicro).foregroundStyle(Tokens.primary).lineLimit(1)
                     Spacer()
                     Text(relativeDate(item.createdAt)).font(.mMicro).foregroundStyle(Tokens.text3)
                 }
-                Text(item.target?.name.isEmpty == false ? item.target!.name : "대상 없음")
+                Text(item.target.flatMap { $0.name.isEmpty ? nil : $0.name } ?? "대상 없음")
                     .font(.mBodyB).foregroundStyle(Tokens.ink).lineLimit(1)
                 Text(item.detail.isEmpty ? item.action : item.detail)
                     .font(.mCaption).foregroundStyle(Tokens.text2).lineLimit(2)
@@ -487,17 +598,10 @@ struct AdminUsersScreen: View {
     }
 
     @ViewBuilder private var detailColumn: some View {
-        if compactLandscape {
             VStack(spacing: 0) {
                 ScrollView { detailBody.padding(Tokens.Space.s3) }
                 if section == .users { userActionBar }
             }
-        } else {
-            VStack(spacing: 0) {
-                detailBody.padding(Tokens.Space.s4)
-                if section == .users { userActionBar }
-            }
-        }
     }
 
     @ViewBuilder private var detailBody: some View {
@@ -763,7 +867,10 @@ struct AdminUsersScreen: View {
     }
 
     private func filterButton(_ title: String, value: String, binding: Binding<String>) -> some View {
-        Button(title) { binding.wrappedValue = value; applyUserFilters() }
+        Button { binding.wrappedValue = value; applyUserFilters() } label: {
+            if binding.wrappedValue == value { Label(title, systemImage: "checkmark") }
+            else { Text(title) }
+        }
     }
 
     private func request(_ kind: AdminUserActionKind, _ user: ServerAPI.AdminUserSummary) {
@@ -874,33 +981,50 @@ private struct AdminUserActionSheet: View {
     @State private var form = AdminUserActionForm()
     @State private var confirms = false
     @State private var isSaving = false
+    @State private var originalForm = AdminUserActionForm()
+    @State private var hasSeeded = false
+    @State private var confirmsDiscard = false
+    @State private var saveFailure: String?
 
     let request: AdminUserActionRequest
     let onSubmit: (AdminUserActionForm) async -> Bool
 
     var body: some View {
         NavigationStack {
-            Form { fields }
+            Form {
+                fields
+                if let saveFailure { Section { Text(saveFailure).foregroundStyle(Tokens.dangerInk) } }
+            }
+                .disabled(isSaving)
                 .navigationTitle(title)
-                .interactiveDismissDisabled(isSaving)
+                .interactiveDismissDisabled(isSaving || form != originalForm)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("취소") { dismiss() }.disabled(isSaving)
+                        Button("취소") { if form != originalForm { confirmsDiscard = true } else { dismiss() } }.disabled(isSaving)
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button(actionTitle) { confirms = true }.disabled(!isValid || isSaving)
                     }
                 }
-                .confirmationDialog(confirmTitle, isPresented: $confirms, titleVisibility: .visible) {
-                    Button(actionTitle, role: request.kind == .withdraw || request.kind == .parentUnlink ? .destructive : nil) {
-                        isSaving = true
-                        Task {
-                            if await onSubmit(form) { dismiss() }
-                            isSaving = false
-                        }
-                    }
-                    Button("취소", role: .cancel) {}
-                } message: { Text(confirmMessage) }
+                .confirmationDialog("작성한 내용을 버릴까요?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+                    Button("변경 버리기", role: .destructive) { dismiss() }
+                    Button("계속 편집", role: .cancel) {}
+                }
+                .compactHeightSheet(isPresented: $confirms) {
+                    StaffChangeReview(title: title, changes: reviewChanges,
+                        impact: confirmMessage, reason: form.reason, reasonIsRecorded: !form.reason.isEmpty,
+                        actionTitle: actionTitle, destructive: request.kind == .withdraw || request.kind == .parentUnlink,
+                        isWorking: isSaving, onCancel: { confirms = false }, onConfirm: {
+                            guard !isSaving else { return }
+                            let submittedForm = form
+                            isSaving = true
+                            Task {
+                                if await onSubmit(submittedForm) { confirms = false; dismiss() }
+                                else { saveFailure = "작업을 처리하지 못했습니다. 입력한 내용은 유지했습니다. 권한·연결 상태를 확인하고 다시 시도해 주세요."; confirms = false }
+                                isSaving = false
+                            }
+                        })
+                }
         }
         .onAppear { seed() }
     }
@@ -1014,6 +1138,8 @@ private struct AdminUserActionSheet: View {
     }
 
     private func seed() {
+        guard !hasSeeded else { return }
+        hasSeeded = true
         form.role = request.user.role == "test" ? "student" : request.user.role
         form.status = ["active", "inactive", "suspended"].contains(request.user.accountStatus)
             ? request.user.accountStatus : "active"
@@ -1026,6 +1152,36 @@ private struct AdminUserActionSheet: View {
             form.lowLearningConsecutiveDays = child.lowLearningConsecutiveDays
             form.inactivityEnabled = child.inactivityEnabled
             form.inactivityDays = child.inactivityDays
+        }
+        originalForm = form
+    }
+
+    private var reviewChanges: [StaffChangeValue] {
+        let target = request.child?.name ?? request.user.name
+        switch request.kind {
+        case .role:
+            return [.init(label: target, before: request.user.role, after: form.role)]
+        case .status:
+            return [.init(label: target, before: request.user.accountStatus, after: form.status + (form.suspensionDays.isEmpty ? "" : " · \(form.suspensionDays)일"))]
+        case .warnings:
+            return [.init(label: target, before: "경고 \(request.user.warningCount)회", after: "경고 \(form.warningCount)회" + (form.warningCount >= 3 ? " · 계정 정지 대상" : ""))]
+        case .withdraw:
+            return [.init(label: target, before: "계정·개인정보 존재", after: form.dataRetention == "anonymous" ? "개인정보 제거·익명 통계 보존" : "계정·활동 데이터 영구 삭제")]
+        case .parentStatus:
+            return [.init(label: target, before: request.user.isActive ? "활성" : "비활성", after: form.parentActive ? "활성" : "비활성")]
+        case .parentUnlink:
+            return [.init(label: target, before: "보호자 연결", after: "연결 해제·학생 데이터 보존")]
+        case .parentNotifications:
+            return [.init(label: target, before: originalForm.emailEnabled ? "이메일 알림 사용" : "이메일 알림 끔", after: form.emailEnabled ? "이메일 알림 사용" : "이메일 알림 끔"),
+                    .init(label: "학습·미접속 기준", before: "\(originalForm.minimumMinutesPerDay)분 / \(originalForm.inactivityDays)일", after: "\(form.minimumMinutesPerDay)분 / \(form.inactivityDays)일")]
+        case .package:
+            return [.init(label: target, before: "현재 서버 권한(이 화면에서 재조회하지 않음)", after: form.packageType)]
+        case .notification, .email:
+            return [.init(label: target, before: "이번 메시지 미전송", after: "\(form.title)\n\(form.message)")]
+        case .passwordReset:
+            return [.init(label: request.user.email, before: "새 재설정 링크 미발급", after: "10분 유효·1회용 링크 전송")]
+        case .nickname:
+            return [.init(label: target, before: "현재 닉네임 유지", after: "닉네임 변경 요청 전송")]
         }
     }
 

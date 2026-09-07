@@ -109,7 +109,35 @@ struct SyncAPIDecodeCases {
             "human-readable server messages must remain visible"
         )
 
+        let legacyAcademyWeek = #"{"id":"week-1","academicYear":2026,"weekNumber":1,"title":"1주차","lessonSummary":"수업","concepts":[],"assignmentTitle":"과제","assignmentInstructions":"풀어 주세요","dueAt":null,"files":[]}"#
+        let oldWeek = try decode(legacyAcademyWeek, as: ServerAPI.AcademyWeek.self)
+        require(oldWeek.assignmentOmr == nil && oldWeek.submissions == nil, "legacy week without assignment fields remains decodable")
+        let legacyWeekResponse = """
+        {"academy":{"id":"academy-1","name":"학원"},"academyClass":{"id":"class-1","name":"반"},"week":\(legacyAcademyWeek)}
+        """
+        let oldWeekResponse = try decode(legacyWeekResponse, as: ServerAPI.AcademyWeekResponse.self)
+        require(oldWeekResponse.submission == nil && oldWeekResponse.serverTime == nil, "legacy week envelope does not require new optional receipt/time")
+        let assignmentJSON = #"{"enabled":true,"questionCount":2,"sections":[{"startNumber":1,"endNumber":1,"answerType":"MULTIPLE_CHOICE","choiceCount":9},{"startNumber":2,"endNumber":2,"answerType":"SHORT_ANSWER","choiceCount":5}],"questions":[{"number":1,"answerType":"MULTIPLE_CHOICE","choiceCount":9,"answer":""},{"number":2,"answerType":"SHORT_ANSWER","choiceCount":5,"answer":""}],"configuredAt":"2026-09-07T00:00:00Z","missedSubmissionsFinalizedAt":null,"answerKey":["9","x=2"]}"#
+        let submissionJSON = #"{"id":"submission-1","weekId":"week-1","answers":["9","x=2"],"answerModes":["MULTIPLE_CHOICE","SHORT_ANSWER"],"answeredCount":2,"correctByQuestion":[true,false],"correctCount":1,"questionCount":2,"scorePercent":50,"status":"SUBMITTED","submittedAt":"2026-09-07T00:01:00Z","gradedAt":"2026-09-07T00:01:00Z","autoZeroedAt":null,"answerKeyConfiguredAt":"2026-09-07T00:00:00Z","student":{"id":"student-1","name":"검증 학생","email":"fixture@example.invalid"}}"#
+        var newWeekObject = try JSONSerialization.jsonObject(with: Data(legacyAcademyWeek.utf8)) as! [String: Any]
+        newWeekObject["assignmentOmr"] = try JSONSerialization.jsonObject(with: Data(assignmentJSON.utf8))
+        newWeekObject["submissions"] = [try JSONSerialization.jsonObject(with: Data(submissionJSON.utf8))]
+        let newWeekData = try JSONSerialization.data(withJSONObject: newWeekObject)
+        let newWeek = try JSONDecoder().decode(ServerAPI.AcademyWeek.self, from: newWeekData)
+        require(newWeek.assignmentOmr?.isValid == true && newWeek.assignmentOmr?.answerKey == ["9", "x=2"], "teacher week decodes real mixed OMR and answer key")
+        require(newWeek.submissions?.first?.isValid == true && newWeek.submissions?.first?.student?.id == "student-1", "teacher week decodes graded roster receipt")
+        var newEnvelope = try JSONSerialization.jsonObject(with: Data(legacyWeekResponse.utf8)) as! [String: Any]
+        newEnvelope["week"] = newWeekObject
+        newEnvelope["submission"] = try JSONSerialization.jsonObject(with: Data(submissionJSON.utf8))
+        newEnvelope["serverTime"] = "2026-09-07T00:02:00Z"
+        let newResponse = try JSONDecoder().decode(ServerAPI.AcademyWeekResponse.self, from: JSONSerialization.data(withJSONObject: newEnvelope))
+        require(newResponse.submission?.answers == ["9", "x=2"] && newResponse.serverTime == "2026-09-07T00:02:00Z", "student week receives own receipt and authoritative clock")
+        newWeekObject["assignmentOmr"] = NSNull(); newWeekObject["submissions"] = NSNull()
+        let disabledWeek = try JSONDecoder().decode(ServerAPI.AcademyWeek.self, from: JSONSerialization.data(withJSONObject: newWeekObject))
+        require(disabledWeek.assignmentOmr == nil && disabledWeek.submissions == nil, "explicit null clears an optional assignment rather than inventing a draft")
+
         print("Sync API Swift decode cases passed")
         print("- progress, wrong-note cursor/review, durable review payload, dashboard, and V1 rulebook decode")
+        print("- legacy/null/new AcademyWeek and AcademyWeekResponse, mixed OMR, teacher answer key, roster receipt and server clock")
     }
 }

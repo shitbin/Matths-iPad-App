@@ -14,13 +14,16 @@ import SwiftUI
 // MARK: - 엔진 계약
 
 /// 생성 파라미터 — Qwen3.5 공식 모델 카드 권장값 (AITutor.Params 참조)
-struct LLMGenParams {
+struct LLMGenParams: Sendable {
     var maxTokens: Int = 1024
     var temperature: Float = 0.7
     var topP: Float = 0.8
     var topK: Int32 = 20
     var minP: Float = 0.0
     var presencePenalty: Float = 1.5
+    /// Per-request cancellation belongs to the inference owner, not the shared
+    /// engine. A cancelled queued tutor must never abort an active grading lease.
+    var shouldCancel: @Sendable () -> Bool = { false }
 }
 
 protocol LLMEngine: AnyObject, Sendable {
@@ -90,6 +93,7 @@ final class AITutor: ObservableObject {
     @Published var modelState: ModelState = .missing
     @Published var messages: [ChatMessage] = []
     @Published var isGenerating = false
+    @Published private(set) var resourceInterruptionNotice: String?
 
     /// async 모델 전환은 unload와 load 사이에서 재진입할 수 있다. 채점기·튜터·
     /// 무결성 검사가 동시에 전환을 요청해도 하나를 끝낸 뒤 다음 파일로 넘어간다.
@@ -219,15 +223,15 @@ final class AITutor: ObservableObject {
     /// 라이브러리 항목을 요청하면 시스템이 항목을 **재료화(materialize)** 하지 못하고
     /// "표시 항목을 로드할 수 없습니다" + CloudPhotoLibraryError 1005 로 전부 실패한다.
     /// (기기 로그 실증: 08:35 모델 로드 전에는 같은 사진이 성공, 08:52 로드 후 실패)
-    func releaseForMemory() async {
-        guard !isGenerating, modelSwitchInFlight == nil else { return }
+    func releaseForMemory(waitForActiveWork: Bool = false) async {
+        guard waitForActiveWork || (!isGenerating && modelSwitchInFlight == nil) else { return }
         cancelModelMaintenance()
         let operationID = UUID()
         modelMaintenanceID = operationID
         modelState = .loading
         let lease: LocalAIWorkCoordinator.Lease
         do {
-            lease = try await LocalAIWorkCoordinator.shared.acquire(.modelMaintenance)
+            lease = try await LocalAIWorkCoordinator.shared.acquire(waitForActiveWork ? .resourceRecovery : .modelMaintenance)
         } catch {
             if modelMaintenanceID == operationID {
                 modelMaintenanceID = nil
@@ -262,6 +266,11 @@ final class AITutor: ObservableObject {
     }
 
     private func startModelLoad(forceUnload: Bool) {
+        if let message = LocalAIBackgroundExecution.shared.admissionFailureMessage {
+            resourceInterruptionNotice = message
+            modelState = .failed(message)
+            return
+        }
         guard !isGenerating, modelSwitchInFlight == nil,
               modelMaintenanceTask == nil else { return }
         if !forceUnload {
@@ -372,6 +381,11 @@ final class AITutor: ObservableObject {
     /// 이미 그 파일이 열려 있으면 아무 일도 하지 않는다.
     @discardableResult
     func switchModel(toFile file: String) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if let message = LocalAIBackgroundExecution.shared.admissionFailureMessage {
+            resourceInterruptionNotice = message
+            return false
+        }
         if case .ready(let open) = modelState, open == file { return true }
 
         if let running = modelSwitchInFlight {
@@ -446,6 +460,7 @@ final class AITutor: ObservableObject {
         pendingRequest = nil
         activeRunID = nil
         conversationSlot = DataScope.slot
+        resourceInterruptionNotice = nil
         isGenerating = false
         runStage = ""
         runStartedAt = nil
@@ -555,7 +570,13 @@ final class AITutor: ObservableObject {
         ownerSlot: String,
         cancel: CancelFlag
     ) async {
-        let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("AI 사진 질문")
+        resourceInterruptionNotice = nil
+        let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("AI 사진 질문") { [weak self] reason in
+            guard let self, self.ownsRun(runID, slot: ownerSlot) else { return }
+            self.resourceInterruptionNotice = reason.message
+            cancel.set(true)
+            self.queuedWorkTask?.cancel()
+        }
         defer { LocalAIBackgroundExecution.shared.endWork(backgroundToken) }
         var workLease: LocalAIWorkCoordinator.Lease?
         var leaseTransferredToAnswer = false
@@ -735,6 +756,9 @@ final class AITutor: ObservableObject {
         cancel: CancelFlag
     ) async throws -> String {
         let engineRef = engine
+        var cancellableParams = params
+        cancellableParams.shouldCancel = { cancel.isSet }
+        let params = cancellableParams
         return try await withCheckedThrowingContinuation { continuation in
             Task.detached(priority: .userInitiated) {
                 do {
@@ -970,9 +994,9 @@ final class AITutor: ObservableObject {
         let ctxTokens = engine.contextTokens
         if ctxTokens > 0 { params.maxTokens = min(params.maxTokens, max(192, ctxTokens * 35 / 100)) }
         isGenerating = true
-        let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("AI 튜터 답변")
         let cancel = CancelFlag()
         cancelFlag = cancel
+        params.shouldCancel = { cancel.isSet }
         runStartedAt = Date()
         // 사진이 붙으면 첫 글자 전에 ViT 인코딩이 통째로 돌아간다 — 그걸 그대로 말한다.
         runStage = imagePath != nil ? "사진을 읽는 중" : (capturesThinking ? "생각하는 중" : "읽는 중")
@@ -980,6 +1004,12 @@ final class AITutor: ObservableObject {
         let runID = UUID()
         activeRunID = runID
         let ownerSlot = conversationSlot
+        resourceInterruptionNotice = nil
+        let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("AI 튜터 답변") { [weak self] reason in
+            guard let self, self.ownsRun(runID, slot: ownerSlot) else { return }
+            self.resourceInterruptionNotice = reason.message
+            cancel.set(true)
+        }
         persistConversation()
         // 이력 예산 = 컨텍스트의 55% (나머지는 생성 몫)
         let budget = engine.contextTokens > 0 ? engine.contextTokens * 55 / 100 : 0
@@ -1074,7 +1104,9 @@ final class AITutor: ObservableObject {
                 let closed = prompt + raw.replacingOccurrences(of: "<think>\n", with: "")
                     + "\n</think>\n\n"
                 var answer = ""
-                _ = try? engine.generate(prompt: closed, params: AITutor.Params.chat) { piece in
+                var completionParams = AITutor.Params.chat
+                completionParams.shouldCancel = { cancel.isSet }
+                _ = try? engine.generate(prompt: closed, params: completionParams) { piece in
                     answer += piece
                     return !cancel.isSet
                 }
@@ -1101,6 +1133,7 @@ final class AITutor: ObservableObject {
                 repairParams.maxTokens = min(768, params.maxTokens)
                 repairParams.temperature = 0
                 repairParams.topP = 1
+                repairParams.shouldCancel = { cancel.isSet }
                 var repairedRaw = ""
                 do {
                     _ = try engine.generate(prompt: repairPrompt, params: repairParams) { piece in

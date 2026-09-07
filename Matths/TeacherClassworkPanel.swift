@@ -20,26 +20,48 @@ final class TeacherClassworkPanelModel: ObservableObject {
     @Published var previewURL: URL?
 
     private var loadGeneration = UUID()
+    private var scopeGeneration = UUID()
+
+    private func isTeacherOwner(_ owner: AccountRequestOwner, in store: AppStore) -> Bool {
+        // A token/account snapshot does not include role. The canonical server
+        // permits teacher (not admin/student) and separately enforces current
+        // account activity, teacher expiry, academy membership and class access.
+        owner.isCurrent(in: store) && store.authProvider == "server"
+            && store.serverProfile?.role?.lowercased() == "teacher"
+    }
+
+    func reset() {
+        scopeGeneration = UUID(); loadGeneration = UUID()
+        selectedClassID = ""; classwork = nil; actionID = nil; isLoading = false
+        showsEditor = false; selectedFiles = []; selectedConceptKeys = []; previewURL = nil
+        draft = Self.blankDraft(); errorMessage = nil; noticeMessage = nil
+    }
 
     func prepare(classes: [ServerAPI.AcademyClassSummary]) {
         guard selectedClassID.isEmpty, let first = classes.first else { return }
         selectedClassID = first.id
     }
 
-    func load() async {
+    func load(owner: AccountRequestOwner, store: AppStore) async {
+        guard isTeacherOwner(owner, in: store) else { return }
         guard !selectedClassID.isEmpty else {
             classwork = nil
             return
         }
         let classID = selectedClassID
+        let account = DataScope.slot
+        let authorization = owner.authorization
+        if classwork?.academyClass.id != classID { classwork = nil }
         let generation = UUID()
         loadGeneration = generation
         isLoading = true
+        defer { if generation == loadGeneration { isLoading = false } }
         errorMessage = nil
         noticeMessage = nil
         do {
-            let value = try await ServerAPI.teacherAcademyClasswork(classID: classID)
-            guard generation == loadGeneration, classID == selectedClassID else { return }
+            let value = try await ServerAPI.teacherAcademyClasswork(classID: classID, authorization: authorization)
+            guard generation == loadGeneration, classID == selectedClassID, account == DataScope.slot,
+                  isTeacherOwner(owner, in: store) else { return }
             classwork = value
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-teacherClassworkEditorFixture"),
@@ -50,8 +72,7 @@ final class TeacherClassworkPanelModel: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == loadGeneration, classID == selectedClassID else { return }
-            classwork = nil
+            guard generation == loadGeneration, classID == selectedClassID, isTeacherOwner(owner, in: store) else { return }
             errorMessage = readable(error)
         }
         if generation == loadGeneration { isLoading = false }
@@ -76,17 +97,27 @@ final class TeacherClassworkPanelModel: ObservableObject {
     }
 
     func edit(_ week: ServerAPI.AcademyWeek) {
+        let conceptKeys = week.concepts.map { reference in
+            // Concept.id is a pipe-delimited SwiftUI identity, not the server
+            // selection key. Use the catalog's canonical key for both display
+            // selection and save. Keep an older reference intact if the latest
+            // catalog no longer lists it; never silently drop the selection.
+            allConcepts.first {
+                $0.curriculumId == reference.curriculumId && $0.courseId == reference.courseId
+                    && $0.unitId == reference.unitId && $0.conceptId == reference.conceptId
+            }?.key ?? [reference.courseId, reference.unitId, reference.conceptId].joined(separator: "/")
+        }
         draft = ServerAPI.TeacherClassWeekDraft(
             weekID: week.id,
             academicYear: week.academicYear,
             weekNumber: week.weekNumber,
             title: week.title,
             lessonSummary: week.lessonSummary,
-            conceptKeys: week.concepts.map(\.id),
+            conceptKeys: conceptKeys,
             assignmentTitle: week.assignmentTitle,
             assignmentInstructions: week.assignmentInstructions,
-            dueAt: "")
-        selectedConceptKeys = Set(week.concepts.map(\.id))
+            dueAt: "", assignmentOmr: week.assignmentOmr.map(AcademyAssignmentConfiguration.init))
+        selectedConceptKeys = Set(conceptKeys)
         selectedFiles = []
         conceptSearch = ""
         if let dueAt = week.dueAt, let date = Self.serverDate(dueAt) {
@@ -121,8 +152,12 @@ final class TeacherClassworkPanelModel: ObservableObject {
         selectedFiles = unique
     }
 
-    func save() async {
-        guard actionID == nil, !selectedClassID.isEmpty else { return }
+    func save(owner: AccountRequestOwner, store: AppStore) async {
+        guard isTeacherOwner(owner, in: store), actionID == nil, !selectedClassID.isEmpty else { return }
+        let expectedGeneration = scopeGeneration
+        let account = DataScope.slot
+        let authorization = owner.authorization
+        let classID = selectedClassID
         let assignmentTitle = draft.assignmentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !assignmentTitle.isEmpty else {
             errorMessage = "과제 제목을 입력해 주세요."
@@ -132,12 +167,14 @@ final class TeacherClassworkPanelModel: ObservableObject {
             errorMessage = "이번 주에 배운 개념을 한 개 이상 선택해 주세요."
             return
         }
+        if let message = draft.assignmentOmr?.validationMessage { errorMessage = message; return }
         if let existing = existingWeek,
            existing.files.count + selectedFiles.count > 10 {
             errorMessage = "기존 파일을 포함해 한 주차에는 최대 10개까지 등록할 수 있습니다."
             return
         }
         actionID = "save"
+        defer { if expectedGeneration == scopeGeneration { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         var payload = draft
@@ -148,58 +185,85 @@ final class TeacherClassworkPanelModel: ObservableObject {
         payload.assignmentInstructions = draft.assignmentInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
         payload.dueAt = dueEnabled ? Self.dueFormatter.string(from: dueDate) : ""
         do {
-            classwork = try await ServerAPI.saveTeacherAcademyClassWeek(
-                classID: selectedClassID, draft: payload, files: selectedFiles)
+            let response = try await ServerAPI.saveTeacherAcademyClassWeek(
+                classID: classID, draft: payload, files: selectedFiles, authorization: authorization)
+            guard expectedGeneration == scopeGeneration, classID == selectedClassID, account == DataScope.slot,
+                  isTeacherOwner(owner, in: store) else { return }
+            classwork = response
             showsEditor = false
             selectedFiles = []
             noticeMessage = draft.weekID == nil ? "새 주차 수업과 과제를 게시했습니다." : "주차 수업과 과제를 수정했습니다."
         } catch {
+            guard expectedGeneration == scopeGeneration, account == DataScope.slot, isTeacherOwner(owner, in: store) else { return }
             errorMessage = readable(error)
         }
-        actionID = nil
     }
 
-    func delete(_ week: ServerAPI.AcademyWeek) async {
-        guard actionID == nil else { return }
+    func delete(_ week: ServerAPI.AcademyWeek, owner: AccountRequestOwner, store: AppStore) async {
+        guard isTeacherOwner(owner, in: store), actionID == nil, classwork?.weeks.contains(where: { $0.id == week.id }) == true else { return }
+        let expectedGeneration = scopeGeneration
+        let account = DataScope.slot
+        let authorization = owner.authorization
+        let classID = selectedClassID
         actionID = "delete-\(week.id)"
+        defer { if expectedGeneration == scopeGeneration { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
-            classwork = try await ServerAPI.deleteTeacherAcademyClassWeek(
-                classID: selectedClassID, weekID: week.id)
+            let response = try await ServerAPI.deleteTeacherAcademyClassWeek(
+                classID: classID, weekID: week.id, authorization: authorization)
+            guard expectedGeneration == scopeGeneration, classID == selectedClassID, account == DataScope.slot,
+                  isTeacherOwner(owner, in: store) else { return }
+            classwork = response
             noticeMessage = "\(week.weekNumber)주차를 삭제했습니다."
         } catch {
+            guard expectedGeneration == scopeGeneration, account == DataScope.slot, isTeacherOwner(owner, in: store) else { return }
             errorMessage = readable(error)
         }
-        actionID = nil
     }
 
-    func removeFile(_ file: ServerAPI.AcademyWeek.File, from week: ServerAPI.AcademyWeek) async {
-        guard actionID == nil else { return }
+    func removeFile(_ file: ServerAPI.AcademyWeek.File, from week: ServerAPI.AcademyWeek, owner: AccountRequestOwner, store: AppStore) async {
+        guard isTeacherOwner(owner, in: store), actionID == nil, classwork?.weeks.contains(where: { $0.id == week.id }) == true else { return }
+        let expectedGeneration = scopeGeneration
+        let account = DataScope.slot
+        let authorization = owner.authorization
+        let classID = selectedClassID
         actionID = "file-\(file.id)"
+        defer { if expectedGeneration == scopeGeneration { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
-            classwork = try await ServerAPI.removeTeacherAcademyClassWeekFile(
-                classID: selectedClassID, weekID: week.id, fileID: file.id)
+            let response = try await ServerAPI.removeTeacherAcademyClassWeekFile(
+                classID: classID, weekID: week.id, fileID: file.id, authorization: authorization)
+            guard expectedGeneration == scopeGeneration, classID == selectedClassID, account == DataScope.slot,
+                  isTeacherOwner(owner, in: store) else { return }
+            classwork = response
             noticeMessage = "파일을 삭제했습니다."
         } catch {
+            guard expectedGeneration == scopeGeneration, account == DataScope.slot, isTeacherOwner(owner, in: store) else { return }
             errorMessage = readable(error)
         }
-        actionID = nil
     }
 
-    func preview(_ file: ServerAPI.AcademyWeek.File, from week: ServerAPI.AcademyWeek) async {
-        guard actionID == nil else { return }
+    func preview(_ file: ServerAPI.AcademyWeek.File, from week: ServerAPI.AcademyWeek, owner: AccountRequestOwner, store: AppStore) async {
+        guard isTeacherOwner(owner, in: store), actionID == nil, classwork?.weeks.contains(where: { $0.id == week.id }) == true else { return }
+        let expectedGeneration = scopeGeneration
+        let account = DataScope.slot
+        let authorization = owner.authorization
+        let classID = selectedClassID
         actionID = "preview-\(file.id)"
+        defer { if expectedGeneration == scopeGeneration { actionID = nil } }
         errorMessage = nil
         do {
-            previewURL = try await ServerAPI.downloadTeacherAcademyFile(
-                classID: selectedClassID, weekID: week.id, file: file)
+            let url = try await ServerAPI.downloadTeacherAcademyFile(
+                classID: classID, weekID: week.id, file: file, account: account, authorization: authorization)
+            guard expectedGeneration == scopeGeneration, classID == selectedClassID, account == DataScope.slot,
+                  isTeacherOwner(owner, in: store) else { return }
+            previewURL = url
         } catch {
+            guard expectedGeneration == scopeGeneration, account == DataScope.slot, isTeacherOwner(owner, in: store) else { return }
             errorMessage = readable(error)
         }
-        actionID = nil
     }
 
     var existingWeek: ServerAPI.AcademyWeek? {
@@ -250,7 +314,8 @@ final class TeacherClassworkPanelModel: ObservableObject {
     }
 
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
+        if (error as? ServerAPIError)?.statusCode == 403 { reset() }
+        return (error as? ServerAPIError)?.errorDescription
             ?? (error as NSError).localizedDescription
     }
 }
@@ -258,11 +323,20 @@ final class TeacherClassworkPanelModel: ObservableObject {
 /// 교사가 휴대전화 가로 화면에서도 웹 포털 없이 주차 수업과 과제를 관리하는 작업대.
 struct TeacherClassworkPanel: View {
     let classes: [ServerAPI.AcademyClassSummary]
+    @EnvironmentObject private var store: AppStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = TeacherClassworkPanelModel()
     @State private var importingFiles = false
     @State private var deletingWeek: ServerAPI.AcademyWeek?
+    @State private var confirmsDiscard = false
+    @State private var owner: AccountRequestOwner?
+    @State private var pickerOwner: AccountRequestOwner?
+    @State private var deletionOwner: AccountRequestOwner?
+    @State private var saveOwner: AccountRequestOwner?
+    @State private var confirmsRegrade = false
+    @State private var showsConceptPicker = false
+    private var loadIdentity: String { model.selectedClassID + "|" + (owner?.id.uuidString ?? "none") }
 
     private var compactLandscape: Bool {
         verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize
@@ -274,8 +348,23 @@ struct TeacherClassworkPanel: View {
             feedback
             content
         }
-        .task { model.prepare(classes: classes) }
-        .task(id: model.selectedClassID) { await model.load() }
+        .task { owner = AccountRequestOwner(store: store); model.prepare(classes: classes) }
+        .task(id: loadIdentity) {
+            if let owner, owner.isCurrent(in: store) { await model.load(owner: owner, store: store) }
+        }
+        .onDisappear { owner = nil; resetInteractions(); model.reset() }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            owner = nil; resetInteractions(); model.reset()
+        }
+        .onChange(of: classes) { _, values in
+            if !values.contains(where: { $0.id == model.selectedClassID && $0.canManage != false }) {
+                model.reset(); model.prepare(classes: values.filter { $0.canManage != false })
+                resetInteractions()
+            }
+        }
+        .onChange(of: model.showsEditor) { _, presented in
+            if presented { showsConceptPicker = model.selectedConceptKeys.isEmpty }
+        }
         .compactHeightSheet(isPresented: $model.showsEditor) { editor }
         .compactHeightSheet(isPresented: previewPresented) {
             if let url = model.previewURL {
@@ -293,12 +382,34 @@ struct TeacherClassworkPanel: View {
         ) { week in
             Button("\(week.weekNumber)주차 삭제", role: .destructive) {
                 deletingWeek = nil
-                Task { await model.delete(week) }
+                guard let deletionOwner, deletionOwner.isCurrent(in: store) else { return }
+                Task { await model.delete(week, owner: deletionOwner, store: store) }
             }
             Button("취소", role: .cancel) { deletingWeek = nil }
         } message: { week in
             Text("수업 내용과 과제 파일이 함께 삭제되며 되돌릴 수 없습니다: \(week.title)")
         }
+    }
+
+    private func resetInteractions() {
+        deletingWeek = nil; importingFiles = false; pickerOwner = nil; deletionOwner = nil
+        confirmsRegrade = false; saveOwner = nil
+    }
+    private func performOwned(_ action: @escaping @MainActor (AccountRequestOwner) async -> Void) {
+        guard let owner, owner.isCurrent(in: store) else { return }
+        Task { @MainActor in
+            guard owner.isCurrent(in: store) else { return }
+            await action(owner)
+        }
+    }
+
+    private func requestSave() {
+        guard model.actionID == nil, let owner, owner.isCurrent(in: store),
+              store.serverProfile?.role?.lowercased() == "teacher" else { return }
+        if let omr = model.draft.assignmentOmr, let existing = model.existingWeek?.assignmentOmr,
+           omr != AcademyAssignmentConfiguration(existing) {
+            saveOwner = owner; confirmsRegrade = true
+        } else { performOwned { await model.save(owner: $0, store: store) } }
     }
 
     private var toolbar: some View {
@@ -316,7 +427,7 @@ struct TeacherClassworkPanel: View {
             ForEach(classes) { academyClass in Text(academyClass.name).tag(academyClass.id) }
         }
         .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : 220, alignment: .leading)
-        .disabled(model.actionID != nil)
+        .disabled(model.actionID != nil || model.showsEditor)
         if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
         Button { model.startNewWeek() } label: {
             Label("새 주차", systemImage: "plus")
@@ -369,14 +480,14 @@ struct TeacherClassworkPanel: View {
                         ForEach(classwork.weeks) { week in weekCard(week) }
                     }
                 }
-                .refreshable { await model.load() }
+                .refreshable { if let owner, owner.isCurrent(in: store) { await model.load(owner: owner, store: store) } }
             }
         } else if !model.isLoading {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                 Text("과제 목록을 열지 못했습니다").font(.mBodyB).foregroundStyle(Tokens.ink)
                 Text("이 반의 담당 교사 권한과 네트워크 상태를 확인해 주세요.")
                     .font(.mCaption).foregroundStyle(Tokens.text2)
-                Button("다시 불러오기") { Task { await model.load() } }
+                Button("다시 불러오기") { performOwned { await model.load(owner: $0, store: store) } }
                     .buttonStyle(SecondaryButtonStyle())
             }
             .padding(Tokens.Space.s4)
@@ -399,7 +510,10 @@ struct TeacherClassworkPanel: View {
                 Spacer(minLength: 0)
                 Menu {
                     Button { model.edit(week) } label: { Label("수정", systemImage: "pencil") }
-                    Button(role: .destructive) { deletingWeek = week } label: {
+                    Button(role: .destructive) {
+                        guard let owner, owner.isCurrent(in: store) else { return }
+                        deletionOwner = owner; deletingWeek = week
+                    } label: {
                         Label("주차 삭제", systemImage: "trash")
                     }
                 } label: {
@@ -431,6 +545,11 @@ struct TeacherClassworkPanel: View {
                         .font(.mMicro).foregroundStyle(Tokens.warningInk)
                 }
             }
+            if let omr = week.assignmentOmr, omr.enabled {
+                Label("온라인 답안지 · \(omr.questionCount)문항", systemImage: "list.number")
+                    .font(.mCaption).foregroundStyle(Tokens.primary)
+                AcademyAssignmentResults(submissions: week.submissions ?? [], answerKey: omr.answerKey)
+            }
             if !week.files.isEmpty {
                 ForEach(week.files) { file in
                     HStack(spacing: Tokens.Space.s2) {
@@ -441,9 +560,9 @@ struct TeacherClassworkPanel: View {
                                 .font(.mMicro).foregroundStyle(Tokens.text3)
                         }
                         Spacer(minLength: 0)
-                        Button("열기") { Task { await model.preview(file, from: week) } }
+                        Button("열기") { performOwned { await model.preview(file, from: week, owner: $0, store: store) } }
                             .font(.mCaption).frame(minHeight: 44)
-                        Button(role: .destructive) { Task { await model.removeFile(file, from: week) } } label: {
+                        Button(role: .destructive) { performOwned { await model.removeFile(file, from: week, owner: $0, store: store) } } label: {
                             Image(systemName: "trash").frame(width: 44, height: 44)
                         }
                         .accessibilityLabel("\(file.originalName) 삭제")
@@ -477,11 +596,19 @@ struct TeacherClassworkPanel: View {
                         .lineLimit(2...6)
                 }
                 Section {
-                    TextField("개념 검색", text: $model.conceptSearch)
-                        .textInputAutocapitalization(.never)
                     Text("\(model.selectedConceptKeys.count)/30개 선택")
                         .font(.mCaption).foregroundStyle(Tokens.text2)
-                    conceptPicker
+                    if !model.selectedConceptKeys.isEmpty {
+                        Text(model.selectedConceptKeys.sorted().map { key in
+                            model.allConcepts.first(where: { $0.key == key })?.conceptTitle ?? key
+                        }.joined(separator: " · "))
+                        .font(.mCaption).foregroundStyle(Tokens.ink)
+                    }
+                    DisclosureGroup("개념 선택·변경", isExpanded: $showsConceptPicker) {
+                        TextField("과목·단원·개념 검색", text: $model.conceptSearch)
+                            .textInputAutocapitalization(.never)
+                        conceptPicker
+                    }
                 } header: { Text("이번 주에 배운 개념") }
                   footer: { Text("한 개 이상 선택해야 학생의 학습 화면과 과제가 연결됩니다.") }
                 Section("과제") {
@@ -493,6 +620,7 @@ struct TeacherClassworkPanel: View {
                         DatePicker("마감", selection: $model.dueDate, displayedComponents: [.date, .hourAndMinute])
                     }
                 }
+                AcademyAssignmentEditor(configuration: $model.draft.assignmentOmr)
                 Section {
                     if let existing = model.existingWeek, !existing.files.isEmpty {
                         ForEach(existing.files) { file in
@@ -500,7 +628,7 @@ struct TeacherClassworkPanel: View {
                                 Label(file.originalName, systemImage: "doc.fill").lineLimit(1)
                                 Spacer(minLength: 0)
                                 Button(role: .destructive) {
-                                    Task { await model.removeFile(file, from: existing) }
+                                    performOwned { await model.removeFile(file, from: existing, owner: $0, store: store) }
                                 } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
                                 .accessibilityLabel("\(file.originalName) 삭제")
                             }
@@ -516,7 +644,10 @@ struct TeacherClassworkPanel: View {
                             .accessibilityLabel("\(url.lastPathComponent) 선택 해제")
                         }
                     }
-                    Button { importingFiles = true } label: {
+                    Button {
+                        guard let owner, owner.isCurrent(in: store) else { return }
+                        pickerOwner = owner; importingFiles = true
+                    } label: {
                         Label("파일 추가", systemImage: "paperclip")
                     }
                     .disabled((model.existingWeek?.files.count ?? 0) + model.selectedFiles.count >= 10)
@@ -525,24 +656,45 @@ struct TeacherClassworkPanel: View {
                 if let error = model.errorMessage {
                     Section { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Tokens.dangerInk) }
                 }
-            }
-            .navigationTitle(model.draft.weekID == nil ? "새 주차" : "주차 수정")
-            .navigationBarTitleDisplayMode(.inline)
-            .interactiveDismissDisabled(model.actionID != nil)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { model.showsEditor = false }.disabled(model.actionID != nil)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(model.actionID == "save" ? "저장 중…" : "저장") { Task { await model.save() } }
+                Section {
+                    Button(model.actionID == "save" ? "저장 중…" : "주차 저장", action: requestSave)
+                        .buttonStyle(PrimaryButtonStyle()).frame(maxWidth: .infinity)
                         .disabled(model.actionID != nil)
                 }
+            }
+            .disabled(model.actionID != nil)
+            .navigationTitle(model.draft.weekID == nil ? "새 주차" : "주차 수정")
+            .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(true)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("취소") { confirmsDiscard = true }.disabled(model.actionID != nil)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(model.actionID == "save" ? "저장 중…" : "저장", action: requestSave)
+                        .disabled(model.actionID != nil)
+                }
+            }
+            .confirmationDialog("작성한 수업·과제를 버릴까요?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+                Button("변경 버리기", role: .destructive) { model.showsEditor = false }
+                Button("계속 편집", role: .cancel) {}
+            }
+            .confirmationDialog("과제 답안지 변경을 적용할까요?", isPresented: $confirmsRegrade, titleVisibility: .visible) {
+                Button("변경 적용") {
+                    guard let saveOwner, saveOwner.isCurrent(in: store) else { return }
+                    Task { await model.save(owner: saveOwner, store: store) }
+                }
+                Button("계속 편집", role: .cancel) {}
+            } message: {
+                Text("문항 구성이나 정답을 바꾸면 기존 제출 답안도 서버에서 다시 채점됩니다. 답안지를 끄면 학생의 새 제출이 중지됩니다.")
             }
             .fileImporter(
                 isPresented: $importingFiles,
                 allowedContentTypes: [.pdf, .image, .data, .archive],
                 allowsMultipleSelection: true
             ) { result in
+                guard let pickerOwner, pickerOwner.isCurrent(in: store), model.actionID == nil else { return }
+                self.pickerOwner = nil
                 switch result {
                 case .success(let urls): model.installImportedFiles(urls)
                 case .failure(let error): model.errorMessage = error.localizedDescription
@@ -553,11 +705,12 @@ struct TeacherClassworkPanel: View {
 
     private var conceptPicker: some View {
         let concepts = model.allConcepts.filter(model.matchesSearch)
+        let visibleConcepts = Array(concepts.prefix(12))
         return Group {
             if concepts.isEmpty {
                 Text("검색 결과가 없습니다.").font(.mCaption).foregroundStyle(Tokens.text2)
             } else {
-                ForEach(concepts) { concept in
+                ForEach(visibleConcepts) { concept in
                     Button { model.toggleConcept(concept.key) } label: {
                         HStack(alignment: .top) {
                             Image(systemName: model.selectedConceptKeys.contains(concept.key) ? "checkmark.circle.fill" : "circle")
@@ -571,6 +724,10 @@ struct TeacherClassworkPanel: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(concept.conceptTitle), \(model.selectedConceptKeys.contains(concept.key) ? "선택됨" : "선택 안 됨")")
+                }
+                if concepts.count > visibleConcepts.count {
+                    Text("검색 결과 \(concepts.count)개 중 12개를 표시합니다. 나머지 \(concepts.count - visibleConcepts.count)개는 과목·단원·개념 이름을 더 구체적으로 검색해 주세요.")
+                        .font(.mCaption).foregroundStyle(Tokens.text2)
                 }
             }
         }

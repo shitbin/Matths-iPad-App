@@ -310,159 +310,148 @@ extension ServerAPI {
 
     static func adminUsers(
         query: String = "", schoolCode: String = "", grade: String = "",
-        state: String = "", role: String = "", page: Int = 1
-    ) async throws -> AdminUserList {
+        state: String = "", role: String = "", page: Int = 1, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserList {
         let value: AdminUsersEnvelope = try await request(
             "GET", "/api/v1/admin/users", body: nil, authed: true,
             query: [
                 "query": query, "school": schoolCode, "grade": grade,
                 "state": state, "role": role, "page": String(max(1, page)),
-            ])
+            ], authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         return value.users
     }
 
-    static func adminUser(id: String) async throws -> AdminUserDetail {
+    static func adminUser(id: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail {
         let value: AdminUserDetailEnvelope = try await request(
-            "GET", "/api/v1/admin/users/\(id)", body: nil, authed: true)
+            "GET", "/api/v1/admin/users/\(id)", body: nil, authed: true, authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         return value.detail
     }
 
     static func adminUserActivity(
-        userID: String, kind: String = "learning", page: Int = 1
-    ) async throws -> AdminUserActivityPage {
+        userID: String, kind: String = "learning", page: Int = 1, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserActivityPage {
         let value: AdminUserActivityEnvelope = try await request(
             "GET", "/api/v1/admin/users/\(userID)/activity", body: nil, authed: true,
-            query: ["kind": kind, "page": String(max(1, page))])
+            query: ["kind": kind, "page": String(max(1, page))], authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         return value.activity
     }
 
     static func adminUserAssessment(
-        userID: String, attemptID: String
-    ) async throws -> AdminAssessmentDetail {
+        userID: String, attemptID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAssessmentDetail {
         let value: AdminAssessmentDetailEnvelope = try await request(
             "GET", "/api/v1/admin/users/\(userID)/assessments/\(attemptID)",
-            body: nil, authed: true)
+            body: nil, authed: true, authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         return value.assessment
     }
 
-    static func adminParent(id: String) async throws -> AdminUserDetail {
+    static func adminParent(id: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail {
         let value: AdminUserDetailEnvelope = try await request(
-            "GET", "/api/v1/admin/parents/\(id)", body: nil, authed: true)
+            "GET", "/api/v1/admin/parents/\(id)", body: nil, authed: true, authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         return value.detail
     }
 
-    static func adminSanctions(page: Int = 1) async throws -> AdminAuditPage {
+    static func adminSanctions(page: Int = 1, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminAuditPage {
         let value: AdminSanctionsEnvelope = try await request(
             "GET", "/api/v1/admin/sanctions", body: nil, authed: true,
-            query: ["page": String(max(1, page))])
+            query: ["page": String(max(1, page))], authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         return value.sanctions
     }
 
-    static func adminAudit(query: String = "", adminID: String = "", page: Int = 1) async throws -> AdminFullAuditPage {
+    static func adminAudit(query: String = "", adminID: String = "", page: Int = 1, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminFullAuditPage {
         let value: AdminAuditEnvelope = try await request(
             "GET", "/api/v1/admin/audit-log", body: nil, authed: true,
-            query: ["query": query, "admin": adminID, "page": String(max(1, page))])
+            query: ["query": query, "admin": adminID, "page": String(max(1, page))], authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         return value.audit
     }
 
-    static func requestAdminNicknameChange(userID: String, reason: String) async throws {
+    static func requestAdminNicknameChange(userID: String, reason: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws {
         _ = try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/nickname-request",
-            body: ["reason": reason])
+            body: ["reason": reason], authorization: authorization)
     }
 
     static func sendAdminUserNotification(
-        userID: String, title: String, message: String, href: String
-    ) async throws {
+        userID: String, title: String, message: String, href: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws {
         _ = try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/notification",
-            body: ["title": title, "message": message, "href": href])
+            body: ["title": title, "message": message, "href": href], authorization: authorization)
     }
 
     @discardableResult
-    static func sendAdminUserEmail(userID: String, subject: String, message: String) async throws -> Bool {
+    static func sendAdminUserEmail(userID: String, subject: String, message: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> Bool {
         let value = try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/email",
-            body: ["subject": subject, "message": message])
+            body: ["subject": subject, "message": message], authorization: authorization)
         return value.delivered ?? false
     }
 
-    static func sendAdminPasswordReset(userID: String) async throws {
+    static func sendAdminPasswordReset(userID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws {
         _ = try await adminUserMutation(
-            path: "/api/v1/admin/users/\(userID)/password-reset", body: [:])
+            path: "/api/v1/admin/users/\(userID)/password-reset", body: [:], authorization: authorization)
     }
 
     static func updateAdminUserRole(
-        userID: String, role: String, teacherAccessExpiresAt: String, reason: String
-    ) async throws -> AdminUserDetail? {
+        userID: String, role: String, teacherAccessExpiresAt: String, reason: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail? {
         try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/role",
             body: [
                 "role": role,
                 "teacherAccessExpiresAt": teacherAccessExpiresAt,
                 "reason": reason,
-            ]).detail
+            ], authorization: authorization).detail
     }
 
     static func updateAdminUserAccountStatus(
-        userID: String, status: String, suspensionDays: String, reason: String
-    ) async throws -> AdminUserDetail? {
+        userID: String, status: String, suspensionDays: String, reason: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail? {
         try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/account-status",
-            body: ["status": status, "suspensionDays": suspensionDays, "reason": reason]).detail
+            body: ["status": status, "suspensionDays": suspensionDays, "reason": reason], authorization: authorization).detail
     }
 
     static func updateAdminUserWarnings(
-        userID: String, warningCount: Int, reason: String
-    ) async throws -> AdminUserDetail? {
+        userID: String, warningCount: Int, reason: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail? {
         try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/warnings",
-            body: ["warningCount": warningCount, "reason": reason]).detail
+            body: ["warningCount": warningCount, "reason": reason], authorization: authorization).detail
     }
 
     static func updateAdminUserPackage(
-        userID: String, packageType: String, reason: String
-    ) async throws -> AdminUserDetail? {
+        userID: String, packageType: String, reason: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail? {
         try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/package-access",
-            body: ["packageType": packageType, "reason": reason]).detail
+            body: ["packageType": packageType, "reason": reason], authorization: authorization).detail
     }
 
     @discardableResult
     static func withdrawAdminUser(
-        userID: String, reason: String, dataRetention: String, confirmation: String
-    ) async throws -> Bool {
+        userID: String, reason: String, dataRetention: String, confirmation: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> Bool {
         let value = try await adminUserMutation(
             path: "/api/v1/admin/users/\(userID)/withdraw",
             body: [
                 "reason": reason,
                 "dataRetention": dataRetention,
                 "confirmation": confirmation,
-            ])
+            ], authorization: authorization)
         return value.purged ?? false
     }
 
     static func updateAdminParentStatus(
-        parentID: String, isActive: Bool, reason: String
-    ) async throws -> AdminUserDetail? {
+        parentID: String, isActive: Bool, reason: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail? {
         try await adminUserMutation(
             path: "/api/v1/admin/parents/\(parentID)/account-status",
-            body: ["isActive": isActive, "reason": reason]).detail
+            body: ["isActive": isActive, "reason": reason], authorization: authorization).detail
     }
 
     static func updateAdminParentChildNotifications(
         parentID: String, childID: String, emailEnabled: Bool,
         lowLearningEnabled: Bool, minimumMinutesPerDay: Int,
         lowLearningConsecutiveDays: Int, inactivityEnabled: Bool,
-        inactivityDays: Int
-    ) async throws -> AdminUserDetail? {
+        inactivityDays: Int, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail? {
         try await adminUserMutation(
             path: "/api/v1/admin/parents/\(parentID)/children/\(childID)/notifications",
             body: [
@@ -472,22 +461,21 @@ extension ServerAPI {
                 "lowLearningConsecutiveDays": lowLearningConsecutiveDays,
                 "inactivityEnabled": inactivityEnabled,
                 "inactivityDays": inactivityDays,
-            ]).detail
+            ], authorization: authorization).detail
     }
 
     static func unlinkAdminParentChild(
-        parentID: String, childID: String, reason: String
-    ) async throws -> AdminUserDetail? {
+        parentID: String, childID: String, reason: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> AdminUserDetail? {
         try await adminUserMutation(
             path: "/api/v1/admin/parents/\(parentID)/children/\(childID)/unlink",
-            body: ["reason": reason]).detail
+            body: ["reason": reason], authorization: authorization).detail
     }
 
     private static func adminUserMutation(
-        path: String, body: [String: Any]
+        path: String, body: [String: Any], authorization: AuthorizationSnapshot
     ) async throws -> AdminUserMutationEnvelope {
         let value: AdminUserMutationEnvelope = try await request(
-            "POST", path, body: body, authed: true)
+            "POST", path, body: body, authed: true, authorization: authorization)
         try validateAdminUsersSchema(value.schemaVersion)
         guard value.ok else {
             throw ServerAPIError(

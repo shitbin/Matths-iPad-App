@@ -19,6 +19,18 @@ struct ProblemWebView: UIViewRepresentable {
 
     private static let keys = ["a", "b", "c", "d", "e"]
 
+    struct ContentIdentity: Equatable {
+        let id: String
+        let statement: String
+        let choices: [String]?
+        let compact: Bool
+    }
+
+    private var contentIdentity: ContentIdentity {
+        .init(id: problem.id, statement: problem.statement,
+              choices: problem.choices, compact: usesCompactLandscapeLayout)
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(height: $height, pickedKey: $pickedKey) }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -39,15 +51,18 @@ struct ProblemWebView: UIViewRepresentable {
         web.backgroundColor = .clear
         WebContentAccessibility.configure(web)
         if let url = Self.htmlURL {
+            // SwiftUI calls updateUIView after creation too. Mark the initial
+            // document here so that first update does not cancel/reload it.
+            context.coordinator.loadedContent = contentIdentity
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
         return web
     }
 
     func updateUIView(_ web: WKWebView, context: Context) {
-        let renderID = "\(problem.id)|compact:\(usesCompactLandscapeLayout)"
-        if context.coordinator.loadedID != renderID, let url = Self.htmlURL {
-            context.coordinator.loadedID = renderID
+        context.coordinator.rebind(height: $height, pickedKey: $pickedKey)
+        if context.coordinator.loadedContent != contentIdentity, let url = Self.htmlURL {
+            context.coordinator.loadedContent = contentIdentity
             web.configuration.userContentController.removeAllUserScripts()
             web.configuration.userContentController.addUserScript(WKUserScript(
                 source: payloadJS(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -95,8 +110,13 @@ struct ProblemWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler {
         @Binding var height: CGFloat
         @Binding var pickedKey: String?
-        var loadedID: String?
+        var loadedContent: ContentIdentity?
         init(height: Binding<CGFloat>, pickedKey: Binding<String?>) {
+            _height = height
+            _pickedKey = pickedKey
+        }
+
+        func rebind(height: Binding<CGFloat>, pickedKey: Binding<String?>) {
             _height = height
             _pickedKey = pickedKey
         }

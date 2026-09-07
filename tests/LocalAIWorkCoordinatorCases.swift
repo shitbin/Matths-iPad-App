@@ -19,7 +19,46 @@ enum LocalAIWorkCoordinatorCases {
         try await samePriorityFIFO()
         try await waitingCancellation()
         try await staleReleaseCannotUnlockNewOwner()
+        try await twentyConcurrentRequestsAndCancelledGrants()
         print("Local AI single-engine work coordinator cases passed")
+    }
+
+    private static func twentyConcurrentRequestsAndCancelledGrants() async throws {
+        let coordinator = LocalAIWorkCoordinator()
+        let blocker = try await coordinator.acquire(.sheetGrading)
+        let order = IntRecorder()
+        let jobs = (0..<20).map { value in Task {
+            do {
+                let lease = try await coordinator.acquire(.tutorResponse)
+                let snapshot = await coordinator.snapshot()
+                require(snapshot.active == .tutorResponse, "one engine lease must remain active")
+                await order.append(value)
+                await Task.yield()
+                await coordinator.release(lease)
+                // Duplicate release after completion must be harmless.
+                await coordinator.release(lease)
+            } catch is CancellationError { }
+        } }
+        try await waitUntil(coordinator: coordinator, waitingCount: 20)
+        for (offset, job) in jobs.enumerated() where offset.isMultiple(of: 2) { job.cancel() }
+        await coordinator.release(blocker)
+        for job in jobs { try await job.value }
+        let final = await coordinator.snapshot()
+        require(final.active == nil && final.waiting.isEmpty, "20-way cancel/grant race must leave no lease")
+        let survivors = await order.read()
+        require(Set(survivors.filter { !$0.isMultiple(of: 2) }).count == 10, "all 10 uncancelled requests must run")
+
+        for _ in 0..<100 {
+            let first = try await coordinator.acquire(.sheetGrading)
+            let queued = Task { try await coordinator.acquire(.tutorResponse) }
+            try await waitUntil(coordinator: coordinator, waitingCount: 1)
+            await coordinator.release(first)
+            queued.cancel()
+            do { await coordinator.release(try await queued.value) }
+            catch is CancellationError { }
+            let snapshot = await coordinator.snapshot()
+            require(snapshot.active == nil && snapshot.waiting.isEmpty, "cancelled grant must not leak")
+        }
     }
 
     private static func priorityAndFIFO() async throws {
@@ -47,15 +86,20 @@ enum LocalAIWorkCoordinatorCases {
             await order.append(lease.kind)
             await coordinator.release(lease)
         }
+        let recovery = Task {
+            let lease = try await coordinator.acquire(.resourceRecovery)
+            await order.append(lease.kind)
+            await coordinator.release(lease)
+        }
 
-        try await waitUntil(coordinator: coordinator, waitingCount: 4)
+        try await waitUntil(coordinator: coordinator, waitingCount: 5)
         await coordinator.release(first)
-        _ = try await (low.value, tutor.value, maintenance.value, grading.value)
+        _ = try await (low.value, tutor.value, maintenance.value, grading.value, recovery.value)
 
         let values = await order.read()
         require(
-            values == [.sheetGrading, .modelMaintenance, .tutorResponse, .integrityReview],
-            "대기열은 채점 → 모델 유지보수 → 튜터 → 무결성 검토 순이어야 한다: \(values)")
+            values == [.resourceRecovery, .sheetGrading, .modelMaintenance, .tutorResponse, .integrityReview],
+            "대기열은 자원 회수 → 채점 → 모델 유지보수 → 튜터 → 무결성 검토 순이어야 한다: \(values)")
         let final = await coordinator.snapshot()
         require(final.active == nil && final.waiting.isEmpty, "완료 뒤 lease가 남으면 안 된다")
     }

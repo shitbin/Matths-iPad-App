@@ -8,6 +8,15 @@ enum AppWorkspace: String, CaseIterable, Codable {
     func allowed(role: String) -> Bool {
         self == .student || (self == .teacher && role == "teacher") || (self == .administrator && role == "admin")
     }
+    static func initial(role: String, savedValue: String?) -> Self {
+        let role = role.lowercased()
+        if let savedValue, let saved = Self(rawValue: savedValue), saved.allowed(role: role) { return saved }
+        switch role {
+        case "teacher": return .teacher
+        case "admin": return .administrator
+        default: return .student
+        }
+    }
 }
 
 enum StudentDestination: String, CaseIterable, Identifiable {
@@ -37,25 +46,5 @@ enum ProductExperience {
     /// Release rollback does not touch progress, routes or stored drafts.
     static var enabled: Bool {
         UserDefaults.standard.object(forKey: "matths.productFlow.v2.enabled") as? Bool ?? true
-    }
-}
-
-struct TodayActionCandidate: Equatable {
-    enum Kind: Int { case timedWork, academy, review, curriculum, explore }
-    let id: String
-    let kind: Kind
-    let title: String
-    let reason: String
-    let action: String
-    let minutes: Int?
-}
-
-/// Candidates already carry validated destinations. This sorts presentation only;
-/// it has no scoring, unlock, availability, entitlement or expiry calculations.
-enum TodayActionResolver {
-    static func resolve(_ candidates: [TodayActionCandidate]) -> TodayActionCandidate? {
-        candidates.sorted {
-            $0.kind.rawValue == $1.kind.rawValue ? $0.id < $1.id : $0.kind.rawValue < $1.kind.rawValue
-        }.first
     }
 }

@@ -37,6 +37,8 @@ struct ProScreen: View {
         return .idle
     }()
     @State private var stepsDone = 0
+    @State private var recoveryLoadTask: Task<Void, Never>?
+    @State private var recoveryLoadID: UUID?
 
     // ── 온디바이스 분석 (SheetGrader) ───────────────────────────────
     @StateObject private var grader = SheetGrader()
@@ -164,6 +166,9 @@ struct ProScreen: View {
             #endif
         }
         .onDisappear {
+            recoveryLoadTask?.cancel()
+            recoveryLoadTask = nil
+            recoveryLoadID = nil
             // 진행 중 파이프라인은 다음 비전 호출에서도 경로가 필요하다. 끝난 사진만 지운다.
             if !grader.running && !preparingAnalysis { discardSourcePhoto(clearRecovery: false) }
         }
@@ -177,6 +182,9 @@ struct ProScreen: View {
             // 기록할 수 없다. 원본 복구 묶음은 이전 슬롯에 그대로 남겨, 다시 로그인한
             // 학생만 처음부터 재시작할 수 있게 한다.
             grader.stop()
+            recoveryLoadTask?.cancel()
+            recoveryLoadTask = nil
+            recoveryLoadID = nil
             cancelAnalysisPreparation()
             preparingAnalysis = false
             waitingForModel = false
@@ -531,6 +539,7 @@ struct ProScreen: View {
                 let acquiredLease = try await LocalAIWorkCoordinator.shared.acquire(.sheetGrading)
                 workLease = acquiredLease
                 try assertAnalysisOwnership(ownerSlot, preparationID: preparationID)
+                try LocalAIBackgroundExecution.shared.checkAdmission()
                 let vision = ModelDownloader.analysisVisionSpec
                 guard await tutor.switchModel(toFile: vision.file),
                       tutor.visionAvailable,
@@ -574,7 +583,7 @@ struct ProScreen: View {
                 if analysisPreparationID == preparationID {
                     preparingAnalysis = false
                     errorText = Self.analysisStartFailureMessage(error)
-                    recoveryText = "분석이 중단됐습니다. 같은 사진으로 처음부터 다시 시작할 수 있습니다."
+                    recoveryText = "분석이 중단됐습니다. 같은 사진으로 다시 시도하면 검증을 마친 단계는 재사용합니다."
                     LocalAIJobRecovery.update(stageLabel: "다시 시작 대기", in: recoveryDirectory)
                     stage = .idle
                     clearAnalysisPreparation(ifOwnedBy: preparationID)
@@ -625,6 +634,9 @@ struct ProScreen: View {
     }
 
     private static func analysisStartFailureMessage(_ error: Error) -> String {
+        if let interruption = error as? LocalAIBackgroundExecution.Interruption {
+            return interruption.message
+        }
         if let startError = error as? LocalAIAnalysisStartError {
             return startError.errorDescription
                 ?? "분석 모델을 준비하지 못했습니다. 다른 앱을 닫고 다시 시도해 주세요."
@@ -670,11 +682,13 @@ struct ProScreen: View {
                         } else {
                             Image(systemName: "circle").foregroundStyle(Tokens.lineStrong)
                         }
-                    } else {
+                    } else if grader.result != nil, grader.progress >= 1 {
                         Image(systemName: "checkmark.circle.fill").foregroundStyle(Tokens.successInk)
+                    } else {
+                        Image(systemName: "circle").foregroundStyle(Tokens.lineStrong)
                     }
                     Text(st.label).font(.mBody)
-                        .foregroundStyle(grader.stage.map { st.rawValue <= $0.rawValue } ?? true
+                        .foregroundStyle(grader.stage.map { st.rawValue <= $0.rawValue } ?? (grader.result != nil)
                                          ? Tokens.ink : Tokens.text4)
                     if st == grader.stage, !grader.detail.isEmpty {
                         Text(grader.detail).font(.mCaption).foregroundStyle(Tokens.text3)
@@ -730,11 +744,16 @@ struct ProScreen: View {
             }
             .padding(.top, Tokens.Space.s3)
 
-            Text("다른 앱을 열면 운영체제가 허용하는 짧은 시간 동안만 이어집니다. 중단되거나 앱이 종료돼도 이 사진을 보존해 다음 실행에서 처음부터 다시 시작할 수 있습니다.")
+            Text("다른 앱을 열면 운영체제가 허용하는 짧은 시간 동안만 이어집니다. 중단돼도 사진과 검증을 마친 단계를 보존합니다. 같은 사진·모델의 완료 기록이 있으면 재사용하고 나머지를 분석합니다. 모델이나 입력이 바뀌면 처음부터 다시 확인합니다.")
                 .font(.mMicro)
                 .foregroundStyle(Tokens.text4)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("백그라운드 처리 안내. 다른 앱을 열면 잠시만 이어지며, 중단되면 보존한 사진으로 다음 실행에서 처음부터 다시 시작합니다.")
+                .accessibilityLabel("백그라운드 처리 안내. 중단되면 보존한 사진과 검증된 단계로 다시 시도할 수 있습니다.")
+
+            if grader.resumedCheckpointCount > 0 {
+                Label("검증된 분석 \(grader.resumedCheckpointCount)개를 복원했습니다", systemImage: "arrow.clockwise.circle")
+                    .font(.mCaption).foregroundStyle(Tokens.text3)
+            }
 
             if let e = grader.error {
                 Text(e).font(.mCaption).foregroundStyle(Tokens.dangerInk)
@@ -935,8 +954,7 @@ struct ProScreen: View {
         // 0 나머지 연산으로 죽는다. 없는 것을 있는 척하지 말고 버튼을 내린다.
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
             if wrongTypes.isEmpty {
-                Text("이번 분석에서는 다시 낼 만한 유형이 잡히지 않았습니다. "
-                     + "문항별 분석은 위에서 볼 수 있고, 사진을 더 또렷하게 다시 찍으면 유형까지 잡힐 수 있습니다.")
+                Text(weakTypeEmptyMessage)
                     .font(.mCaption).foregroundStyle(Tokens.text3)
                     .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
@@ -957,6 +975,14 @@ struct ProScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var weakTypeEmptyMessage: String {
+        if let result = grader.result, !result.items.isEmpty,
+           result.items.allSatisfy({ [.correct, .selfCorrected].contains($0.status) && !$0.statementUncertain }) {
+            return "이번 분석에서는 추가 연습이 필요한 유형이 확인되지 않았습니다. 문항별 결과를 확인하고 다음 학습으로 이어가세요."
+        }
+        return "확실하게 확인된 약한 유형이 없어 새 모의고사를 만들지 않았습니다. 판독이나 유형이 불확실한 문항은 위에서 먼저 확인해 주세요."
     }
 
     /// 그래서 무엇을 하나 — 누르는 쪽.
@@ -994,13 +1020,29 @@ struct ProScreen: View {
 
     private func recoverPendingAnalysisIfNeeded() {
         guard stage == .idle, shotPath == nil,
-              let pending = LocalAIJobRecovery.restore(),
-              let image = UIImage(contentsOfFile: pending.imagePath) else { return }
-        analysisOwnerSlot = DataScope.slot
-        analysisRecoveryDirectory = DataScope.url(LocalAIJobRecovery.directoryName)
-        shotPath = pending.imagePath
-        shotImage = image
-        recoveryText = "이 기기에서 '\(pending.job.stageLabel)' 단계에 중단된 분석을 찾았습니다. 분석 버튼을 누르면 처음부터 안전하게 다시 시작합니다."
+              recoveryLoadTask == nil, let pending = LocalAIJobRecovery.restore() else { return }
+        let ownerSlot = DataScope.slot
+        let recoveryDirectory = DataScope.url(LocalAIJobRecovery.directoryName)
+        let loadID = UUID()
+        recoveryLoadID = loadID
+        recoveryLoadTask = Task { @MainActor in
+            defer {
+                if recoveryLoadID == loadID {
+                    recoveryLoadTask = nil
+                    recoveryLoadID = nil
+                }
+            }
+            let preview = await Task.detached(priority: .utility) {
+                PhotoDownsampler.image(fileURL: URL(fileURLWithPath: pending.imagePath), maxPixel: 1_100)
+            }.value
+            guard !Task.isCancelled, recoveryLoadID == loadID, DataScope.slot == ownerSlot,
+                  stage == .idle, shotPath == nil, let preview else { return }
+            analysisOwnerSlot = ownerSlot
+            analysisRecoveryDirectory = recoveryDirectory
+            shotPath = pending.imagePath
+            shotImage = preview
+            recoveryText = "이 기기에서 '\(pending.job.stageLabel)' 단계에 중단된 분석을 찾았습니다. 다시 분석하면 같은 사진·모델의 검증된 단계는 복원하고 나머지만 처리합니다."
+        }
     }
 
     private func discardSourcePhoto(clearRecovery: Bool = true) {

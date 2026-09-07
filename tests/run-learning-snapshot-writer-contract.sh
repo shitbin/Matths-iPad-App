@@ -197,6 +197,7 @@ def require_assessment_persist_gates(
             "guard persisted else",
             "guard wrongNotesPersisted else",
             "guard assessmentPersisted else",
+            "assessmentSyncError = saved ?",
         )]
         result_checks = [index for index in result_checks if index >= 0]
         failure_index = min(result_checks) if result_checks else -1
@@ -768,7 +769,7 @@ require_in_order(
 require_in_order(
     pull_assessments,
     [
-        "try await ServerAPI.assessmentSnapshot()",
+        "try await ServerAPI.assessmentSnapshot(",
         "isLearningAccountOperationActive(for: account)",
         "attemptsV2.replaceServerSnapshot(values)",
     ],
@@ -779,10 +780,16 @@ require_in_order(
     [
         "await Task.sleep",
         "isLearningAccountOperationActive(for: account)",
-        "await ServerAPI.saveAssessmentDraft(",
+        "queueAssessmentDraft(",
     ],
     "debounce된 평가 draft가 await 뒤 전환 중 source 계정으로 전송될 수 있습니다",
 )
+queue_draft = body(app, "private func queueAssessmentDraft(")
+require_in_order(queue_draft, [
+    "ServerAPI.captureAuthorization()", "await previous?.value",
+    "isLearningAccountOperationActive(for: account)", "ServerAPI.isCurrentAuthorization(authorization)",
+    "await ServerAPI.saveAssessmentDraft(", "authorization: authorization",
+], "직렬 평가 업로드가 캡처된 계정/인증을 전송 직전 재검증하지 않습니다")
 for network_call in (
     "await ServerAPI.expireAssessment(",
     "await ServerAPI.submitAssessment(",
@@ -797,8 +804,7 @@ for network_call in (
 for function_body, slot, label in [
     (start_server_paper, "account", "서버 평가 시작"),
     (pull_assessments, "account", "서버 평가 pull"),
-    (schedule_draft, "account", "평가 draft 저장"),
-    (flush_draft, "account", "평가 draft flush"),
+    (queue_draft, "account", "평가 직렬 draft 전송"),
     (submit_server_paper, "account", "서버 평가 제출"),
 ]:
     catch_body = body(function_body, "catch")
@@ -961,13 +967,13 @@ for marker, first_mutation, label in [
         f"{label}가 계정 전환 게이트보다 먼저 메모리/이벤트를 바꿉니다",
     )
 
-reset = body(app, "func resetProgress() async")
+reset = body(app, "func resetProgress(")
 if not re.search(r"persistLearningImmediately\s*\(\s*\.progress", reset):
     fail("파괴적 진도 초기화가 pending을 이긴 즉시 저장을 기다리지 않습니다")
 reset_started = reset.find("progressResetInFlight = true")
 reset_release = reset.find("defer { progressResetInFlight = false }")
 reset_persist = reset.find("await persistLearningImmediately")
-reset_post_await_gate = reset.find("isLearningAccountOperationActive(for: slot)", reset_persist)
+reset_post_await_gate = reset.find("isLearningAccountOperationActive(for: account)", reset_persist)
 if (min(reset_started, reset_release, reset_persist, reset_post_await_gate) < 0
         or not (reset_started < reset_release < reset_persist < reset_post_await_gate)):
     fail("진도 초기화 in-flight 직렬화가 내구 저장 await 전체를 감싸지 않습니다")
@@ -1080,14 +1086,20 @@ require_in_order(
     "계정 전환이 target writer tombstone 재개와 generation 검증을 안전한 순서로 닫지 않습니다",
 )
 
-withdraw = body(profile, "private func submit() async")
-withdraw_owner = withdraw.find("let withdrawn = await MainActor.run")
-withdraw_slot = withdraw.find("slot: DataScope.slot", withdraw_owner)
-withdraw_directory = withdraw.find("directory: DataScope.directory", withdraw_owner)
-withdraw_session = withdraw.find("session: store.captureAccountSessionBoundary()", withdraw_owner)
+withdraw = body(profile, "private func submit()")
+withdraw_owner = withdraw.find("let owner = AccountRequestOwner(store: store)")
+withdraw_task = withdraw.find("Task { @MainActor in")
+withdraw_slot = withdraw.find("slot: owner.slot", withdraw_owner)
+withdraw_directory = withdraw.find("directory: owner.directory", withdraw_owner)
+withdraw_session = withdraw.find("session: owner.account", withdraw_owner)
+request_owner = strip_swift_comments((root / "Matths/AccountRequestOwner.swift").read_text())
+for required in ["ServerAPI.captureAuthorization()", "store.captureAccountSessionBoundary()", "self.slot = DataScope.slot", "self.directory = DataScope.directory"]:
+    if required not in request_owner:
+        fail("탈퇴 요청 owner가 token·generation·directory를 함께 캡처하지 않습니다: " + required)
 withdraw_requests = [match.start() for match in re.finditer(
     re.escape("try await ServerAPI.withdrawMe("), withdraw)]
-if (min(withdraw_owner, withdraw_slot, withdraw_directory, withdraw_session) < 0
+if (min(withdraw_owner, withdraw_task, withdraw_slot, withdraw_directory, withdraw_session) < 0
+        or withdraw_owner >= withdraw_task
         or len(withdraw_requests) != 4
         or not all(withdraw_session < request for request in withdraw_requests)):
     fail("탈퇴 owner slot·directory·session을 withdrawMe 네트워크 await 전에 캡처하지 않습니다")

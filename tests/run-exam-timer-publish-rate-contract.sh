@@ -47,12 +47,16 @@ fi
 grep -q 'store.submitPaper(monotonicElapsed: Double(timer.exactElapsedMs()) / 1000)' \
   "$root/Matths/AssessmentPaperScreen.swift" \
   || fail "평가 제출이 정밀 경과를 쓰지 않습니다."
-grep -q 'elapsedMs: timer.exactElapsedMs(),' "$root/Matths/KiceExamScreen.swift" \
+grep -Fq 'let elapsed = timer.exactElapsedMs()' "$root/Matths/KiceExamScreen.swift" \
   || fail "KICE 기록이 정밀 경과를 쓰지 않습니다."
+grep -Fq 'store.gradeKice(exam, elapsedMs: elapsed, expectedOwner: sessionOwner, expectedAttemptID: attemptID)' "$root/Matths/KiceExamScreen.swift" \
+  || fail "KICE의 정밀 경과가 내구성 있는 채점 경계에 전달되지 않습니다."
 
 # 데이터가 없는 복구 화면에서 가짜 시험 시간이 흐르거나 행동 없이 막히면 안 된다.
-grep -q 'onAppear { syncTimerAvailability() }' "$root/Matths/KiceExamScreen.swift" \
+grep -Fq 'guard let attempt = store.kiceCurrentAttempt else { timer.pause(); return }' "$root/Matths/KiceExamScreen.swift" \
   || fail "KICE 데이터 유실 상태에서도 타이머가 시작될 수 있습니다."
+grep -Fq 'timer.restore(elapsedMs: store.kiceCurrentReceipt?.elapsedMs ?? attempt.elapsedMs)' "$root/Matths/KiceExamScreen.swift" \
+  || fail "KICE가 저장된 경과 시간 또는 고정 결과 시간으로 복원되지 않습니다."
 grep -q 'Button("평가센터로 돌아가기")' "$root/Matths/KiceExamScreen.swift" \
   || fail "KICE 데이터 유실 화면에 복구 행동이 없습니다."
 

@@ -5,12 +5,17 @@ struct AcademyPreviewFile: Identifiable {
     var id: String { url.absoluteString }
 }
 
+private struct AcademyAssignmentPresentation {
+    let response: ServerAPI.AcademyWeekResponse
+    let owner: AccountRequestOwner
+}
+
 @MainActor
 final class AcademyScreenModel: ObservableObject {
     @Published var dashboard: ServerAPI.AcademyDashboard?
     @Published var selectedWeek: ServerAPI.AcademyWeekResponse?
     @Published var isLoading = false
-    @Published var actionInProgress = false
+    var actionInProgress: Bool { actionID != nil || weekRequestID != nil }
     @Published var downloadingFileID: String?
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
@@ -21,138 +26,183 @@ final class AcademyScreenModel: ObservableObject {
     @Published var previewFile: AcademyPreviewFile?
 
     private var generation = UUID()
+    private var isActive = true
+    private var loadRequestID: UUID?
+    private var downloadRequestID: UUID?
+    @Published private var actionID: UUID?
+    @Published private var weekRequestID: UUID?
 
-    func resetAndLoad() async {
+    func activate() { isActive = true }
+
+    func retire() { reset(); isActive = false }
+
+    func reset() {
         generation = UUID()
+        loadRequestID = nil; downloadRequestID = nil; actionID = nil; weekRequestID = nil
+        isLoading = false
         dashboard = nil
         selectedWeek = nil
+        previewFile = nil; downloadingFileID = nil
         errorMessage = nil
         noticeMessage = nil
-        await load()
+        inviteCode = ""; selectedAcademyID = ""; consent = false; attendanceCode = ""
     }
 
-    func load() async {
+    func load(owner: AccountRequestOwner, store: AppStore) async {
+        guard isActive, owner.isCurrent(in: store) else { return }
         let requestGeneration = generation
+        let requestID = UUID(); loadRequestID = requestID
         isLoading = dashboard == nil
         errorMessage = nil
+        defer { if requestGeneration == generation, loadRequestID == requestID { isLoading = false; loadRequestID = nil } }
         do {
-            let value = try await ServerAPI.academyDashboard()
-            guard requestGeneration == generation else { return }
+            let value = try await ServerAPI.academyDashboard(authorization: owner.authorization)
+            guard requestGeneration == generation, loadRequestID == requestID, owner.isCurrent(in: store) else { return }
             install(value)
         } catch is CancellationError {
             return
         } catch {
-            guard requestGeneration == generation else { return }
+            guard requestGeneration == generation, loadRequestID == requestID, owner.isCurrent(in: store) else { return }
             errorMessage = readable(error)
         }
-        if requestGeneration == generation { isLoading = false }
     }
 
-    func requestWithInviteCode() async {
+    func requestWithInviteCode(owner: AccountRequestOwner, store: AppStore) async {
+        guard isActive, owner.isCurrent(in: store) else { return }
         let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard code.range(of: #"^MTH-[A-Z2-9]{6}$"#, options: .regularExpression) != nil else {
             errorMessage = "초대 코드는 MTH-XXXXXX 형식으로 입력해 주세요."
             return
         }
-        await perform(success: "학원 승인 요청을 보냈습니다.") {
-            try await ServerAPI.requestAcademy(inviteCode: code)
+        await perform(success: "학원 승인 요청을 보냈습니다.", owner: owner, store: store) {
+            try await ServerAPI.requestAcademy(inviteCode: code, authorization: owner.authorization)
         }
     }
 
-    func requestSelectedAcademy() async {
+    func requestSelectedAcademy(owner: AccountRequestOwner, store: AppStore) async {
+        guard isActive, owner.isCurrent(in: store) else { return }
         guard !selectedAcademyID.isEmpty else {
             errorMessage = "요청할 학원을 선택해 주세요."
             return
         }
-        await perform(success: "학원 승인 요청을 보냈습니다.") {
-            try await ServerAPI.requestAcademy(academyID: selectedAcademyID)
+        let academyID = selectedAcademyID
+        await perform(success: "학원 승인 요청을 보냈습니다.", owner: owner, store: store) {
+            try await ServerAPI.requestAcademy(academyID: academyID, authorization: owner.authorization)
         }
     }
 
-    func leave() async {
+    func leave(owner: AccountRequestOwner, store: AppStore) async {
         await perform(success: dashboard?.membership?.status == "PENDING"
                       ? "승인 요청을 취소했습니다."
-                      : "학원 연결을 해제했습니다.", requiresConsent: false) {
-            try await ServerAPI.leaveAcademy()
+                      : "학원 연결을 해제했습니다.", requiresConsent: false, owner: owner, store: store) {
+            try await ServerAPI.leaveAcademy(authorization: owner.authorization)
         }
     }
 
-    func checkIn() async {
-        guard let sessionID = dashboard?.attendance?.session.id else { return }
+    func checkIn(owner: AccountRequestOwner, store: AppStore) async {
+        guard isActive, owner.isCurrent(in: store), actionID == nil,
+              let sessionID = dashboard?.attendance?.session.id else { return }
         let code = attendanceCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard code.range(of: #"^\d{6}$"#, options: .regularExpression) != nil else {
             errorMessage = "출석 코드 6자리를 입력해 주세요."
             return
         }
-        actionInProgress = true
+        let requestGeneration = generation
+        let requestID = UUID(); actionID = requestID
+        loadRequestID = nil; isLoading = false
+        defer { if requestGeneration == generation, actionID == requestID { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
             let record = try await ServerAPI.checkInAcademyAttendance(
-                sessionID: sessionID, code: code)
+                sessionID: sessionID, code: code, authorization: owner.authorization)
+            guard requestGeneration == generation, actionID == requestID, owner.isCurrent(in: store) else { return }
             attendanceCode = ""
             noticeMessage = record.status == "LATE" ? "지각으로 출석 처리됐습니다." : "출석이 확인됐습니다."
-            await load()
+            await load(owner: owner, store: store)
         } catch {
+            guard requestGeneration == generation, actionID == requestID, owner.isCurrent(in: store) else { return }
             errorMessage = readable(error)
         }
-        actionInProgress = false
     }
 
-    func openWeek(_ weekID: String) async {
-        actionInProgress = true
+    func openWeek(_ weekID: String, owner: AccountRequestOwner, store: AppStore) async {
+        guard isActive, owner.isCurrent(in: store) else { return }
+        let requestGeneration = generation
+        let requestID = UUID(); weekRequestID = requestID
+        defer { if requestGeneration == generation, weekRequestID == requestID { weekRequestID = nil } }
         errorMessage = nil
         do {
-            selectedWeek = try await ServerAPI.academyWeek(weekID)
+            let value = try await ServerAPI.academyWeek(weekID, authorization: owner.authorization)
+            guard requestGeneration == generation, weekRequestID == requestID, owner.isCurrent(in: store) else { return }
+            selectedWeek = value
         } catch {
+            guard requestGeneration == generation, weekRequestID == requestID, owner.isCurrent(in: store) else { return }
             errorMessage = readable(error)
         }
-        actionInProgress = false
     }
 
-    func closeWeek() { selectedWeek = nil }
+    func closeWeek() {
+        weekRequestID = nil; downloadRequestID = nil; downloadingFileID = nil
+        selectedWeek = nil; previewFile = nil
+    }
 
-    func download(weekID: String, file: ServerAPI.AcademyWeek.File) async {
-        guard downloadingFileID == nil else { return }
+    func download(weekID: String, file: ServerAPI.AcademyWeek.File, owner: AccountRequestOwner, store: AppStore) async {
+        guard isActive, downloadingFileID == nil, owner.isCurrent(in: store) else { return }
+        let requestGeneration = generation
+        let requestID = UUID(); downloadRequestID = requestID
         downloadingFileID = file.id
         errorMessage = nil
+        defer { if requestGeneration == generation, downloadRequestID == requestID { downloadingFileID = nil; downloadRequestID = nil } }
         do {
-            let url = try await ServerAPI.downloadAcademyFile(weekID: weekID, file: file)
+            let url = try await ServerAPI.downloadAcademyFile(weekID: weekID, file: file, account: owner.slot, authorization: owner.authorization)
+            guard requestGeneration == generation, downloadRequestID == requestID, owner.isCurrent(in: store) else { return }
             previewFile = AcademyPreviewFile(url: url)
         } catch {
+            guard requestGeneration == generation, downloadRequestID == requestID, owner.isCurrent(in: store) else { return }
             errorMessage = readable(error)
         }
-        downloadingFileID = nil
     }
 
     private func perform(
         success: String,
         requiresConsent: Bool = true,
+        owner: AccountRequestOwner,
+        store: AppStore,
         operation: () async throws -> ServerAPI.AcademyDashboard
     ) async {
+        guard isActive, owner.isCurrent(in: store), actionID == nil else { return }
         guard !requiresConsent || consent else {
             errorMessage = "학원과 학습 현황을 공유하는 데 동의해 주세요."
             return
         }
-        actionInProgress = true
+        let requestGeneration = generation
+        let requestID = UUID(); actionID = requestID
+        loadRequestID = nil; isLoading = false
+        defer { if requestGeneration == generation, actionID == requestID { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
-            install(try await operation())
+            let value = try await operation()
+            guard requestGeneration == generation, actionID == requestID, owner.isCurrent(in: store) else { return }
+            loadRequestID = nil; isLoading = false
+            install(value)
             noticeMessage = success
         } catch {
+            guard requestGeneration == generation, actionID == requestID, owner.isCurrent(in: store) else { return }
             errorMessage = readable(error)
         }
-        actionInProgress = false
     }
 
     private func install(_ value: ServerAPI.AcademyDashboard) {
         dashboard = value
+        if value.membership?.status != "APPROVED" { closeWeek(); attendanceCode = "" }
         if selectedAcademyID.isEmpty { selectedAcademyID = value.academies.first?.id ?? "" }
     }
 
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
+        if (error as? ServerAPIError)?.statusCode == 403 { reset() }
+        return (error as? ServerAPIError)?.errorDescription
             ?? (error as NSError).localizedDescription
     }
 }
@@ -161,10 +211,15 @@ final class AcademyScreenModel: ObservableObject {
 /// 교사와 운영자 관리 기능은 역할별 관리 포털로 남기되 학생의 반복 행동은 네이티브가 소유한다.
 struct AcademyScreen: View {
     @EnvironmentObject private var store: AppStore
+    var initialWeekID: String? = nil
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = AcademyScreenModel()
     @State private var confirmsLeaving = false
+    @State private var owner: AccountRequestOwner?
+    @State private var leavingOwner: AccountRequestOwner?
+    @State private var appliedInitialWeek = false
+    @State private var assignmentPresentation: AcademyAssignmentPresentation?
 
     private var compactLandscape: Bool {
         verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize
@@ -173,7 +228,14 @@ struct AcademyScreen: View {
     var body: some View {
         GeometryReader { viewport in
             Group {
-                if let detail = model.selectedWeek {
+                if let assignment = assignmentPresentation {
+                    AcademyAssignmentStudentScreen(response: assignment.response, owner: assignment.owner, store: store) {
+                        assignmentPresentation = nil
+                        guard assignment.owner.isCurrent(in: store) else { return }
+                        Task { await model.openWeek(assignment.response.week.id, owner: assignment.owner, store: store) }
+                    }
+                    .id(assignment.owner.id)
+                } else if let detail = model.selectedWeek {
                     weekDetail(detail, viewport: viewport)
                 } else if model.isLoading && model.dashboard == nil {
                     loadingState
@@ -186,15 +248,32 @@ struct AcademyScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Tokens.paper)
-        .task { if model.dashboard == nil { await model.load() } }
-        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
-            Task { await model.resetAndLoad() }
+        .onAppear {
+            model.activate()
+            owner = AccountRequestOwner(store: store)
+            let weekID = appliedInitialWeek ? nil : initialWeekID
+            appliedInitialWeek = true
+            run { owner in
+                if model.dashboard == nil { await model.load(owner: owner, store: store) }
+                if let weekID, model.dashboard?.membership?.status == "APPROVED", model.selectedWeek == nil {
+                    await model.openWeek(weekID, owner: owner, store: store)
+                }
+            }
         }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            resetAccount()
+        }
+        .onChange(of: owner?.isCurrent(in: store) ?? true) { _, current in
+            if !current { resetAccount() }
+        }
+        .onDisappear { model.retire(); owner = nil; leavingOwner = nil; confirmsLeaving = false; assignmentPresentation = nil }
         .alert("학원 연결을 해제할까요?", isPresented: $confirmsLeaving) {
             Button("취소", role: .cancel) {}
             Button(model.dashboard?.membership?.status == "PENDING" ? "요청 취소" : "연결 해제",
                    role: .destructive) {
-                Task { await model.leave() }
+                guard let owner = leavingOwner, owner.isCurrent(in: store) else { return }
+                leavingOwner = nil
+                Task { await model.leave(owner: owner, store: store) }
             }
         } message: {
             Text(model.dashboard?.membership?.status == "PENDING"
@@ -250,7 +329,9 @@ struct AcademyScreen: View {
                     .adaptiveHPadding()
                     .adaptiveVPadding()
                 }
-                .refreshable { await model.load() }
+                .refreshable {
+                    if let owner, owner.isCurrent(in: store) { await model.load(owner: owner, store: store) }
+                }
             }
         }
         .overlay(alignment: .top) { feedbackBanner }
@@ -318,7 +399,7 @@ struct AcademyScreen: View {
                             .onChange(of: model.attendanceCode) { _, value in
                                 model.attendanceCode = String(value.filter(\.isNumber).prefix(6))
                             }
-                        Button("출석 확인") { Task { await model.checkIn() } }
+                        Button("출석 확인") { run { await model.checkIn(owner: $0, store: store) } }
                             .buttonStyle(PrimaryButtonStyle())
                             .disabled(model.attendanceCode.count != 6 || model.actionInProgress)
                     }
@@ -354,7 +435,9 @@ struct AcademyScreen: View {
                         ForEach(dashboard.weeks) { week in weekCard(week) }
                     }
                 }
-                .refreshable { await model.load() }
+                .refreshable {
+                    if let owner, owner.isCurrent(in: store) { await model.load(owner: owner, store: store) }
+                }
             } else {
                 LazyVStack(spacing: Tokens.Space.s2) {
                     ForEach(dashboard.weeks) { week in weekCard(week) }
@@ -365,7 +448,7 @@ struct AcademyScreen: View {
     }
 
     private func weekCard(_ week: ServerAPI.AcademyWeek) -> some View {
-        Button { Task { await model.openWeek(week.id) } } label: {
+        Button { run { await model.openWeek(week.id, owner: $0, store: store) } } label: {
             HStack(spacing: Tokens.Space.s3) {
                 VStack(spacing: 0) {
                     Text("\(week.weekNumber)")
@@ -409,7 +492,7 @@ struct AcademyScreen: View {
     private var managementRow: some View {
         HStack {
             Spacer(minLength: 0)
-            Button("연결 해제", role: .destructive) { confirmsLeaving = true }
+            Button("연결 해제", role: .destructive, action: confirmLeaving)
                 .font(.mCaption)
                 .foregroundStyle(Tokens.dangerInk)
                 .frame(minHeight: 44)
@@ -429,7 +512,7 @@ struct AcademyScreen: View {
                 .font(.mBody)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("승인 요청 취소", role: .destructive) { confirmsLeaving = true }
+            Button("승인 요청 취소", role: .destructive, action: confirmLeaving)
                 .buttonStyle(SecondaryButtonStyle())
                 .disabled(model.actionInProgress)
             feedbackText
@@ -495,7 +578,7 @@ struct AcademyScreen: View {
                 .onChange(of: model.inviteCode) { _, value in
                     model.inviteCode = String(value.uppercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(10))
                 }
-            Button("코드로 승인 요청") { Task { await model.requestWithInviteCode() } }
+            Button("코드로 승인 요청") { run { await model.requestWithInviteCode(owner: $0, store: store) } }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(!model.consent || model.actionInProgress)
         }
@@ -517,7 +600,7 @@ struct AcademyScreen: View {
                     ForEach(academies) { academy in Text(academy.name).tag(academy.id) }
                 }
                 .pickerStyle(.menu)
-                Button("선택한 학원에 요청") { Task { await model.requestSelectedAcademy() } }
+                Button("선택한 학원에 요청") { run { await model.requestSelectedAcademy(owner: $0, store: store) } }
                     .buttonStyle(SecondaryButtonStyle())
                     .disabled(!model.consent || model.actionInProgress)
             }
@@ -548,7 +631,7 @@ struct AcademyScreen: View {
                         .lineLimit(1)
                 }
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                    Text("\(week.academicYear) · WEEK \(week.weekNumber)")
+                    Text(verbatim: "\(week.academicYear) · WEEK \(week.weekNumber)")
                         .font(.mMicro)
                         .foregroundStyle(Tokens.primary)
                     Text(week.title)
@@ -559,6 +642,19 @@ struct AcademyScreen: View {
                          : week.lessonSummary)
                         .font(.mBody)
                         .foregroundStyle(Tokens.text2)
+                }
+                if let omr = week.assignmentOmr, omr.enabled {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        Text("온라인 답안지 · \(omr.questionCount)문항").font(.mBodyB)
+                        if let submission = response.submission, submission.isValid {
+                            Text(submission.status == "MISSED" ? "마감 미제출 · 0점" : "제출 완료 · \(Int(submission.scorePercent))점")
+                                .font(.mCaption).foregroundStyle(Tokens.text2)
+                        }
+                        Button(response.submission == nil ? "답안 작성·제출" : "제출 내역·답안 수정") {
+                            guard let owner, owner.isCurrent(in: store) else { return }
+                            assignmentPresentation = .init(response: response, owner: owner)
+                        }.buttonStyle(PrimaryButtonStyle()).disabled(!omr.isValid)
+                    }.academyCardSurface()
                 }
                 Group {
                     if compactLandscape {
@@ -645,7 +741,9 @@ struct AcademyScreen: View {
                     .foregroundStyle(Tokens.text3)
             } else {
                 ForEach(week.files) { file in
-                    Button { Task { await model.download(weekID: week.id, file: file) } } label: {
+                    Button {
+                        run { await model.download(weekID: week.id, file: file, owner: $0, store: store) }
+                    } label: {
                         HStack(spacing: Tokens.Space.s2) {
                             Image(systemName: "arrow.down.doc.fill")
                                 .foregroundStyle(Tokens.primary)
@@ -719,9 +817,29 @@ struct AcademyScreen: View {
                 .font(.mHeading)
                 .foregroundStyle(Tokens.ink)
             feedbackText
-            Button("다시 시도") { Task { await model.load() } }
+            Button("다시 시도") { run { await model.load(owner: $0, store: store) } }
                 .buttonStyle(PrimaryButtonStyle())
         }
+    }
+
+    private func run(_ operation: @escaping (AccountRequestOwner) async -> Void) {
+        guard let owner, owner.isCurrent(in: store) else { return }
+        Task {
+            guard owner.isCurrent(in: store) else { return }
+            await operation(owner)
+        }
+    }
+
+    private func resetAccount() {
+        model.reset(); confirmsLeaving = false; leavingOwner = nil; assignmentPresentation = nil
+        owner = AccountRequestOwner(store: store)
+        run { await model.load(owner: $0, store: store) }
+    }
+
+    private func confirmLeaving() {
+        guard let owner, owner.isCurrent(in: store) else { return }
+        leavingOwner = owner
+        confirmsLeaving = true
     }
 
     private func stateShell<Content: View>(@ViewBuilder content: () -> Content) -> some View {

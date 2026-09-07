@@ -10,7 +10,7 @@
 //   · 무응답은 오답. 채점 후에도 정답은 보여주지 않는다 —
 //     동적 문항과 같은 계약("정답은 알려드리지 않습니다")을 기출에도 지킨다.
 //   · 틀린 문항은 오답노트에 "기출" 태그로 적재되어 SRS 복습 루프를 탄다.
-//  입력한 답은 AppStore 에 남아 시험 중 나갔다 돌아와도 유지된다.
+//  입력한 답·선택과목·경과 시간·채점 결과는 계정별 보호 파일에 저장한다.
 //
 //  문제지-답안지 동기화:
 //   · 페이지→문항 매핑 데이터가 없다. 전체 문항을 PDF 페이지 수로 등분한
@@ -28,11 +28,21 @@ struct KiceExamScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var timer = ExamTimer()
+    @State private var timerLifecycle = KiceTimerLifecycle()
     @State private var pane: Pane = .paper       // 좁은 폭에서의 현재 면
-    @State private var result: KiceGradeResult?  // 채점 후에만 존재
+    private var result: KiceStudyResult? { store.kiceCurrentReceipt?.result }
+    @State private var restoredAttemptID: String?
+    @State private var sessionOwner: AppStore.AccountSessionBoundary?
+    @State private var confirmsRecovery = false
+    @State private var confirmsNewAttempt = false
+    @State private var recoveryOwner: AppStore.AccountSessionBoundary?
+    @State private var newAttemptOwner: AppStore.AccountSessionBoundary?
+    @State private var newAttemptReceiptID: String?
+    private var loadIdentity: String { store.kiceLoadIdentity }
 
-    // 문제지 페이지 ↔ OMR 동기화 (화면 수명 한정 — 저장하지 않는다)
+    // 문제지 페이지는 응시 기록으로 복원하고, 스크롤/이동 포커스는 화면 안에서만 유지한다.
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 1
     @State private var omrScrollTarget: String?  // "공통-14" 꼴의 행 id
@@ -68,8 +78,10 @@ struct KiceExamScreen: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        let displayedOwner = sessionOwner
+        return VStack(spacing: 0) {
             header(store.kiceExam)
+            storageStatus
 
             if let exam = store.kiceExam {
                 GeometryReader { geo in
@@ -77,8 +89,9 @@ struct KiceExamScreen: View {
                     // OMR 352pt는 compact 행 292 + 카드 좌우 24 + 스크롤 좌우 32 +
                     // Divider 여유 4를 모두 포함한 최소값이다. 선택지마다 44pt 히트 영역을
                     // 유지하면서도 852pt 화면에서 문제지에 약 499pt를 남긴다.
-                    if (geo.size.width >= 900 || usesLandscapeSplitWorkspace) && !dynamicTypeSize.isAccessibilitySize {
-                        let omrWidth = min(max(geo.size.width * 0.36, 352), 420)
+                    if UniversalLayoutPolicy.usesProblemSplit(width: geo.size.width, height: geo.size.height,
+                        accessibilityText: dynamicTypeSize.isAccessibilitySize) {
+                        let omrWidth = min(max(geo.size.width * 0.36, 300), min(420, geo.size.width * 0.52))
                         ResponsiveProblemWorkspace(spacing: 1, trailingWidth: omrWidth) {
                             pdfPane(exam)
                             omrPane(exam).frame(width: omrWidth)
@@ -107,28 +120,93 @@ struct KiceExamScreen: View {
             }
         }
         .background(Tokens.paper)
-        .onAppear { syncTimerAvailability() }
-        .onChange(of: store.kiceExam != nil) { _, _ in syncTimerAvailability() }
+        .onAppear {
+            timerLifecycle.appeared(sceneIsActive: scenePhase == .active)
+            syncTimerAvailability()
+        }
+        .task(id: loadIdentity) {
+            guard !Task.isCancelled else { return }
+            timer.pause()
+            let owner = store.captureAccountSessionBoundary()
+            sessionOwner = owner
+            guard let exam = store.kiceExam, await store.prepareKiceStudy(exam),
+                  !Task.isCancelled, timerLifecycle.isVisible,
+                  store.ownsCurrentAccountSession(owner), store.kiceExamID == exam.id else { return }
+            sessionOwner = owner
+            pdfPageIndex = store.kiceCurrentAttempt?.pdfPageIndex ?? 0
+            syncTimerAvailability(restore: true)
+        }
+        .onChange(of: store.canEditKice) { _, canEdit in
+            if canEdit { sessionOwner = store.captureAccountSessionBoundary() }
+            syncTimerAvailability()
+        }
+        .onChange(of: store.kiceCurrentAttempt?.id) { _, id in
+            if id != nil && store.kiceStudyReady { sessionOwner = store.captureAccountSessionBoundary() }
+            pdfPageIndex = store.kiceCurrentAttempt?.pdfPageIndex ?? 0
+            lastJumpKey = nil
+            omrScrollTarget = nil
+            syncTimerAvailability(restore: true)
+        }
+        .onChange(of: result?.id) { _, _ in syncTimerAvailability(restore: true) }
+        .onReceive(timer.$elapsedSeconds) { _ in
+            guard let sessionOwner, store.ownsCurrentAccountSession(sessionOwner) else { return }
+            store.checkpointKice(elapsedMs: timer.exactElapsedMs(), page: pdfPageIndex)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: KiceStudyRepository.failedNotification)) { notification in
+            if let handle = notification.object as? KiceStudyRepository.Handle { store.kicePersistenceFailed(handle) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            timerLifecycle.sceneChanged(isActive: phase == .active)
+            if phase == .active { syncTimerAvailability() } else { pauseAndSave(expectedOwner: displayedOwner) }
+        }
+        .onDisappear {
+            timerLifecycle.disappeared()
+            pauseAndSave(expectedOwner: displayedOwner)
+        }
+        .confirmationDialog("기출 기록을 원본 보관 후 초기화할까요?", isPresented: $confirmsRecovery, titleVisibility: .visible) {
+            Button("원본 보관 후 초기화", role: .destructive) {
+                if let owner = recoveryOwner { Task { await store.resetKicePreservingOriginal(expectedOwner: owner) } }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("이 계정의 기출 기록 원본을 별도 보관한 뒤 기출 답안·결과를 초기화합니다. 다른 학습 기록과 오답노트는 삭제하지 않습니다.")
+        }
+        .confirmationDialog("같은 기출을 새로 풀까요?", isPresented: $confirmsNewAttempt, titleVisibility: .visible) {
+            Button("새 응시 시작") {
+                if let exam = store.kiceExam, let owner = newAttemptOwner, let receiptID = newAttemptReceiptID {
+                    Task { await store.beginKiceAgain(exam, expectedOwner: owner, expectedReceiptID: receiptID) }
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: { Text("이전 채점 결과는 보관됩니다. 새 응시는 별도 기록으로 계산합니다.") }
         .onChange(of: pdfPageIndex) { _, page in
             // 문제지 페이지가 넘어가면 그 페이지 첫 문항 행으로 OMR 을 따라가게 한다
             guard let exam = store.kiceExam else { return }
             if let key = firstKey(onPage: page, exam) { omrScrollTarget = key }
+            if let sessionOwner, store.ownsCurrentAccountSession(sessionOwner) {
+                store.checkpointKice(elapsedMs: timer.exactElapsedMs(), page: page)
+            }
         }
     }
 
     // MARK: 상단 바
 
     private func header(_ exam: KiceExam?) -> some View {
-        VStack(spacing: Tokens.Space.s1) {
+        let displayedOwner = sessionOwner
+        return VStack(spacing: Tokens.Space.s1) {
             HStack(spacing: isNarrow ? Tokens.Space.s2 : Tokens.Space.s4) {
                 Button {
-                    store.route = .assess      // 답안은 store 에 남아 있다 — 재입장 시 복원
+                    guard let owner = displayedOwner, store.ownsCurrentAccountSession(owner) else { return }
+                    timer.pause()
+                    let elapsed = timer.exactElapsedMs(), page = pdfPageIndex
+                    Task { await store.leaveKiceStudy(elapsedMs: elapsed, page: page, expectedOwner: owner) }
                 } label: {
                     Image(systemName: "xmark").font(.mBodyB).foregroundStyle(Tokens.text3)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("나가기")
+                .disabled(store.kiceBusy)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(exam.map { e in
@@ -216,11 +294,49 @@ struct KiceExamScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func syncTimerAvailability() {
-        if store.kiceExam == nil {
+    private func syncTimerAvailability(restore: Bool = false) {
+        guard timerLifecycle.isVisible else { timer.pause(); return }
+        guard let attempt = store.kiceCurrentAttempt else { timer.pause(); return }
+        if restore || restoredAttemptID != attempt.id {
             timer.pause()
-        } else {
-            timer.start()
+            timer.restore(elapsedMs: store.kiceCurrentReceipt?.elapsedMs ?? attempt.elapsedMs)
+            restoredAttemptID = attempt.id
+        }
+        if store.canEditKice && timerLifecycle.permitsRunning { timer.start() } else { timer.pause() }
+    }
+
+    private func pauseAndSave(expectedOwner: AppStore.AccountSessionBoundary?) {
+        guard let owner = expectedOwner, store.ownsCurrentAccountSession(owner) else { return }
+        timer.pause()
+        store.checkpointKice(elapsedMs: timer.exactElapsedMs(), page: pdfPageIndex)
+        Task {
+            guard store.ownsCurrentAccountSession(owner) else { return }
+            _ = await store.flushKiceStudy()
+        }
+    }
+
+    @ViewBuilder private var storageStatus: some View {
+        let displayedOwner = sessionOwner
+        if store.kiceStudyLoading {
+            HStack { ProgressView(); Text("저장된 기출 답안을 불러오고 있습니다.").font(.mCaption) }
+                .padding(Tokens.Space.s3)
+        }
+        if let error = store.kiceSaveError {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                Text(error).font(.mCaption).foregroundStyle(Tokens.warningInk).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("다시 저장") {
+                        if let owner = displayedOwner { Task { await store.retryKicePersistence(expectedOwner: owner) } }
+                    }
+                    Button("원본 보관 후 초기화") {
+                        recoveryOwner = displayedOwner
+                        confirmsRecovery = true
+                    }
+                }.buttonStyle(.bordered).disabled(store.kiceBusy)
+            }
+            .padding(Tokens.Space.s3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Tokens.surface)
         }
     }
 
@@ -330,11 +446,13 @@ struct KiceExamScreen: View {
     // MARK: 답안지 (OMR)
 
     private func omrPane(_ exam: KiceExam) -> some View {
-        ScrollViewReader { proxy in
+        let displayedOwner = sessionOwner, displayedAttemptID = store.kiceCurrentAttempt?.id
+        return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Space.s5) {
                     if let result {
                         resultCard(exam, result)
+                            .id("kice-result-summary")
                     }
 
                     // 선택과목 — 시험지 순서(확통·미적·기하)로. 답은 과목별로 따로 남는다.
@@ -344,7 +462,7 @@ struct KiceExamScreen: View {
                             ForEach(KiceBank.electiveOrder, id: \.self) { Text($0) }
                         }
                         .pickerStyle(.segmented)
-                        .disabled(result != nil)
+                        .disabled(!store.canEditKice)
                     }
 
                     section(title: "공통 (1~22)", items: exam.common,
@@ -354,13 +472,6 @@ struct KiceExamScreen: View {
                             sectionKey: subject(exam), exam: exam)
 
                     if result == nil {
-                        Button("채점하기") { grade(exam) }
-                            .buttonStyle(PrimaryButtonStyle())
-                            .disabled(answeredCount(exam) == 0)
-
-                        Text("무응답은 오답으로 처리됩니다. 답안은 나갔다 돌아와도 유지됩니다.")
-                            .font(.mCaption).foregroundStyle(Tokens.text3)
-
                         // ▼▼▼ 디버그 답안 숏컷 — 이 묶음 하나만 주석 처리하면 통째로 사라진다 ▼▼▼
                         #if DEBUG
                         if !RuntimeMode.isReviewCapture {
@@ -372,8 +483,28 @@ struct KiceExamScreen: View {
                 }
                 .padding(Tokens.Space.s4)
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if result == nil {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        Button("채점하기 · \(answeredCount(exam))문항 응답") {
+                            grade(exam, owner: displayedOwner, attemptID: displayedAttemptID)
+                        }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(answeredCount(exam) == 0 || !store.canEditKice)
+                        Text("무응답은 오답으로 처리됩니다. 답안과 경과 시간은 이 계정에 저장됩니다.")
+                            .font(.mCaption).foregroundStyle(Tokens.text3)
+                    }
+                    .padding(.horizontal, Tokens.Space.s4)
+                    .padding(.vertical, Tokens.Space.s2)
+                    .background(Tokens.surface)
+                    .overlay(alignment: .top) { Divider().overlay(Tokens.line) }
+                }
+            }
             .background(Tokens.paper)
             .scrollDismissesKeyboard(.interactively)
+            .onChange(of: result != nil) { _, hasResult in
+                if hasResult { proxy.scrollTo("kice-result-summary", anchor: .top) }
+            }
             .onChange(of: omrScrollTarget) { _, target in
                 guard let target else { return }
                 scroll(proxy, to: target)
@@ -386,6 +517,7 @@ struct KiceExamScreen: View {
                 omrScrollTarget = nil
             }
         }
+        .id(store.kiceCurrentAttempt?.id)
     }
 
     private func scroll(_ proxy: ScrollViewProxy, to key: String) {
@@ -420,6 +552,7 @@ struct KiceExamScreen: View {
                                        answer: answerBinding(exam, sectionKey, item),
                                        verdict: verdict(sectionKey, item),
                                        onCurrentPage: isOnCurrentPage(exam, sectionKey, item))
+                                .disabled(!store.canEditKice)
                                 .id("\(sectionKey)-\(item.no)")
                         }
                     }
@@ -436,8 +569,9 @@ struct KiceExamScreen: View {
 
     // MARK: 채점 결과 카드
 
-    private func resultCard(_ exam: KiceExam, _ r: KiceGradeResult) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+    private func resultCard(_ exam: KiceExam, _ r: KiceStudyResult) -> some View {
+        let displayedOwner = sessionOwner
+        return VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack(alignment: .lastTextBaseline, spacing: Tokens.Space.s2) {
                 if store.motionOn && !reduceMotion {
                     LottieWebView(name: r.wrongCount == 0 ? "lottie-correct" : "lottie-wrong")
@@ -453,7 +587,9 @@ struct KiceExamScreen: View {
             Text("\(r.correctCount) / \(r.total)문항 정답, \(subject(exam))")
                 .font(.mCallout).foregroundStyle(Tokens.text2)
             if r.wrongCount > 0 {
-                Text("틀린 \(r.wrongCount)문항이 오답노트에 들어갔습니다. 정답은 알려드리지 않습니다. 문제지에서 다시 풀어 복습으로 통과하세요.")
+                Text(store.kiceCurrentReceipt?.localEffectsApplied == true
+                     ? "틀린 \(r.wrongCount)문항이 오답노트에 들어갔습니다. 정답은 알려드리지 않습니다. 문제지에서 다시 풀어 복습으로 통과하세요."
+                     : "채점 결과는 저장됐습니다. 틀린 \(r.wrongCount)문항을 오답노트에 반영하고 있습니다.")
                     .font(.mCaption).foregroundStyle(Tokens.text3)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("오답노트로 가기") { store.route = .wrongNotes }
@@ -462,10 +598,18 @@ struct KiceExamScreen: View {
                     .padding(.horizontal, Tokens.Space.s5)
                     .frame(minHeight: 44)
                     .background(Tokens.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    .disabled(store.kiceCurrentReceipt?.localEffectsApplied != true)
             } else {
                 Text("만점입니다. 실전에서도 이 페이스면 됩니다.")
                     .font(.mCaption).foregroundStyle(Tokens.successInk)
             }
+            Button("새 응시로 다시 풀기") {
+                newAttemptOwner = displayedOwner
+                newAttemptReceiptID = r.id
+                confirmsNewAttempt = true
+            }
+                .buttonStyle(.bordered)
+                .disabled(store.kiceBusy || store.kiceCurrentReceipt?.effectsApplied != true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
@@ -478,14 +622,22 @@ struct KiceExamScreen: View {
     }
 
     private func subjectBinding(_ exam: KiceExam) -> Binding<String> {
-        Binding(get: { subject(exam) },
-                set: { store.kiceSubject[exam.id] = $0 })
+        let owner = sessionOwner, attemptID = store.kiceCurrentAttempt?.id
+        return Binding(get: { subject(exam) },
+                set: {
+                    guard let owner, store.ownsCurrentAccountSession(owner), store.kiceCurrentAttempt?.id == attemptID else { return }
+                    store.setKiceSubject($0, exam: exam)
+                })
     }
 
     private func answerBinding(_ exam: KiceExam, _ sectionKey: String,
                                _ item: KiceItem) -> Binding<String> {
-        Binding(get: { store.kiceAnswers[exam.id]?["\(sectionKey)-\(item.no)"] ?? "" },
-                set: { store.kiceAnswers[exam.id, default: [:]]["\(sectionKey)-\(item.no)"] = $0 })
+        let owner = sessionOwner, attemptID = store.kiceCurrentAttempt?.id
+        return Binding(get: { store.kiceAnswers[exam.id]?["\(sectionKey)-\(item.no)"] ?? "" },
+                set: {
+                    guard let owner, store.ownsCurrentAccountSession(owner), store.kiceCurrentAttempt?.id == attemptID else { return }
+                    store.setKiceAnswer(examID: exam.id, key: "\(sectionKey)-\(item.no)", value: $0)
+                })
     }
 
     private func answeredCount(_ exam: KiceExam) -> Int {
@@ -547,51 +699,14 @@ struct KiceExamScreen: View {
 
     // MARK: 채점
 
-    private func grade(_ exam: KiceExam) {
+    private func grade(_ exam: KiceExam, owner: AppStore.AccountSessionBoundary?, attemptID: String?) {
+        guard let sessionOwner = owner, store.ownsCurrentAccountSession(sessionOwner), store.canEditKice,
+              let attemptID, store.kiceCurrentAttempt?.id == attemptID else { return }
         timer.pause()
-        let subj = subject(exam)
-        let map = store.kiceAnswers[exam.id] ?? [:]
-        var verdicts: [String: Bool] = [:]
-        var score = 0, correct = 0
-        // 학생이 실제로 낸 답까지 같이 넘긴다 — 이게 없으면 AI 진단이
-        // "학생 답이 없다" 고만 답하고 무엇이 어긋났는지 짚지 못한다.
-        var wrong: [(KiceItem, String, String)] = []
-
-        func check(_ items: [KiceItem], _ sectionKey: String) {
-            for item in items {
-                let input = (map["\(sectionKey)-\(item.no)"] ?? "")
-                    .trimmingCharacters(in: .whitespaces)
-                // 선다는 자리 비교, 단답은 수 비교 (023 == 23)
-                let ok = item.isChoice
-                    ? input == item.answer
-                    : (Int(input) != nil && Int(input) == Int(item.answer))
-                verdicts["\(sectionKey)-\(item.no)"] = ok
-                if ok { score += item.points; correct += 1 }
-                else { wrong.append((item, sectionKey, input)) }
-            }
-        }
-        check(exam.common, "공통")
-        check(exam.electives[subj] ?? [], subj)
-
-        result = KiceGradeResult(score: score, correctCount: correct,
-                                 total: exam.common.count + (exam.electives[subj]?.count ?? 0),
-                                 verdicts: verdicts)
-        // 통계·학습일·최고점·오답노트 적재는 전부 실경로 — AppStore 가 처리
-        store.recordKice(exam: exam, score: score, correct: correct,
-                         total: exam.common.count + (exam.electives[subj]?.count ?? 0),
-                         elapsedMs: timer.exactElapsedMs(),
-                         wrong: wrong)
+        let elapsed = timer.exactElapsedMs()
+        store.checkpointKice(elapsedMs: elapsed, page: pdfPageIndex)
+        Task { await store.gradeKice(exam, elapsedMs: elapsed, expectedOwner: sessionOwner, expectedAttemptID: attemptID) }
     }
-}
-
-struct KiceGradeResult {
-    let score: Int
-    let correctCount: Int
-    let total: Int
-    /// "공통-14" → 정오. 채점 후 각 행 옆에 ○/✗ 로 표시된다.
-    let verdicts: [String: Bool]
-
-    var wrongCount: Int { total - correctCount }
 }
 
 // MARK: - OMR 한 행
@@ -622,11 +737,29 @@ private struct KiceOMRRow: View {
     ///   regular  26 + 12 + (5×34 + 4×12 = 218) + 12 + 12 + 22 = 302pt
     ///   compact  26 +  8 + (5×44 +  0    = 220) +  8 +  8 + 22 = 292pt
     /// 44pt 조작 영역을 얻으면서 폭은 10pt 아낀다.
-    private var bubbleSpacing: CGFloat { usesCompactMetrics ? 0 : Tokens.Space.s3 }
-    private var bubbleHitWidth: CGFloat { usesCompactMetrics ? 44 : 34 }
+    private var bubbleSpacing: CGFloat { 0 }
+    private var bubbleHitWidth: CGFloat { 44 }
     private var rowSpacing: CGFloat { usesCompactMetrics ? Tokens.Space.s2 : Tokens.Space.s3 }
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            horizontalRow
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                HStack {
+                    Text("\(item.no)번").font(.mNumeric).foregroundStyle(Tokens.text2)
+                    Spacer()
+                    trailingMark
+                }
+                if item.isChoice {
+                    HStack(spacing: 0) { ForEach(1...5, id: \.self) { n in bubble(n) } }
+                } else { answerField }
+            }
+        }
+        .frame(minHeight: 48)
+        .background(onCurrentPage ? Tokens.primarySoft : .clear)
+    }
+
+    private var horizontalRow: some View {
         HStack(spacing: rowSpacing) {
             Text("\(item.no)")
                 .font(.mNumeric).foregroundStyle(Tokens.text2)
@@ -832,17 +965,15 @@ private struct KiceDebugShortcut: View {
         func wrongValue(_ item: KiceItem) -> String {
             if item.isChoice {
                 // 정답과 절대 겹치지 않는 다음 선지
-                return "\((Int(item.answer)! % 5) + 1)"
+                return "\(((Int(item.answer) ?? 1) % 5) + 1)"
             }
             return Int(item.answer) == 999 ? "998" : "999"
         }
         for item in exam.common {
-            store.kiceAnswers[exam.id, default: [:]]["공통-\(item.no)"]
-                = correct ? item.answer : wrongValue(item)
+            store.setKiceAnswer(examID: exam.id, key: "공통-\(item.no)", value: correct ? item.answer : wrongValue(item))
         }
         for item in exam.electives[subject] ?? [] {
-            store.kiceAnswers[exam.id, default: [:]]["\(subject)-\(item.no)"]
-                = correct ? item.answer : wrongValue(item)
+            store.setKiceAnswer(examID: exam.id, key: "\(subject)-\(item.no)", value: correct ? item.answer : wrongValue(item))
         }
     }
 }

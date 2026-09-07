@@ -123,6 +123,7 @@ final class MatthsIAPStore: ObservableObject {
         case entitled(String), recovery(String)
     }
     var purchasing: String? {
+        if let active = purchaseAdmission.active { return active.productID }
         switch purchaseState {
         case .purchasing(let id), .redeeming(let id): return id
         default: return nil
@@ -138,6 +139,22 @@ final class MatthsIAPStore: ObservableObject {
     private var updatesTask: Task<Void, Never>?
     private var redemptionTasks: [String: Task<Bool, Never>] = [:]
     private var reconciliationTask: Task<Void, Never>?
+    private var sessionGeneration = UUID()
+    @Published private var purchaseAdmission = PurchaseAdmission()
+
+    /// UI ownership changes immediately. Unfinished Apple transactions remain in
+    /// StoreKit and are reconciled through the server for the next signed-in user.
+    func sessionDidChange() {
+        sessionGeneration = UUID()
+        reconciliationTask?.cancel()
+        reconciliationTask = nil
+        redemptionTasks.removeAll()
+        purchaseState = .idle
+        loading = false
+        lastError = nil
+        lastNotice = nil
+        entitlementRevision += 1
+    }
 
     private init() {}
 
@@ -163,11 +180,13 @@ final class MatthsIAPStore: ObservableObject {
 
     func loadProducts(preservingFeedback: Bool = false) async {
         guard !loading else { return }
+        let generation = sessionGeneration
         loading = true
-        defer { loading = false }
+        defer { if generation == sessionGeneration { loading = false } }
         if !preservingFeedback { lastNotice = nil }
         do {
             let fetched = try await Product.products(for: MatthsProduct.allIdentifiers)
+            guard generation == sessionGeneration else { return }
             // App Store Connect 등록 순서는 보장되지 않는다. 우리 열거 순서로 고정한다.
             let order = MatthsProduct.allCases.map(\.rawValue)
             products = fetched.sorted {
@@ -191,6 +210,7 @@ final class MatthsIAPStore: ObservableObject {
             }
         } catch {
             // A failed refresh must not erase previously loaded localized prices.
+            guard generation == sessionGeneration else { return }
             if !preservingFeedback || lastError == nil {
                 lastError = Self.readable(error)
             }
@@ -208,10 +228,13 @@ final class MatthsIAPStore: ObservableObject {
             lastError = "상품 정보를 불러오는 중입니다. 잠시 후 다시 시도해 주세요."
             return .cancelled
         }
-        guard purchasing == nil else { return .cancelled }
-
+        guard purchasing == nil, let ticket = purchaseAdmission.begin(productID: product.id) else { return .cancelled }
+        let generation = sessionGeneration
         purchaseState = .purchasing(product.id)
-        defer { if case .purchasing = purchaseState { purchaseState = .idle } }
+        defer {
+            purchaseAdmission.finish(ticket)
+            if generation == sessionGeneration, case .purchasing = purchaseState { purchaseState = .idle }
+        }
         lastError = nil
         lastNotice = nil
 
@@ -228,17 +251,23 @@ final class MatthsIAPStore: ObservableObject {
             let boundToken = try await ServerAPI.bindAppleAppAccountToken(
                 proposed: proposedToken,
                 authorization: authorization)
-            guard ownerSlot == DataScope.slot, ServerAPI.isCurrentAuthorization(authorization) else { return .cancelled }
+            guard generation == sessionGeneration, ownerSlot == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return .cancelled }
             let result = try await product.purchase(options: [
                 .appAccountToken(boundToken)
             ])
+            guard generation == sessionGeneration, ownerSlot == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return .cancelled }
             switch result {
             case .success(let verification):
-                return await redeem(
+                let granted = await redeem(
                     verification,
                     source: .purchase,
                     authorization: authorization,
-                    ownerSlot: ownerSlot) ? .granted : .pendingVerification
+                    ownerSlot: ownerSlot)
+                guard generation == sessionGeneration, ownerSlot == DataScope.slot,
+                      ServerAPI.isCurrentAuthorization(authorization) else { return .cancelled }
+                return granted ? .granted : .pendingVerification
 
             case .userCancelled:
                 // 사용자가 스스로 닫았다. 오류 문구를 띄우면 오히려 방해다.
@@ -256,6 +285,7 @@ final class MatthsIAPStore: ObservableObject {
                 return .cancelled
             }
         } catch {
+            guard generation == sessionGeneration else { return .cancelled }
             lastError = Self.readable(error)
             return .cancelled
         }
@@ -263,8 +293,10 @@ final class MatthsIAPStore: ObservableObject {
 
     /// 기기 변경·재설치 복원. 애플과 동기화한 뒤 살아 있는 권한을 서버에 다시 알린다.
     func restore() async {
+        guard !loading, purchasing == nil else { return }
+        let generation = sessionGeneration
         loading = true
-        defer { loading = false }
+        defer { if generation == sessionGeneration { loading = false } }
         lastError = nil
         lastNotice = nil
         guard let authorization = ServerAPI.captureAuthorization() else {
@@ -285,6 +317,8 @@ final class MatthsIAPStore: ObservableObject {
         var restored = 0
         var failed = 0
         for await entitlement in Transaction.currentEntitlements {
+            guard generation == sessionGeneration, !Task.isCancelled,
+                  ownerSlot == DataScope.slot, ServerAPI.isCurrentAuthorization(authorization) else { return }
             let transaction: Transaction
             switch entitlement {
             case .verified(let value), .unverified(let value, _):
@@ -302,7 +336,8 @@ final class MatthsIAPStore: ObservableObject {
                 failed += 1
             }
         }
-        guard ownerSlot == DataScope.slot, ServerAPI.isCurrentAuthorization(authorization) else { return }
+        guard generation == sessionGeneration, ownerSlot == DataScope.slot,
+              ServerAPI.isCurrentAuthorization(authorization) else { return }
         if restored > 0 {
             // AppStore.sync() 가 실패했더라도 캐시 거래를 서버에 반영했다면 복원은
             // 성공이다. 앞선 네트워크 오류를 남겨 성공을 실패처럼 보이지 않는다.
@@ -330,7 +365,7 @@ final class MatthsIAPStore: ObservableObject {
         guard case .verified(let transaction) = verification else {
             return await performRedeem(verification, source: source, authorization: captured, ownerSlot: slot)
         }
-        let key = slot + ":" + String(transaction.id)
+        let key = sessionGeneration.uuidString + ":" + slot + ":" + String(transaction.id)
         if let task = redemptionTasks[key] { return await task.value }
         let task = Task { [weak self] in
             guard let self else { return false }
@@ -350,6 +385,8 @@ final class MatthsIAPStore: ObservableObject {
         authorization suppliedAuthorization: ServerAPI.AuthorizationSnapshot? = nil,
         ownerSlot: String? = nil
     ) async -> Bool {
+        let generation = sessionGeneration
+        guard ownerSlot == nil || ownerSlot == DataScope.slot else { return false }
         let transaction: Transaction
         switch verification {
         case .verified(let value):
@@ -368,6 +405,7 @@ final class MatthsIAPStore: ObservableObject {
         // 여기서 먼저 걸러야 복원 흐름에서 잘못 열리지 않는다.
         if transaction.revocationDate != nil {
             await transaction.finish()
+            guard generation == sessionGeneration else { return false }
             entitlementRevision += 1
             purchaseState = .idle
             return false
@@ -383,6 +421,7 @@ final class MatthsIAPStore: ObservableObject {
             lastError = "구매를 반영하려면 Matths 계정으로 로그인해 주세요. 거래는 사라지지 않습니다."
             return false
         }
+        guard ServerAPI.isCurrentAuthorization(authorization) else { return false }
 
         do {
             purchaseState = .redeeming(transaction.productID)
@@ -392,9 +431,9 @@ final class MatthsIAPStore: ObservableObject {
                 appAccountToken: transaction.appAccountToken?.uuidString,
                 authorization: authorization)
             await transaction.finish()
-            let stillSameAccount = (ownerSlot == nil || ownerSlot == DataScope.slot)
+            let stillSameAccount = generation == sessionGeneration && (ownerSlot == nil || ownerSlot == DataScope.slot)
                 && ServerAPI.isCurrentAuthorization(authorization)
-            if !stillSameAccount { purchaseState = .idle; return true }
+            if !stillSameAccount { return true }
             purchaseState = .entitled(transaction.productID)
             if stillSameAccount { entitlementRevision += 1 }
             if source != .restore {
@@ -408,7 +447,8 @@ final class MatthsIAPStore: ObservableObject {
             return true
         } catch {
             // finish() 하지 않는다 — 애플이 다음 실행 때 다시 준다(파일 머리 참조).
-            guard ownerSlot == nil || ownerSlot == DataScope.slot else { purchaseState = .idle; return false }
+            guard generation == sessionGeneration, ownerSlot == nil || ownerSlot == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return false }
             purchaseState = .recovery(transaction.productID)
             lastError = "구매 확인 중입니다. 거래는 보관되어 있으며 구매 복원으로 다시 확인할 수 있습니다."
             return false
@@ -417,18 +457,25 @@ final class MatthsIAPStore: ObservableObject {
 
     /// 지난 실행에서 서버 반영에 실패해 남아 있는 거래를 회수한다.
     private func reconcileUnfinished() async {
+        let generation = sessionGeneration
+        guard let authorization = ServerAPI.captureAuthorization() else { return }
+        let slot = DataScope.slot
         for await unfinished in Transaction.unfinished {
-            _ = await redeem(unfinished, source: .listener)
+            guard !Task.isCancelled, generation == sessionGeneration,
+                  ServerAPI.isCurrentAuthorization(authorization), slot == DataScope.slot else { return }
+            _ = await redeem(unfinished, source: .listener, authorization: authorization, ownerSlot: slot)
         }
     }
 
     func reconcileForCurrentAccount() async {
         if let reconciliationTask { await reconciliationTask.value; return }
         guard ServerAPI.hasToken else { return }
+        let generation = sessionGeneration
         let task = Task { [weak self] in await self?.reconcileUnfinished() }
         let work = Task { _ = await task.value }
         reconciliationTask = work
         await work.value
+        guard generation == sessionGeneration else { return }
         reconciliationTask = nil
         entitlementRevision += 1
     }

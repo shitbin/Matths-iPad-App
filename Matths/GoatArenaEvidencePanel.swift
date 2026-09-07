@@ -37,6 +37,10 @@ struct GoatArenaEvidencePanel: View {
     @State private var now = Date()
     @State private var scopeIsValid = true
     @State private var uploadOperationID: UUID?
+    @State private var storageRecoveryRequired = false
+    @State private var storageBusy = false
+    @State private var confirmStorageRecovery = false
+    @State private var screenAccountOwner: AppStore.AccountSessionBoundary?
     /// 이 서버의 `/api/v1` 에 증거 제출 라우트가 없을 때(HTTP_404) 선다.
     /// 재시도해도 같은 결과라 60초 카운트다운 동안 정체불명 오류 앞에 학생을
     /// 가두지 않고, 웹 경기 페이지의 같은 제출 자리로 바로 보낸다.
@@ -60,13 +64,21 @@ struct GoatArenaEvidencePanel: View {
         self.accountSlot = accountSlot
         self.reviewContext = reviewContext
         self.onUploaded = onUploaded
-        let draft = GoatArenaEvidenceDraftStore.load(
-            matchId: matchId,
-            attemptId: attemptId,
-            accountSlot: accountSlot)
-        _files = State(initialValue: draft?.existingFiles ?? [])
-        _evidenceSubmissionId = State(
-            initialValue: draft?.submissionId ?? UUID().uuidString)
+        do {
+            let draft = try GoatArenaEvidenceDraftStore.load(matchId: matchId, attemptId: attemptId, accountSlot: accountSlot)
+            let restored = try draft?.existingFiles(accountSlot: accountSlot) ?? []
+            _files = State(initialValue: restored)
+            _evidenceSubmissionId = State(initialValue: draft?.submissionId ?? UUID().uuidString)
+            if let draft, restored.count != draft.filePaths.count {
+                _storageRecoveryRequired = State(initialValue: true)
+                _errorMessage = State(initialValue: "초안에 기록된 일부 사진을 찾지 못했습니다. 원본 목록과 제출 번호를 덮어쓰지 않고 보관했습니다.")
+            }
+        } catch {
+            _files = State(initialValue: [])
+            _evidenceSubmissionId = State(initialValue: UUID().uuidString)
+            _storageRecoveryRequired = State(initialValue: true)
+            _errorMessage = State(initialValue: "증거 사진 초안을 읽지 못했습니다. 원본은 보관했으며 복구 전에는 새 제출 번호로 덮어쓰지 않습니다.")
+        }
     }
 
     private var remainingSeconds: Int? {
@@ -75,12 +87,15 @@ struct GoatArenaEvidencePanel: View {
     }
 
     private var expired: Bool { remainingSeconds == 0 }
+    private var accountIsCurrent: Bool {
+        scopeIsValid && DataScope.slot == accountSlot && (screenAccountOwner.map { store.ownsCurrentAccountSession($0) } ?? true)
+    }
     private var canAdd: Bool {
-        scopeIsValid && DataScope.slot == accountSlot &&
+        accountIsCurrent && !storageRecoveryRequired && !storageBusy &&
             files.count < 5 && !expired && !isUploading
     }
     private var canUpload: Bool {
-        scopeIsValid && DataScope.slot == accountSlot &&
+        accountIsCurrent && !storageRecoveryRequired && !storageBusy &&
             !files.isEmpty && files.count <= 5 && !expired && !isUploading && !pickerBusy
     }
 
@@ -100,6 +115,10 @@ struct GoatArenaEvidencePanel: View {
                         .font(.mCaption)
                         .foregroundStyle(Tokens.warningInk)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if storageRecoveryRequired {
+                    Button("원본 목록 보관 후 새 초안 준비") { confirmStorageRecovery = true }
+                        .buttonStyle(SecondaryButtonStyle()).disabled(storageBusy || isUploading)
                 }
 
                 if routeMissing {
@@ -134,7 +153,31 @@ struct GoatArenaEvidencePanel: View {
             RoundedRectangle(cornerRadius: Tokens.Radius.lg)
                 .strokeBorder(expired ? Tokens.warningInk.opacity(0.5) : Tokens.line, lineWidth: 1)
         }
-        .onAppear { persistDraft() }
+        .onAppear {
+            if screenAccountOwner == nil { screenAccountOwner = store.captureAccountSessionBoundary() }
+            if !storageRecoveryRequired { persistDraft() }
+        }
+        .onDisappear { Task { _ = await ArenaDraftPersistence.flush(slot: accountSlot) } }
+        .onReceive(NotificationCenter.default.publisher(for: ArenaDraftPersistence.failureNotification)) { notice in
+            guard accountIsCurrent, notice.userInfo?["accountSlot"] as? String == accountSlot else { return }
+            errorMessage = "사진 또는 제출 초안을 기기에 저장하지 못했습니다. 원본을 유지하며, 제출 전에 저장을 다시 확인합니다."
+            if let url = notice.object as? URL, ArenaDraftPersistence.needsRecovery(url) { storageRecoveryRequired = true }
+        }
+        .confirmationDialog("원본 목록을 별도로 보관할까요?", isPresented: $confirmStorageRecovery, titleVisibility: .visible) {
+            Button("원본 보관 후 새 초안 준비") { Task {
+                guard accountIsCurrent, !storageBusy else { return }
+                storageBusy = true
+                defer { storageBusy = false }
+                if await GoatArenaEvidenceDraftStore.recover(accountSlot: accountSlot), accountIsCurrent {
+                    files = []; evidenceSubmissionId = UUID().uuidString
+                    storageRecoveryRequired = false; errorMessage = nil
+                    persistDraft()
+                } else if accountIsCurrent { errorMessage = "원본을 안전하게 보관하지 못해 초안을 교체하지 않았습니다." }
+            } }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("Arena 증거 초안 목록의 원본 파일과 기존 사진은 삭제하지 않습니다. 보관에 성공한 경우에만 새 제출 초안을 준비하며, 사진을 다시 선택해야 합니다.")
+        }
         .onReceive(timer) { now = $0 }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { note in
             guard let newSlot = note.object as? String,
@@ -429,10 +472,17 @@ struct GoatArenaEvidencePanel: View {
             "arena-evidence-\(attemptId.prefix(8))-\(UUID().uuidString).jpg",
             for: accountSlot)
         do {
-            try data.write(to: url, options: .atomic)
+            try ArenaDraftPersistence.schedule(ArenaDraftSnapshot(raw: data, validate: { bytes in
+                guard bytes.count > 2, bytes.prefix(2) == Data([0xff, 0xd8]) else { throw ArenaDraftStorageError.invalid }
+            }), at: url, slot: accountSlot)
             files.append(EvidenceFile(url: url))
             errorMessage = nil
             persistDraft()
+            Task {
+                if !(await ArenaDraftPersistence.flush(slot: accountSlot)), accountIsCurrent {
+                    errorMessage = "사진을 기기에 저장하지 못했습니다. 현재 초안을 유지하고 있으니 저장 공간을 확인해 주세요."
+                }
+            }
         } catch {
             #if DEBUG
             print("Arena 증거 사진 저장 실패:", error)
@@ -442,15 +492,29 @@ struct GoatArenaEvidencePanel: View {
     }
 
     private func remove(_ file: EvidenceFile) {
-        guard scopeIsValid, DataScope.slot == accountSlot else { return }
+        guard accountIsCurrent, !storageBusy, !isUploading else { return }
+        let previous = files
         files.removeAll { $0.id == file.id }
-        try? FileManager.default.removeItem(at: file.url)
-        persistDraft()
+        guard persistDraft() else { files = previous; return }
+        storageBusy = true
+        Task {
+            defer { if accountIsCurrent { storageBusy = false } }
+            guard await ArenaDraftPersistence.flush(slot: accountSlot), accountIsCurrent else {
+                if accountIsCurrent { errorMessage = "사진 목록 변경이 저장 대기 중입니다. 사진 원본은 삭제하지 않았습니다." }
+                return
+            }
+            do {
+                try GoatArenaEvidenceDraftStore.validateAttachment(file.url, attemptId: attemptId, accountSlot: accountSlot)
+                if !(await ArenaDraftPersistence.remove(at: file.url, slot: accountSlot)), accountIsCurrent {
+                    errorMessage = "초안 목록은 저장했고 사진 파일 정리는 보류했습니다."
+                }
+            } catch { if accountIsCurrent { errorMessage = "사진 경로를 확인하지 못해 원본을 삭제하지 않았습니다." } }
+        }
     }
 
     @MainActor
     private func upload() async {
-        guard canUpload else { return }
+        guard canUpload, let authorization = ServerAPI.captureAuthorization() else { return }
         let ownerSlot = accountSlot
         let operationID = UUID()
         uploadOperationID = operationID
@@ -463,16 +527,21 @@ struct GoatArenaEvidencePanel: View {
             }
         }
         do {
+            guard await ArenaDraftPersistence.flush(slot: ownerSlot), accountIsCurrent,
+                  uploadOperationID == operationID else {
+                if accountIsCurrent { errorMessage = "제출 번호와 사진을 기기에 저장하지 못했습니다. 저장 공간을 확인해 주세요." }
+                return
+            }
             let value = try await ServerAPI.submitGoatArenaEvidence(
                 matchId: matchId,
                 files: files.map(\.url),
                 submissionId: evidenceSubmissionId,
-                clientBuildVersion: clientBuildVersion)
+                clientBuildVersion: clientBuildVersion, authorization: authorization)
             // 요청은 이전 계정의 Authorization으로 이미 접수됐을 수 있다. 계정이
             // 바뀐 뒤 돌아온 응답은 새 계정의 검토 큐나 화면에 절대 반영하지 않는다.
             // 원래 슬롯의 초안과 파일을 남겨 두면 해당 계정으로 돌아왔을 때 같은
             // submissionId로 안전하게 재확인할 수 있다.
-            guard scopeIsValid,
+            guard accountIsCurrent, ServerAPI.isCurrentAuthorization(authorization),
                   DataScope.slot == ownerSlot,
                   uploadOperationID == operationID else { return }
             let reviewFiles = files.map(\.url)
@@ -487,15 +556,17 @@ struct GoatArenaEvidencePanel: View {
                 attemptId: attemptId
             )
             receipt = value
-            GoatArenaEvidenceDraftStore.clear(
+            let cleaned = await GoatArenaEvidenceDraftStore.clear(
                 matchId: matchId,
                 attemptId: attemptId,
                 deleting: files,
                 accountSlot: ownerSlot)
-            files = []
+            guard accountIsCurrent, uploadOperationID == operationID else { return }
+            if cleaned { files = [] }
+            else { errorMessage = "서버 접수는 완료됐습니다. 기기 원본 파일 정리는 보류했습니다." }
             onUploaded(value)
         } catch {
-            guard scopeIsValid,
+            guard accountIsCurrent, ServerAPI.isCurrentAuthorization(authorization),
                   DataScope.slot == ownerSlot,
                   uploadOperationID == operationID else { return }
             routeMissing = (error as? ServerAPIError)?.isRouteMissing == true
@@ -504,9 +575,9 @@ struct GoatArenaEvidencePanel: View {
         }
     }
 
-    private func persistDraft() {
-        guard scopeIsValid, DataScope.slot == accountSlot else { return }
-        GoatArenaEvidenceDraftStore.save(
+    @discardableResult private func persistDraft() -> Bool {
+        guard accountIsCurrent, !storageRecoveryRequired, receipt == nil else { return false }
+        do { try GoatArenaEvidenceDraftStore.save(
             .init(
                 matchId: matchId,
                 attemptId: attemptId,
@@ -514,6 +585,14 @@ struct GoatArenaEvidencePanel: View {
                 deadlineAt: deadlineAt,
                 filePaths: files.map { $0.url.path }),
             accountSlot: accountSlot)
+            return true
+        } catch {
+            errorMessage = "증거 초안을 기기에 보관하지 못했습니다. 원본과 제출 번호를 유지하고 있습니다."
+            if let url = try? GoatArenaEvidenceDraftStore.url(accountSlot: accountSlot), ArenaDraftPersistence.needsRecovery(url) {
+                storageRecoveryRequired = true
+            }
+            return false
+        }
     }
 
     private static func message(for error: Error) -> String {
@@ -529,78 +608,5 @@ struct GoatArenaEvidencePanel: View {
         print("Arena 증거 제출 실패:", error)
         #endif
         return "풀이 증거를 제출하지 못했습니다. 인터넷 연결을 확인한 뒤 같은 제출 버튼을 다시 눌러 주세요."
-    }
-}
-
-private struct EvidenceFile: Identifiable, Hashable {
-    let url: URL
-    var id: String { url.path }
-}
-
-private struct GoatArenaEvidenceDraft: Codable {
-    let matchId: String
-    let attemptId: String
-    let submissionId: String
-    let deadlineAt: Date?
-    let filePaths: [String]
-
-    var existingFiles: [EvidenceFile] {
-        filePaths.compactMap { path in
-            guard FileManager.default.fileExists(atPath: path) else { return nil }
-            return EvidenceFile(url: URL(fileURLWithPath: path))
-        }
-    }
-}
-
-private enum GoatArenaEvidenceDraftStore {
-    private static let fileName = "goat-arena-evidence-drafts.json"
-    private static func fileURL(for accountSlot: String) -> URL {
-        DataScope.url(fileName, for: accountSlot)
-    }
-
-    static func load(
-        matchId: String,
-        attemptId: String,
-        accountSlot: String
-    ) -> GoatArenaEvidenceDraft? {
-        readAll(accountSlot: accountSlot).first {
-            $0.matchId == matchId && $0.attemptId == attemptId
-        }
-    }
-
-    static func save(_ draft: GoatArenaEvidenceDraft, accountSlot: String) {
-        var values = readAll(accountSlot: accountSlot).filter {
-            !($0.matchId == draft.matchId && $0.attemptId == draft.attemptId)
-        }
-        values.append(draft)
-        write(values, accountSlot: accountSlot)
-    }
-
-    static func clear(
-        matchId: String,
-        attemptId: String,
-        deleting files: [EvidenceFile],
-        accountSlot: String
-    ) {
-        files.forEach { try? FileManager.default.removeItem(at: $0.url) }
-        write(readAll(accountSlot: accountSlot).filter {
-            !($0.matchId == matchId && $0.attemptId == attemptId)
-        }, accountSlot: accountSlot)
-    }
-
-    private static func readAll(accountSlot: String) -> [GoatArenaEvidenceDraft] {
-        guard let data = try? Data(contentsOf: fileURL(for: accountSlot)),
-              let values = try? JSONDecoder().decode(
-                [GoatArenaEvidenceDraft].self,
-                from: data) else { return [] }
-        return values
-    }
-
-    private static func write(
-        _ values: [GoatArenaEvidenceDraft],
-        accountSlot: String
-    ) {
-        guard let data = try? JSONEncoder().encode(values) else { return }
-        try? data.write(to: fileURL(for: accountSlot), options: .atomic)
     }
 }

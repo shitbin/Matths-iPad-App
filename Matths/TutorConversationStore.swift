@@ -64,9 +64,7 @@ enum TutorConversationStore {
                 at: directory,
                 withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(records)
-            try data.write(
-                to: directory.appendingPathComponent(indexFileName),
-                options: [.atomic, .completeFileProtection])
+            try ProtectedFileWriter.write(data, to: directory.appendingPathComponent(indexFileName))
             removeOrphanedAttachments(keeping: Set(records.compactMap(\.imageFile)), in: directory)
         } catch {
             // 대화 저장 실패가 로컬 모델 답변 자체를 막아서는 안 된다.
@@ -89,7 +87,7 @@ enum TutorConversationStore {
             .appendingPathComponent("photo-\(UUID().uuidString).jpg")
             .standardizedFileURL
         let data = try Data(contentsOf: source, options: [.mappedIfSafe])
-        try data.write(to: destination, options: [.atomic, .completeFileProtection])
+        try ProtectedFileWriter.write(data, to: destination)
 
         let temporary = FileManager.default.temporaryDirectory.standardizedFileURL
         if source.deletingLastPathComponent() == temporary,

@@ -3,7 +3,8 @@
 //
 //  iPadOS가 허용하는 짧은 background-task 유예를 로컬 AI 작업이 함께 쓴다.
 //  무제한 실행을 약속하지 않는다. 유예가 끝나면 앱은 suspend되고, 프로세스가
-//  살아 있으면 같은 Task/llama 호출이 foreground 복귀 뒤 이어진다.
+//  만료·메모리 경고·발열 시 소유자 취소 플래그를 올리고 완료된 native 호출이
+//  lease를 반납한 뒤 모델을 해제한다. KV cache 재개를 약속하지 않는다.
 
 import Foundation
 import UIKit
@@ -16,11 +17,50 @@ final class LocalAIBackgroundExecution {
         fileprivate let id: UUID
     }
 
-    private var active: [Token: String] = [:]
+    enum Interruption: String, LocalizedError {
+        case backgroundExpired, memoryPressure, thermalPressure
+        var message: String {
+            switch self {
+            case .backgroundExpired:
+                return "백그라운드 실행 시간이 끝나 분석을 멈췄습니다. 앱으로 돌아와 보존된 자료로 다시 시도해 주세요."
+            case .memoryPressure:
+                return "기기 메모리가 부족해 AI 작업을 멈췄습니다. 다른 앱을 닫고 보존된 자료로 다시 시도해 주세요."
+            case .thermalPressure:
+                return "기기 온도가 높아 AI 작업을 멈췄습니다. 기기가 식은 뒤 다시 시도해 주세요."
+            }
+        }
+        var errorDescription: String? { message }
+    }
+
+    private struct Work {
+        let label: String
+        let interrupt: ((Interruption) -> Void)?
+    }
+
+    private var active: [Token: Work] = [:]
     private var sceneIsBackground = false
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundExpired = false
+    private var observers: [NSObjectProtocol] = []
+    private var resourceReleaseTask: Task<Void, Never>?
+    private var pendingResourceReason: Interruption?
 
-    private init() {}
+    private init() {
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.interruptWork(.memoryPressure) }
+        })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
+                    self?.interruptWork(.thermalPressure)
+                }
+            }
+        })
+    }
 
     #if DEBUG
     struct DeviceQASnapshot {
@@ -36,6 +76,14 @@ final class LocalAIBackgroundExecution {
             sceneIsBackground: sceneIsBackground,
             backgroundTaskActive: backgroundTask != .invalid,
             backgroundTimeRemaining: UIApplication.shared.backgroundTimeRemaining)
+    }
+
+    func injectInterruptionForSelfTest(_ reason: Interruption) {
+        interruptWork(reason)
+    }
+
+    func awaitResourceReleaseForSelfTest() async {
+        await resourceReleaseTask?.value
     }
     #endif
 
@@ -58,9 +106,13 @@ final class LocalAIBackgroundExecution {
         }
     }
 
-    func beginWork(_ label: String) -> Token {
+    func beginWork(_ label: String, onInterruption: ((Interruption) -> Void)? = nil) -> Token {
         let token = Token(id: UUID())
-        active[token] = label
+        active[token] = Work(label: label, interrupt: onInterruption)
+        // Deliver after the caller establishes its run ID/cancellation flag.
+        if let interruption = currentInterruption {
+            Task { @MainActor [weak self] in self?.interruptWork(interruption) }
+        }
         startBackgroundTaskIfNeeded()
         return token
     }
@@ -77,17 +129,48 @@ final class LocalAIBackgroundExecution {
 
     func didBecomeActive() {
         sceneIsBackground = false
+        backgroundExpired = false
         endBackgroundTask()
     }
 
     private func startBackgroundTaskIfNeeded() {
-        guard sceneIsBackground, !active.isEmpty, backgroundTask == .invalid else { return }
+        guard sceneIsBackground, !backgroundExpired, !active.isEmpty, backgroundTask == .invalid else { return }
         backgroundTask = UIApplication.shared.beginBackgroundTask(
             withName: "Matths local AI") { [weak self] in
-                // 만료 시 새 연산을 시작하지 않는다. 현재 native 호출은 iPadOS가
-                // suspend하고, 앱이 살아 있으면 foreground에서 그대로 복귀한다.
-                Task { @MainActor in self?.endBackgroundTask() }
+                Task { @MainActor in
+                    self?.backgroundExpired = true
+                    self?.interruptWork(.backgroundExpired)
+                    self?.endBackgroundTask()
+                }
             }
+    }
+
+    private var currentInterruption: Interruption? {
+        if backgroundExpired { return .backgroundExpired }
+        if let pendingResourceReason { return pendingResourceReason }
+        let thermal = ProcessInfo.processInfo.thermalState
+        return thermal == .serious || thermal == .critical ? .thermalPressure : nil
+    }
+
+    func checkAdmission() throws {
+        if let reason = currentInterruption { throw reason }
+    }
+
+    var admissionFailureMessage: String? { currentInterruption?.message }
+
+    private func interruptWork(_ reason: Interruption) {
+        pendingResourceReason = reason
+        LocalAIResourceStopSignal.shared.set(true)
+        // Snapshot avoids mutation while a callback completes or switches jobs.
+        let callbacks = active.values.compactMap(\.interrupt)
+        callbacks.forEach { $0(reason) }
+        guard resourceReleaseTask == nil else { return }
+        resourceReleaseTask = Task { @MainActor in
+            await AITutor.shared.releaseForMemory(waitForActiveWork: true)
+            resourceReleaseTask = nil
+            pendingResourceReason = nil
+            LocalAIResourceStopSignal.shared.set(false)
+        }
     }
 
     private func endBackgroundTask() {

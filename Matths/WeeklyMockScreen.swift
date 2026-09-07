@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 
 struct WeeklyMockScreen: View {
     @EnvironmentObject private var store: AppStore
+    var initialExamID: String? = nil
 
     private enum Page: Equatable {
         case center
@@ -21,6 +22,9 @@ struct WeeklyMockScreen: View {
     /// 이 화면 인스턴스를 연 계정. 네트워크 응답을 기다리는 사이 로그아웃하거나
     /// 다른 계정으로 들어가도 앞 학생의 시험 상태를 새 계정 화면에 쓰지 않는다.
     @State private var accountSlot = DataScope.slot
+    /// Bound synchronously by the mounted screen, before child Tasks can be made.
+    @State private var owner: AccountRequestOwner?
+    @State private var appliedInitialDestination = false
 
     var body: some View {
         Group {
@@ -28,25 +32,41 @@ struct WeeklyMockScreen: View {
             case .center:
                 WeeklyMockCenterScreen(
                     accountSlot: accountSlot,
+                    owner: owner,
                     onClose: { store.route = .assess },
                     onOpenExam: { page = .attempt($0) },
                     onIntegrity: { page = .integrity },
                     onObjections: { page = .objections })
             case .attempt(let examId):
-                WeeklyMockAttemptScreen(examId: examId, accountSlot: accountSlot) { page = .center }
+                if let owner {
+                    WeeklyMockAttemptScreen(examId: examId, accountSlot: accountSlot, owner: owner) { page = .center }
+                }
             case .integrity:
-                WeeklyMockIntegrityScreen(accountSlot: accountSlot) { page = .center }
+                if let owner { WeeklyMockIntegrityScreen(accountSlot: accountSlot, owner: owner) { page = .center } }
             case .objections:
-                WeeklyMockObjectionScreen(accountSlot: accountSlot) { page = .center }
+                if let owner { WeeklyMockObjectionScreen(accountSlot: accountSlot, owner: owner) { page = .center } }
             }
         }
-        .id(accountSlot)
+        .id(owner?.id)
+        .onAppear {
+            if owner?.isCurrent(in: store) != true { owner = AccountRequestOwner(store: store) }
+            if !appliedInitialDestination {
+                appliedInitialDestination = true
+                if owner != nil, let initialExamID, !initialExamID.isEmpty { page = .attempt(initialExamID) }
+            }
+        }
         .background(Tokens.paper.ignoresSafeArea())
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { note in
             let nextSlot = note.object as? String ?? DataScope.slot
-            guard nextSlot != accountSlot else { return }
             page = .center
             accountSlot = nextSlot
+            owner = AccountRequestOwner(store: store)
+        }
+        .onChange(of: owner?.isCurrent(in: store) ?? true) { _, current in
+            guard !current else { return }
+            page = .center
+            accountSlot = DataScope.slot
+            owner = AccountRequestOwner(store: store)
         }
     }
 }
@@ -55,6 +75,7 @@ struct WeeklyMockScreen: View {
 
 private struct WeeklyMockCenterScreen: View {
     let accountSlot: String
+    let owner: AccountRequestOwner?
     let onClose: () -> Void
     let onOpenExam: (String) -> Void
     let onIntegrity: () -> Void
@@ -64,6 +85,9 @@ private struct WeeklyMockCenterScreen: View {
     @State private var dashboard: ServerAPI.WeeklyMockDashboard?
     @State private var loading = true
     @State private var errorText: String?
+    @State private var requests = WeeklyMockOperationGate()
+
+    private var accountIsCurrent: Bool { owner?.isCurrent(in: store) == true && requests.isActive }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -97,7 +121,9 @@ private struct WeeklyMockCenterScreen: View {
             }
             .refreshable { await load() }
         }
-        .task { await load() }
+        .task { guard !Task.isCancelled else { return }; requests.activate(); await load() }
+        .onAppear { requests.activate() }
+        .onDisappear { requests.retire(); loading = false }
     }
 
     @ViewBuilder
@@ -137,13 +163,13 @@ private struct WeeklyMockCenterScreen: View {
                     }
 
                     if let selection = value.selection {
-                        WeeklyMockSelectionView(selection: selection, accountSlot: accountSlot) { attemptId, deferSelection in
-                            guard accountSlot == DataScope.slot else { return }
+                        WeeklyMockSelectionView(selection: selection, accountSlot: accountSlot, owner: owner, denied: revokeAccess) { attemptId, deferSelection in
+                            guard accountIsCurrent, let owner else { throw CancellationError() }
                             try await ServerAPI.selectWeeklyMockRepresentative(
                                 weekKey: selection.weekKey,
                                 attemptId: attemptId,
-                                deferSelection: deferSelection)
-                            guard accountSlot == DataScope.slot else { return }
+                                deferSelection: deferSelection, authorization: owner.authorization)
+                            guard accountIsCurrent else { throw CancellationError() }
                             await load()
                         }
                     }
@@ -459,14 +485,14 @@ private struct WeeklyMockCenterScreen: View {
 
     @MainActor
     private func load() async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let owner, let request = requests.begin("load") else { loading = false; return }
         loading = dashboard == nil
-        defer { loading = false }
+        defer { if requests.accepts(request) { loading = false; requests.finish(request) } }
         // 토큰이 없으면 서버를 두드리지 않는다 — 본문이 곧장 로그인 안내를 그린다.
         guard ServerAPI.hasToken else { return }
         do {
-            let value = try await ServerAPI.weeklyMockDashboard()
-            guard accountSlot == DataScope.slot else { return }
+            let value = try await ServerAPI.weeklyMockDashboard(authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             dashboard = value
             errorText = nil
             // 서버가 알려 준 회차 시각으로 기기에 예고 알림을 건다.
@@ -477,9 +503,14 @@ private struct WeeklyMockCenterScreen: View {
                                           lobbyOpensAt: value.currentExam?.lobbyOpensAt,
                                           allowPermissionPrompt: !store.isTutorialPresentationActive)
         } catch {
-            guard accountSlot == DataScope.slot else { return }
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            if WeeklyMockOperationGate.removesProtectedContent(statusCode: (error as? ServerAPIError)?.statusCode) { revokeAccess() }
             errorText = WeeklyMockFormat.message(error)
         }
+    }
+
+    private func revokeAccess() {
+        requests.reset(); dashboard = nil; loading = false
     }
 }
 
@@ -488,8 +519,10 @@ private struct WeeklyMockCenterScreen: View {
 private struct WeeklyMockAttemptScreen: View {
     let examId: String
     let accountSlot: String
+    let owner: AccountRequestOwner
     let onClose: () -> Void
 
+    @EnvironmentObject private var store: AppStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -507,13 +540,17 @@ private struct WeeklyMockAttemptScreen: View {
     @State private var errorText: String?
     @State private var confirmSubmit = false
     @State private var didRequestExpiry = false
+    @State private var requests = WeeklyMockOperationGate()
+
+    private var accountIsCurrent: Bool { owner.isCurrent(in: store) && requests.isActive }
 
     private enum Pane: String, CaseIterable { case paper = "문제지", omr = "답안지" }
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    init(examId: String, accountSlot: String, onClose: @escaping () -> Void) {
+    init(examId: String, accountSlot: String, owner: AccountRequestOwner, onClose: @escaping () -> Void) {
         self.examId = examId
         self.accountSlot = accountSlot
+        self.owner = owner
         self.onClose = onClose
         let draftKey = DataScope.defaultsKey(
             "matths.weeklyMock.draft.\(examId)",
@@ -553,6 +590,8 @@ private struct WeeklyMockAttemptScreen: View {
                         WeeklyMockResultView(
                             attempt: attempt,
                             accountSlot: accountSlot,
+                            owner: owner,
+                            denied: revokeAccess,
                             refresh: { Task { await load() } })
                     }
                     // 서버 Bearer adapter의 첫 응시 상태는 `lobby`다. 초기 앱
@@ -567,7 +606,12 @@ private struct WeeklyMockAttemptScreen: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task { await load() }
+        .task { guard !Task.isCancelled else { return }; requests.activate(); await load() }
+        .onAppear { requests.activate() }
+        .onDisappear {
+            requests.retire(); confirmSubmit = false
+            loading = false; starting = false; saving = false; submitting = false
+        }
         .task(id: draftSyncState.editRevision) {
             guard draftSyncState.editRevision > 0 else { return }
             try? await Task.sleep(for: .milliseconds(650))
@@ -577,6 +621,7 @@ private struct WeeklyMockAttemptScreen: View {
             Task { @MainActor in await save(reportError: false) }
         }
         .onReceive(clock) { value in
+            guard accountIsCurrent else { return }
             now = value
             if taking, remaining == 0, !didRequestExpiry {
                 didRequestExpiry = true
@@ -584,6 +629,7 @@ private struct WeeklyMockAttemptScreen: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            guard accountIsCurrent else { return }
             if phase == .active { Task { await load(silent: true) } }
             else if taking {
                 persistDraft()
@@ -629,7 +675,7 @@ private struct WeeklyMockAttemptScreen: View {
 
     private var closeButton: some View {
         Button {
-            if taking { Task { await save(reportError: false); onClose() } }
+            if taking { Task { await save(reportError: false); if accountIsCurrent { onClose() } } }
             else { onClose() }
         } label: {
             Image(systemName: "xmark").font(.system(size: 16, weight: .bold))
@@ -712,7 +758,8 @@ private struct WeeklyMockAttemptScreen: View {
 
     private func takingView(_ value: ServerAPI.WeeklyMockAttempt) -> some View {
         GeometryReader { geometry in
-            if (geometry.size.width >= 900 || usesLandscapeSplitWorkspace) && !dynamicTypeSize.isAccessibilitySize {
+            if UniversalLayoutPolicy.usesProblemSplit(width: geometry.size.width, height: geometry.size.height,
+                accessibilityText: dynamicTypeSize.isAccessibilitySize) {
                 ResponsiveProblemWorkspace(spacing: 1, trailingWidth: min(390, max(300, geometry.size.width * 0.36))) {
                     paperPane.frame(maxWidth: .infinity)
                     // 667pt급 가로 iPhone에서도 선지 5개의 44pt 터치 영역이 들어갈
@@ -766,6 +813,11 @@ private struct WeeklyMockAttemptScreen: View {
                     if saving { Label("저장 중", systemImage: "arrow.triangle.2.circlepath").font(.mCaption).foregroundStyle(Tokens.text3) }
                 }
                 answerRows(value)
+            }
+            .padding(Tokens.Space.s4)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                 Button { confirmSubmit = true } label: {
                     if submitting { ProgressView().tint(Tokens.onPrimary) } else { Text("최종 제출") }
                 }
@@ -773,7 +825,10 @@ private struct WeeklyMockAttemptScreen: View {
                 Text("정답과 점수는 서버의 공식 공개 시각 전에는 표시되지 않습니다.")
                     .font(.mMicro).foregroundStyle(Tokens.text4)
             }
-            .padding(Tokens.Space.s4)
+            .padding(.horizontal, Tokens.Space.s4)
+            .padding(.vertical, Tokens.Space.s2)
+            .background(Tokens.surface)
+            .overlay(alignment: .top) { Divider().overlay(Tokens.line) }
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Tokens.paper2)
@@ -793,7 +848,7 @@ private struct WeeklyMockAttemptScreen: View {
         Binding(
             get: { answers.indices.contains(index) ? answers[index] : "" },
             set: { value in
-                guard answers.indices.contains(index) else { return }
+                guard accountIsCurrent, answers.indices.contains(index) else { return }
                 answers[index] = String(value.prefix(80))
                 telemetry.append(.init(
                     eventType: "ANSWER_CHANGED",
@@ -812,14 +867,15 @@ private struct WeeklyMockAttemptScreen: View {
     }
 
     @MainActor private func load(silent: Bool = false) async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let request = requests.begin("load") else { return }
+        defer { requests.finish(request) }
         let loadRequest = draftSyncState.beginLoad()
         if !silent { loading = true }
         do {
-            let value = try await ServerAPI.weeklyMockAttempt(examId: examId)
+            let value = try await ServerAPI.weeklyMockAttempt(examId: examId, authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             finishLoading(loadRequest)
-            guard accountSlot == DataScope.slot,
-                  draftSyncState.shouldApplyMetadata(loadRequest) else { return }
+            guard draftSyncState.shouldApplyMetadata(loadRequest) else { return }
             apply(
                 value,
                 preservingLocalDraft: draftSyncState.shouldPreserveLocalDraft(loadRequest))
@@ -831,11 +887,10 @@ private struct WeeklyMockAttemptScreen: View {
                 if paperURL == nil { await downloadPaper() }
             }
         } catch {
+            guard accountIsCurrent, requests.accepts(request) else { return }
             finishLoading(loadRequest)
-            guard accountSlot == DataScope.slot,
-                  draftSyncState.shouldApplyMetadata(loadRequest) else { return }
-            if !silent { attempt = nil }
-            errorText = WeeklyMockFormat.message(error)
+            guard draftSyncState.shouldApplyMetadata(loadRequest) else { return }
+            errorText = handle(error)
         }
     }
 
@@ -850,40 +905,41 @@ private struct WeeklyMockAttemptScreen: View {
     }
 
     @MainActor private func start() async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let request = requests.begin("start", exclusive: true) else { return }
         starting = true
-        defer { starting = false }
+        defer { if requests.accepts(request) { starting = false; requests.finish(request) } }
         do {
-            let value = try await ServerAPI.startWeeklyMock(examId: examId)
-            guard accountSlot == DataScope.slot else { return }
+            let value = try await ServerAPI.startWeeklyMock(examId: examId, authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             apply(value)
             await downloadPaper()
         } catch {
-            guard accountSlot == DataScope.slot else { return }
-            errorText = WeeklyMockFormat.message(error)
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            errorText = handle(error)
         }
     }
 
     @MainActor private func downloadPaper() async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let request = requests.begin("paper", exclusive: true) else { return }
+        defer { requests.finish(request) }
         do {
             let value = try await ServerAPI.downloadWeeklyMockPaper(
                 examId: examId,
-                accountSlot: accountSlot)
-            guard accountSlot == DataScope.slot else { return }
+                accountSlot: accountSlot, authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             paperURL = value
         } catch {
-            guard accountSlot == DataScope.slot else { return }
-            errorText = WeeklyMockFormat.message(error)
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            errorText = handle(error)
         }
     }
 
     @MainActor private func save(reportError: Bool) async {
-        guard accountSlot == DataScope.slot, taking, !saving else { return }
+        guard accountIsCurrent, taking, !saving, let request = requests.begin("save", exclusive: true) else { return }
         saving = true
-        defer { saving = false }
+        defer { if requests.accepts(request) { saving = false; requests.finish(request) } }
 
-        while accountSlot == DataScope.slot, taking {
+        while accountIsCurrent, requests.accepts(request), taking {
             let saveRequest = draftSyncState.beginSave()
             let answerSnapshot = answers
             let eventSnapshot = telemetry
@@ -891,8 +947,8 @@ private struct WeeklyMockAttemptScreen: View {
                 let draft = try await ServerAPI.saveWeeklyMockDraft(
                     examId: examId,
                     answers: answerSnapshot,
-                    telemetry: eventSnapshot)
-                guard accountSlot == DataScope.slot else { return }
+                    telemetry: eventSnapshot, authorization: owner.authorization)
+                guard accountIsCurrent, requests.accepts(request) else { return }
                 draftSyncState.markSaveSucceeded(saveRequest)
                 persistDraftSyncState()
                 if draftSyncState.canApplySaveResponse(saveRequest),
@@ -903,8 +959,10 @@ private struct WeeklyMockAttemptScreen: View {
                 if telemetry.count >= eventSnapshot.count { telemetry.removeFirst(eventSnapshot.count) }
                 if telemetry.count > 200 { telemetry.removeFirst(telemetry.count - 200) }
             } catch {
-                guard accountSlot == DataScope.slot else { return }
-                if reportError { errorText = WeeklyMockFormat.message(error) }
+                guard accountIsCurrent, requests.accepts(request) else { return }
+                let message = handle(error)
+                if reportError || !requests.accepts(request) { errorText = message }
+                guard requests.accepts(request) else { return }
                 // 실패 중 새 답이 생겼다면 최신 snapshot을 한 번 즉시 시도한다.
                 // 최신 요청 자체가 실패한 경우에는 로컬 draft를 dirty로 보존한다.
                 guard draftSyncState.hasEdits(after: saveRequest) else { return }
@@ -918,36 +976,38 @@ private struct WeeklyMockAttemptScreen: View {
     }
 
     @MainActor private func submit() async {
-        guard accountSlot == DataScope.slot, taking, !submitting else { return }
+        guard accountIsCurrent, taking, !submitting, let request = requests.begin("terminal", exclusive: true) else { return }
         submitting = true
-        defer { submitting = false }
+        defer { if requests.accepts(request) { submitting = false; requests.finish(request) } }
         do {
-            _ = try await ServerAPI.submitWeeklyMock(examId: examId, answers: answers, telemetry: telemetry)
-            guard accountSlot == DataScope.slot else { return }
+            _ = try await ServerAPI.submitWeeklyMock(examId: examId, answers: answers, telemetry: telemetry, authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             clearDraft()
             telemetry.removeAll()
-            let value = try await ServerAPI.weeklyMockAttempt(examId: examId)
-            guard accountSlot == DataScope.slot else { return }
+            let value = try await ServerAPI.weeklyMockAttempt(examId: examId, authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             apply(value)
         } catch {
-            guard accountSlot == DataScope.slot else { return }
-            errorText = WeeklyMockFormat.message(error)
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            errorText = handle(error)
         }
     }
 
     @MainActor private func expire() async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent else { return }
+        guard let request = requests.begin("terminal", exclusive: true) else { didRequestExpiry = false; return }
+        defer { requests.finish(request) }
         do {
-            _ = try await ServerAPI.expireWeeklyMock(examId: examId)
-            guard accountSlot == DataScope.slot else { return }
+            _ = try await ServerAPI.expireWeeklyMock(examId: examId, authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             clearDraft()
             await load()
         } catch let api as ServerAPIError where api.statusCode == 409 {
-            guard accountSlot == DataScope.slot else { return }
+            guard accountIsCurrent, requests.accepts(request) else { return }
             didRequestExpiry = false
         } catch {
-            guard accountSlot == DataScope.slot else { return }
-            errorText = WeeklyMockFormat.message(error)
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            errorText = handle(error)
         }
     }
 
@@ -955,7 +1015,7 @@ private struct WeeklyMockAttemptScreen: View {
         _ value: ServerAPI.WeeklyMockAttempt,
         preservingLocalDraft: Bool = false
     ) {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent else { return }
         attempt = value
         didRequestExpiry = false
         guard value.state == "in-progress" else {
@@ -986,6 +1046,7 @@ private struct WeeklyMockAttemptScreen: View {
         DataScope.defaultsKey("matths.weeklyMock.draftDirty.\(examId)", for: accountSlot)
     }
     private func persistDraft() {
+        guard accountIsCurrent else { return }
         let value = WeeklyMockPersistedDraft(
             answers: answers,
             dirty: draftSyncState.hasUnsavedChanges)
@@ -1008,8 +1069,21 @@ private struct WeeklyMockAttemptScreen: View {
         UserDefaults.standard.removeObject(forKey: draftDirtyKey)
     }
     private func clearDraft() {
+        guard accountIsCurrent else { return }
         UserDefaults.standard.removeObject(forKey: draftKey)
         UserDefaults.standard.removeObject(forKey: draftDirtyKey)
+    }
+
+    private func revokeAccess() {
+        requests.reset()
+        attempt = nil; paperURL = nil; answers = []; telemetry = []
+        loading = false; starting = false; saving = false; submitting = false
+        confirmSubmit = false; didRequestExpiry = false
+    }
+
+    private func handle(_ error: Error) -> String {
+        if WeeklyMockOperationGate.removesProtectedContent(statusCode: (error as? ServerAPIError)?.statusCode) { revokeAccess() }
+        return WeeklyMockFormat.message(error)
     }
 }
 
@@ -1061,7 +1135,10 @@ private struct WeeklyMockAnswerRow: View {
 private struct WeeklyMockResultView: View {
     let attempt: ServerAPI.WeeklyMockAttempt
     let accountSlot: String
+    let owner: AccountRequestOwner
+    let denied: () -> Void
     let refresh: () -> Void
+    @EnvironmentObject private var store: AppStore
 
     var body: some View {
         ScrollView {
@@ -1092,11 +1169,11 @@ private struct WeeklyMockResultView: View {
             } trailing: {
                 VStack(alignment: .leading, spacing: Tokens.Space.s6) {
                     if let selection = attempt.selection {
-                        WeeklyMockSelectionView(selection: selection, accountSlot: accountSlot) { attemptId, deferSelection in
-                            guard accountSlot == DataScope.slot else { return }
+                        WeeklyMockSelectionView(selection: selection, accountSlot: accountSlot, owner: owner, denied: denied) { attemptId, deferSelection in
+                            guard owner.isCurrent(in: store) else { throw CancellationError() }
                             try await ServerAPI.selectWeeklyMockRepresentative(
-                                weekKey: selection.weekKey, attemptId: attemptId, deferSelection: deferSelection)
-                            guard accountSlot == DataScope.slot else { return }
+                                weekKey: selection.weekKey, attemptId: attemptId, deferSelection: deferSelection, authorization: owner.authorization)
+                            guard owner.isCurrent(in: store) else { throw CancellationError() }
                             refresh()
                         }
                     }
@@ -1159,9 +1236,13 @@ private struct WeeklyMockResultView: View {
 private struct WeeklyMockSelectionView: View {
     let selection: ServerAPI.WeeklyMockSelection
     let accountSlot: String
+    let owner: AccountRequestOwner?
+    let denied: () -> Void
     let submit: (String?, Bool) async throws -> Void
+    @EnvironmentObject private var store: AppStore
     @State private var busy = false
     @State private var errorText: String?
+    @State private var requests = WeeklyMockOperationGate()
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
@@ -1204,6 +1285,8 @@ private struct WeeklyMockSelectionView: View {
             if let errorText { Text(errorText).font(.mCaption).foregroundStyle(Tokens.dangerInk) }
         }
         .card()
+        .onAppear { requests.activate() }
+        .onDisappear { requests.retire(); busy = false }
     }
 
     private func selected(_ option: ServerAPI.WeeklyMockSelectionAttempt) -> Bool {
@@ -1211,15 +1294,16 @@ private struct WeeklyMockSelectionView: View {
     }
 
     @MainActor private func choose(_ id: String?, deferSelection: Bool) async {
-        guard accountSlot == DataScope.slot else { return }
+        guard let owner, owner.isCurrent(in: store), let request = requests.begin("select", exclusive: true) else { return }
         busy = true
-        defer { busy = false }
+        defer { if requests.accepts(request) { busy = false; requests.finish(request) } }
         do {
             try await submit(id, deferSelection)
-            guard accountSlot == DataScope.slot else { return }
+            guard owner.isCurrent(in: store), requests.accepts(request) else { return }
             errorText = nil
         } catch {
-            guard accountSlot == DataScope.slot else { return }
+            guard owner.isCurrent(in: store), requests.accepts(request) else { return }
+            if WeeklyMockOperationGate.removesProtectedContent(statusCode: (error as? ServerAPIError)?.statusCode) { denied() }
             errorText = WeeklyMockFormat.message(error)
         }
     }
@@ -1229,7 +1313,9 @@ private struct WeeklyMockSelectionView: View {
 
 private struct WeeklyMockIntegrityScreen: View {
     let accountSlot: String
+    let owner: AccountRequestOwner
     let onClose: () -> Void
+    @EnvironmentObject private var store: AppStore
     @State private var cases: [ServerAPI.WeeklyMockIntegrityCase] = []
     @State private var selected: ServerAPI.WeeklyMockIntegrityCase?
     @State private var note = ""
@@ -1239,6 +1325,9 @@ private struct WeeklyMockIntegrityScreen: View {
     @State private var loading = true
     @State private var loadError: String?
     @State private var message: String?
+    @State private var requests = WeeklyMockOperationGate()
+
+    private var accountIsCurrent: Bool { owner.isCurrent(in: store) && requests.isActive }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1268,9 +1357,11 @@ private struct WeeklyMockIntegrityScreen: View {
                 .readableWidth(900).adaptiveHPadding().padding(.vertical, Tokens.Space.s6)
             }
         }
-        .task { await load() }
-        .onDisappear { cleanupFiles() }
+        .task { guard !Task.isCancelled else { return }; requests.activate(); await load() }
+        .onAppear { requests.activate() }
+        .onDisappear { requests.retire(); importing = false; submitting = false; loading = false; cleanupFiles(); files = [] }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .image], allowsMultipleSelection: true) { result in
+            guard accountIsCurrent else { return }
             do { files = try copyForUpload(Array(try result.get().prefix(10))); message = nil }
             catch { message = WeeklyMockFormat.message(error) }
         }
@@ -1283,7 +1374,7 @@ private struct WeeklyMockIntegrityScreen: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
             Text("요청 내역").font(.mTitle).foregroundStyle(Tokens.ink)
             ForEach(cases) { item in
-                Button { selected = item } label: {
+                Button { if accountIsCurrent { selected = item } } label: {
                     HStack(spacing: Tokens.Space.s4) {
                         Image(systemName: item.canSubmit ? "exclamationmark.shield.fill" : "checkmark.shield.fill")
                             .font(.title2).foregroundStyle(item.canSubmit ? Tokens.warning : Tokens.success)
@@ -1380,7 +1471,7 @@ private struct WeeklyMockIntegrityScreen: View {
     @ViewBuilder private func evidenceActionButtons(
         _ item: ServerAPI.WeeklyMockIntegrityCase
     ) -> some View {
-        Button { importing = true } label: {
+        Button { if accountIsCurrent { importing = true } } label: {
             Label("파일 선택", systemImage: "paperclip")
         }
         .buttonStyle(SecondaryButtonStyle())
@@ -1393,35 +1484,36 @@ private struct WeeklyMockIntegrityScreen: View {
     }
 
     @MainActor private func load() async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let request = requests.begin("load") else { return }
         loading = true
         loadError = nil
-        defer { loading = false }
+        defer { if requests.accepts(request) { loading = false; requests.finish(request) } }
         do {
-            let value = try await ServerAPI.weeklyMockIntegrityCases()
-            guard accountSlot == DataScope.slot else { return }
+            let value = try await ServerAPI.weeklyMockIntegrityCases(authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             cases = value
             if let selected { self.selected = cases.first { $0.id == selected.id } }
         } catch {
-            guard accountSlot == DataScope.slot else { return }
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            if WeeklyMockOperationGate.removesProtectedContent(statusCode: (error as? ServerAPIError)?.statusCode) { revokeAccess() }
             loadError = WeeklyMockFormat.message(error)
         }
     }
 
     @MainActor private func submit(_ item: ServerAPI.WeeklyMockIntegrityCase) async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let request = requests.begin("submit", exclusive: true) else { return }
         let submissionId = WeeklyMockEvidenceCommandStore.loadOrCreate(
             caseId: item.id,
             accountSlot: accountSlot)
         submitting = true
-        defer { submitting = false }
+        defer { if requests.accepts(request) { submitting = false; requests.finish(request) } }
         do {
             let receipt = try await ServerAPI.submitWeeklyMockEvidence(
                 caseId: item.id,
                 files: files,
                 note: note,
-                submissionId: submissionId)
-            guard accountSlot == DataScope.slot else { return }
+                submissionId: submissionId, authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             WeeklyMockEvidenceCommandStore.clear(
                 caseId: item.id,
                 accountSlot: accountSlot)
@@ -1429,12 +1521,14 @@ private struct WeeklyMockIntegrityScreen: View {
             message = "접수번호 \(receipt.receiptId)로 제출되었습니다."
             await load()
         } catch {
-            guard accountSlot == DataScope.slot else { return }
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            if WeeklyMockOperationGate.removesProtectedContent(statusCode: (error as? ServerAPIError)?.statusCode) { revokeAccess() }
             message = WeeklyMockFormat.message(error)
         }
     }
 
     private func copyForUpload(_ source: [URL]) throws -> [URL] {
+        guard accountIsCurrent else { throw CancellationError() }
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("WeeklyMockEvidence", isDirectory: true)
             .appendingPathComponent(accountSlot, isDirectory: true)
@@ -1449,6 +1543,11 @@ private struct WeeklyMockIntegrityScreen: View {
     }
 
     private func cleanupFiles() { files.forEach { try? FileManager.default.removeItem(at: $0) } }
+
+    private func revokeAccess() {
+        requests.reset(); cleanupFiles(); files = []; note = ""; selected = nil; cases = []
+        importing = false; submitting = false; loading = false
+    }
 }
 
 private enum WeeklyMockEvidenceCommandStore {
@@ -1479,7 +1578,9 @@ private enum WeeklyMockEvidenceCommandStore {
 
 private struct WeeklyMockObjectionScreen: View {
     let accountSlot: String
+    let owner: AccountRequestOwner
     let onClose: () -> Void
+    @EnvironmentObject private var store: AppStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var exams: [ServerAPI.WeeklyMockObjectionExam] = []
@@ -1491,6 +1592,9 @@ private struct WeeklyMockObjectionScreen: View {
     @State private var submitting = false
     @State private var loadError: String?
     @State private var message: String?
+    @State private var requests = WeeklyMockOperationGate()
+
+    private var accountIsCurrent: Bool { owner.isCurrent(in: store) && requests.isActive }
 
     private var usesLandscapeForm: Bool {
         verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize
@@ -1523,7 +1627,9 @@ private struct WeeklyMockObjectionScreen: View {
                 .readableWidth(860).adaptiveHPadding().padding(.vertical, Tokens.Space.s6)
             }
         }
-        .task { await load() }
+        .task { guard !Task.isCancelled else { return }; requests.activate(); await load() }
+        .onAppear { requests.activate() }
+        .onDisappear { requests.retire(); submitting = false; loading = false }
         .alert("이의제기", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("확인", role: .cancel) {}
         } message: { Text(message ?? "") }
@@ -1603,41 +1709,48 @@ private struct WeeklyMockObjectionScreen: View {
     }
 
     @MainActor private func load() async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let request = requests.begin("load") else { return }
         loading = true
         loadError = nil
-        defer { loading = false }
+        defer { if requests.accepts(request) { loading = false; requests.finish(request) } }
         do {
-            async let options = ServerAPI.weeklyMockObjectionOptions()
-            async let history = ServerAPI.weeklyMockObjections()
+            async let options = ServerAPI.weeklyMockObjectionOptions(authorization: owner.authorization)
+            async let history = ServerAPI.weeklyMockObjections(authorization: owner.authorization)
             let (loadedExams, loadedObjections) = try await (options, history)
-            guard accountSlot == DataScope.slot else { return }
+            guard accountIsCurrent, requests.accepts(request) else { return }
             exams = loadedExams
             objections = loadedObjections
             if examId.isEmpty { examId = exams.first?.id ?? "" }
         } catch {
-            guard accountSlot == DataScope.slot else { return }
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            if WeeklyMockOperationGate.removesProtectedContent(statusCode: (error as? ServerAPIError)?.statusCode) { revokeAccess() }
             loadError = WeeklyMockFormat.message(error)
         }
     }
 
     @MainActor private func submit() async {
-        guard accountSlot == DataScope.slot else { return }
+        guard accountIsCurrent, let request = requests.begin("submit", exclusive: true) else { return }
         submitting = true
-        defer { submitting = false }
+        defer { if requests.accepts(request) { submitting = false; requests.finish(request) } }
         do {
             _ = try await ServerAPI.createWeeklyMockObjection(
                 examId: examId,
                 questionNumber: questionNumber,
-                issueDetail: detail.trimmingCharacters(in: .whitespacesAndNewlines))
-            guard accountSlot == DataScope.slot else { return }
+                issueDetail: detail.trimmingCharacters(in: .whitespacesAndNewlines), authorization: owner.authorization)
+            guard accountIsCurrent, requests.accepts(request) else { return }
             detail = ""; questionNumber = 1
             message = "이의제기가 접수되었습니다. 검토 결과는 알림과 이메일로 안내됩니다."
             await load()
         } catch {
-            guard accountSlot == DataScope.slot else { return }
+            guard accountIsCurrent, requests.accepts(request) else { return }
+            if WeeklyMockOperationGate.removesProtectedContent(statusCode: (error as? ServerAPIError)?.statusCode) { revokeAccess() }
             message = WeeklyMockFormat.message(error)
         }
+    }
+
+    private func revokeAccess() {
+        requests.reset(); exams = []; objections = []; examId = ""; detail = ""; questionNumber = 1
+        submitting = false; loading = false
     }
 }
 

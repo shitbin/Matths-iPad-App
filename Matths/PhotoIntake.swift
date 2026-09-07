@@ -34,17 +34,33 @@ import UniformTypeIdentifiers
 
 enum PhotoIntakeLog {
     private static var url: URL { DataScope.url("photo-intake.log") }
+    private static let lock = NSLock()
 
     static func write(_ line: String) {
+        // Photo-provider diagnostics may include a Photos local identifier or
+        // a private temporary path. Keep raw diagnostics out of Release entirely.
+        #if DEBUG
+        lock.lock()
+        defer { lock.unlock() }
+        let url = url
         let stamp = ISO8601DateFormatter().string(from: Date())
-        let text = "[\(stamp)] \(line)\n"
+        let text = "[\(stamp)] \(line.prefix(4_096))\n"
+        let bytes = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
+        if bytes > 128 * 1_024 {
+            try? Data().write(to: url, options: [.atomic, .completeFileProtection])
+        }
         if let h = try? FileHandle(forWritingTo: url) {
             defer { try? h.close() }
             _ = try? h.seekToEnd()
             try? h.write(contentsOf: Data(text.utf8))
         } else {
-            try? Data(text.utf8).write(to: url)
+            try? Data(text.utf8).write(to: url, options: [.atomic, .completeFileProtection])
         }
+        var protectedURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? protectedURL.setResourceValues(values)
+        #endif
     }
 }
 

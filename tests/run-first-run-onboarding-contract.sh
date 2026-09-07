@@ -34,9 +34,10 @@ grep -Fq 'Button(admin ? "운영 작업대 열기" : "수업 작업대 열기")'
 
 # 코치 기본값은 최신 웹과 같은 mild이며, 선택값과 튜토리얼 완료를 서버에 저장한 뒤 이동한다.
 grep -Fq '@State private var selectedCoach: SpiceLevel = .mild' "$onboarding"
-grep -Fq 'try await ServerAPI.updateCoachMode(selectedCoach.serverValue)' "$onboarding"
-grep -Fq 'ServerAPI.updateDashboardTutorial(skipped ? "SKIP" : "COMPLETE")' "$onboarding"
-grep -Fq 'store.route = skipped ? .home : (isStaffAccount ? .academy : selectedIntent.destination)' "$onboarding"
+grep -Fq 'try await ServerAPI.updateCoachMode(coach.serverValue, authorization: owner.request.authorization)' "$onboarding"
+grep -Fq 'ServerAPI.updateDashboardTutorial(skipped ? "SKIP" : "COMPLETE", authorization: owner.request.authorization)' "$onboarding"
+grep -Fq 'let destination: AppStore.Route = skipped ? .home : (isStaffAccount ? .academy : selectedIntent.destination)' "$onboarding"
+grep -Fq 'store.route = destination' "$onboarding"
 grep -Fq 'SpiceLevel(rawValue: raw ?? "") ?? .mild' "$coach"
 grep -Fq 'var level: SpiceLevel = .mild' "$coach"
 
@@ -52,8 +53,10 @@ grep -Fq 'proxy.size.height < 500' "$onboarding"
 grep -Fq 'if compactHeight && !dynamicTypeSize.isAccessibilitySize' "$onboarding"
 grep -Fq 'dynamicTypeSize.isAccessibilitySize ? .visible : .hidden' "$onboarding"
 grep -Fq '.accessibilityAddTraits(.isModal)' "$onboarding"
-grep -Fq 'store.isTutorialPresentationActive = true' "$onboarding"
-grep -Fq 'store.isTutorialPresentationActive = false' "$onboarding"
+# UUID leases preserve modal isolation while preventing an old overlay cleanup
+# from clearing a newer account/overlay. Executable boundary cases exercise both.
+grep -Fq 'store.claimNativeTutorialPresentation(owner.id)' "$onboarding"
+grep -Fq 'store.releaseNativeTutorialPresentation(previous.id)' "$onboarding"
 grep -Fq 'arguments.contains("-firstRunFixture")' "$onboarding"
 grep -Fq 'args.contains("-firstRunFixture")' "$app"
 

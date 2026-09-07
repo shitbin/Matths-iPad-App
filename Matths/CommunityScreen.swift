@@ -425,7 +425,7 @@ struct CommunityScreen: View {
 /// 이전 마운트에 남는 경우가 있다. 매 진입마다 새 호스트를 반환하고 공유 웹뷰는 그
 /// 안에 한 번만 붙인다 — 페이지·세션·스크롤은 남고 SwiftUI 뷰 정체성은 새로워진다.
 final class CommunityWebHostView: UIView {
-    let embeddedWebView: WKWebView
+    private(set) var embeddedWebView: WKWebView
 
     init(webView: WKWebView) {
         embeddedWebView = webView
@@ -443,6 +443,21 @@ final class CommunityWebHostView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func replaceWebView(_ webView: WKWebView) {
+        guard embeddedWebView !== webView else { return }
+        embeddedWebView.removeFromSuperview()
+        embeddedWebView = webView
+        webView.removeFromSuperview()
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            webView.topAnchor.constraint(equalTo: topAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
 }
 
 struct CommunityWebView: UIViewRepresentable {
@@ -452,7 +467,7 @@ struct CommunityWebView: UIViewRepresentable {
         CommunityWebHostView(webView: model.webView)
     }
 
-    func updateUIView(_ host: CommunityWebHostView, context: Context) {}
+    func updateUIView(_ host: CommunityWebHostView, context: Context) { host.replaceWebView(model.webView) }
 
     static func dismantleUIView(_ host: CommunityWebHostView, coordinator: ()) {
         if host.embeddedWebView.superview === host {
@@ -497,13 +512,33 @@ final class CommunityWebModel: NSObject, ObservableObject {
     @Published var wantsNativeCommerce = false
     @Published var externalDestination: ExternalDestination?
     @Published var previewFile: PreviewFile?
+    @Published private(set) var webViewGeneration = 0
 
     /// 서버 주소. 호스트 비교와 경로 조립의 기준.
     private let serverBase = ServerAPI.baseURL
 
     private(set) lazy var webView: WKWebView = makeWebView()
     private var observers: [NSKeyValueObservation] = []
-    private let refreshControl = UIRefreshControl()
+    private var refreshControl = UIRefreshControl()
+    private var hostedPageSize: DynamicTypeSize = .large
+    private let accountObservers = WebAccountObserverBag()
+    private var ownership = WebHandoffOwnership()
+    private var requestTask: Task<Void, Never>?
+    private struct RequestContext {
+        let ticket: WebHandoffOwnership.Ticket
+        let authorization: ServerAPI.AuthorizationSnapshot?
+        let signedIn: Bool
+        let view: WKWebView
+    }
+    #if DEBUG
+    var debugHandoffClient: ((ServerAPI.AuthorizationSnapshot) async throws -> String)?
+    private(set) var debugLoadedURLs: [URL] = []
+    var debugHandoffTask: Task<Void, Never>? { requestTask }
+    func debugBeginHandoffForSelfTest() {
+        signedIn = true
+        startHandoff(then: serverURL("/community"))
+    }
+    #endif
 
     private var started = false
     private var signedIn = false
@@ -520,15 +555,22 @@ final class CommunityWebModel: NSObject, ObservableObject {
     /// 게시판 인스턴스는 `/community`, 서비스 포털 인스턴스는 선택한 학원·관리 경로다.
     private var entryPath = "/community"
     private var downloadFiles: [ObjectIdentifier: URL] = [:]
+    private var authorizedDownloads = Set<ObjectIdentifier>()
 
     override init() {
         super.init()
+        accountObservers.tokens = [DataScope.didSwitchNotification, .matthsServerAuthenticationExpired].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.accountDidChange() }
+            }
+        }
     }
 
     // MARK: 진입·계정
 
     /// 화면이 나타날 때마다 부른다. 이미 열려 있고 계정도 그대로면 아무것도 안 한다.
     func start(signedIn: Bool, path: String = "/community") {
+        if started, self.signedIn != signedIn { accountDidChange() }
         self.signedIn = signedIn
         let nextPath = normalizedInternalPath(path)
         let destinationChanged = nextPath != entryPath
@@ -543,13 +585,38 @@ final class CommunityWebModel: NSObject, ObservableObject {
 
     /// 로그아웃·계정 전환. 화면이 떠 있든 아니든 다음 진입 때 세션을 새로 잇는다.
     func accountDidChange() {
+        cancelTransition()
+        if let host = serverBase.host?.lowercased() { _ = HostedWebCookieReset.beginReset(host: host) }
         needsFreshSession = true
+        started = false
+        signedIn = ServerAPI.hasToken
         loginRequired = false
+        loadFailure = nil
+        sessionNotice = nil
+        wantsNativeCommerce = false
+        handingOff = false
+        pendingDestination = nil
+        lastInternalURL = nil
+        lastHandoffAt = nil
+        hasDisplayedPage = false
+        previewFile = nil
+        externalDestination = nil
+        downloadFiles.removeAll()
+        authorizedDownloads.removeAll()
+        webView.stopLoading()
+        observers.removeAll()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        refreshControl = UIRefreshControl()
+        webView = makeWebView()
+        webViewGeneration &+= 1
+        progress = 0; isLoading = false; canGoBack = false; canGoForward = false
     }
 
     /// 서버 HTML도 App Store의 더 큰 텍스트 기준에 포함되는 공통 작업이다. 번들 HTML
     /// 전용 CSS 변수 대신 WKWebView 문서 배율을 써서 서버 배포와 무관하게 즉시 반영한다.
     func updateAccessibility(size: DynamicTypeSize) {
+        hostedPageSize = size
         WebContentAccessibility.configureHostedPage(
             webView,
             size: size
@@ -575,6 +642,7 @@ final class CommunityWebModel: NSObject, ObservableObject {
 
     /// 쿠키를 정리하고(계정이 바뀌었을 수 있다) 로그인 상태면 핸드오프, 아니면 그냥 연다.
     private func openFresh(path: String) {
+        cancelTransition()
         needsFreshSession = false
         loadFailure = nil
         loginRequired = false
@@ -588,24 +656,37 @@ final class CommunityWebModel: NSObject, ObservableObject {
         }
         #endif
         let destination = serverURL(path)
-        Task { @MainActor in
+        let context = captureRequest()
+        guard !context.signedIn || context.authorization != nil else {
+            loginRequired = true
+            isLoading = false
+            needsFreshSession = true
+            return
+        }
+        isLoading = true
+        requestTask = Task { @MainActor in
             // 게스트로 들어왔거나 계정이 바뀌었으면 앞사람의 세션 쿠키가 남아 있으면 안 된다.
             // 로그인 상태의 핸드오프는 어차피 세션을 새로 만들어 덮어쓰지만, 게스트는
             // 덮어쓸 것이 없으므로 여기서 지운다.
             await clearServerCookies()
-            if signedIn {
-                await handoff(then: destination)
+            guard isCurrent(context) else { return }
+            if context.signedIn {
+                await handoff(then: destination, context: context)
             } else {
-                load(destination)
+                load(destination, in: context.view)
             }
         }
     }
 
     // MARK: 조작
 
-    func goBack() { webView.goBack() }
-    func goForward() { webView.goForward() }
+    func goBack() { cancelTransition(); webView.goBack() }
+    func goForward() { cancelTransition(); webView.goForward() }
     func stop() {
+        cancelTransition()
+        handingOff = false
+        pendingDestination = nil
+        isLoading = false
         webView.stopLoading()
         // 첫 화면을 받기 전에 중지하면 WKWebView 에는 보여 줄 문서가 없다. 빈 화면으로
         // 되돌아가지 말고 사용자가 방금 한 동작과 재시도 방법을 분명히 남긴다.
@@ -617,8 +698,10 @@ final class CommunityWebModel: NSObject, ObservableObject {
     }
 
     func reload() {
+        let wasHandoff = handingOff
+        cancelTransition()
         loadFailure = nil
-        if webView.url == nil {
+        if webView.url == nil || wasHandoff || needsFreshSession {
             openFresh(path: entryPath)
         } else {
             webView.reload()
@@ -628,9 +711,10 @@ final class CommunityWebModel: NSObject, ObservableObject {
     /// 오류 카드의 "다시 시도". 실패한 주소가 있으면 그 주소를, 없으면 처음부터.
     func retry() {
         let failed = loadFailure?.url
+        cancelTransition()
         loadFailure = nil
         hasDisplayedPage = false
-        if let failed, isServerHost(failed) {
+        if let failed, isServerHost(failed), !needsFreshSession, !failed.path.hasPrefix("/app/commerce/") {
             load(failed)
         } else {
             openFresh(path: currentInternalPath ?? entryPath)
@@ -640,6 +724,7 @@ final class CommunityWebModel: NSObject, ObservableObject {
     /// 글쓰기. 지금 보고 있는 게시판(board 질의)을 그대로 넘겨 웹의 "새 글 쓰기"
     /// 링크와 같은 곳에 도착한다.
     func openComposer() {
+        cancelTransition()
         #if DEBUG
         if DemoMode.isOn {
             loadDemoPage(path: "/community/new")
@@ -725,40 +810,77 @@ final class CommunityWebModel: NSObject, ObservableObject {
 
     // MARK: 로그인 핸드오프
 
+    private func cancelTransition() {
+        ownership.invalidate()
+        requestTask?.cancel()
+        requestTask = nil
+        handingOff = false
+        pendingDestination = nil
+        webView.stopLoading()
+    }
+
+    private func captureRequest() -> RequestContext {
+        RequestContext(ticket: ownership.begin(slot: DataScope.slot, viewIdentity: ObjectIdentifier(webView)),
+                       authorization: ServerAPI.captureAuthorization(), signedIn: signedIn, view: webView)
+    }
+
+    private func isCurrent(_ context: RequestContext) -> Bool {
+        guard !Task.isCancelled, context.view === webView,
+              ownership.owns(context.ticket, slot: DataScope.slot, viewIdentity: ObjectIdentifier(webView)),
+              context.signedIn == signedIn else { return false }
+        if context.signedIn {
+            guard let authorization = context.authorization else { return false }
+            return ServerAPI.isCurrentAuthorization(authorization)
+        }
+        return true
+    }
+
+    private func startHandoff(then destination: URL) {
+        cancelTransition()
+        let context = captureRequest()
+        guard context.authorization != nil else { loginRequired = true; isLoading = false; return }
+        requestTask = Task { @MainActor in await handoff(then: destination, context: context) }
+    }
+
     /// 이용권 화면과 같은 통로: Bearer → 일회용 URL → 웹뷰가 열면 세션 쿠키가 심긴다.
     /// mode "pricing" 은 이용권 결제 여부와 무관하게 항상 발급된다(서버 규칙).
-    private func handoff(then destination: URL) async {
+    private func handoff(then destination: URL, context: RequestContext) async {
+        guard isCurrent(context), let authorization = context.authorization else { return }
         handingOff = true
         pendingDestination = destination
         loadFailure = nil
         do {
-            let handoff = try await ServerAPI.createCommerceHandoff(mode: "pricing")
-            guard let url = validatedHandoffURL(handoff.url) else {
+            let rawURL: String
+            #if DEBUG
+            if let debugHandoffClient { rawURL = try await debugHandoffClient(authorization) }
+            else { rawURL = try await ServerAPI.createCommerceHandoff(mode: "pricing", authorization: authorization).url }
+            #else
+            rawURL = try await ServerAPI.createCommerceHandoff(mode: "pricing", authorization: authorization).url
+            #endif
+            guard isCurrent(context) else { return }
+            guard let url = validatedHandoffURL(rawURL) else {
                 throw ServerAPIError(
                     message: "로그인 연결 주소의 안전성을 확인할 수 없습니다.",
                     code: "INVALID_HANDOFF_URL")
             }
             lastHandoffAt = Date()
             sessionNotice = nil
-            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+            load(url, in: context.view)
         } catch {
+            guard isCurrent(context) else { return }
             // 토큰 만료(401)면 ServerAPI 가 이미 앱 전체에 재로그인을 알렸다.
             // 여기서는 읽기 모드로 열고 한 줄만 남긴다 — 게시판 읽기까지 막을 이유가 없다.
             handingOff = false
             pendingDestination = nil
             sessionNotice = "로그인 세션을 잇지 못해 읽기 모드로 열었습니다."
-            load(destination)
+            load(destination, in: context.view)
         }
     }
 
     /// 이용권 화면(CommerceHubScreen.validatedCommerceURL)과 같은 검사:
     /// https · 같은 호스트 · /app/commerce/ 경로만 연다.
     private func validatedHandoffURL(_ value: String) -> URL? {
-        guard let url = URL(string: value),
-              url.scheme == "https",
-              url.host?.lowercased() == serverBase.host?.lowercased(),
-              url.path.hasPrefix("/app/commerce/") else { return nil }
-        return url
+        WebHandoffOwnership.validatedURL(value, base: serverBase)
     }
 
     /// 핸드오프 URL 이 리다이렉트 없이 오류 페이지(410 만료·403 계정 상태)로 끝났을 때.
@@ -800,6 +922,7 @@ final class CommunityWebModel: NSObject, ObservableObject {
 
         refreshControl.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
+        WebContentAccessibility.configureHostedPage(webView, size: hostedPageSize)
 
         // WKWebView 의 KVO 는 메인 스레드에서 온다. 옵저버 클로저는 @Sendable 이라
         // 격리 추론을 못 받으므로 메인 액터임을 명시해 상태를 갱신한다.
@@ -903,18 +1026,20 @@ final class CommunityWebModel: NSObject, ObservableObject {
         return strip(host) == strip(base)
     }
 
-    private func load(_ url: URL) {
+    private func load(_ url: URL, in requestedView: WKWebView? = nil) {
+        let target = requestedView ?? webView
+        guard target === webView else { return }
+        #if DEBUG
+        if debugHandoffClient != nil { debugLoadedURLs.append(url); return }
+        #endif
         loadFailure = nil
-        webView.load(URLRequest(url: url))
+        target.load(URLRequest(url: url))
     }
 
     /// 서버 호스트의 쿠키만 지운다. 다른 웹뷰(개념 수업 등)는 로컬 파일이라 영향이 없다.
     private func clearServerCookies() async {
-        let store = WKWebsiteDataStore.default().httpCookieStore
-        let cookies = await store.allCookies()
-        for cookie in cookies where isServerCookie(cookie) {
-            await store.deleteCookie(cookie)
-        }
+        guard let host = serverBase.host?.lowercased() else { return }
+        await HostedWebCookieReset.reset(host: host)
     }
 
     private func isServerCookie(_ cookie: HTTPCookie) -> Bool {
@@ -947,6 +1072,7 @@ extension CommunityWebModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard webView === self.webView else { decisionHandler(.cancel); return }
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
@@ -993,7 +1119,7 @@ extension CommunityWebModel: WKNavigationDelegate {
             let recently = lastHandoffAt.map { Date().timeIntervalSince($0) < 30 } ?? false
             if signedIn && !recently {
                 let destination = lastInternalURL ?? serverURL(entryPath)
-                Task { @MainActor in await handoff(then: destination) }
+                startHandoff(then: destination)
             } else {
                 loginRequired = true
             }
@@ -1029,6 +1155,7 @@ extension CommunityWebModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationResponse: WKNavigationResponse,
                  decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard webView === self.webView else { decisionHandler(.cancel); return }
         guard navigationResponse.isForMainFrame,
               let http = navigationResponse.response as? HTTPURLResponse else {
             decisionHandler(.allow)
@@ -1072,10 +1199,12 @@ extension CommunityWebModel: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
         loadFailure = nil
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
         refreshControl.endRefreshing()
         hasDisplayedPage = true
         #if DEBUG
@@ -1096,17 +1225,20 @@ extension CommunityWebModel: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         handleFailure(error, url: webView.url)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
+        guard webView === self.webView else { return }
         let failedURL = (error as NSError).userInfo[NSURLErrorFailingURLErrorKey] as? URL
         handleFailure(error, url: failedURL)
     }
 
     /// 웹 콘텐츠 프로세스가 죽으면(메모리 압박) 빈 화면이 남는다. 같은 주소를 다시 연다.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
         hasDisplayedPage = false
         if webView.url != nil { webView.reload() } else { openFresh(path: entryPath) }
     }
@@ -1132,11 +1264,15 @@ extension CommunityWebModel: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
                  didBecome download: WKDownload) {
+        guard webView === self.webView else { return }
+        authorizedDownloads.insert(ObjectIdentifier(download))
         download.delegate = self
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction,
                  didBecome download: WKDownload) {
+        guard webView === self.webView else { return }
+        authorizedDownloads.insert(ObjectIdentifier(download))
         download.delegate = self
     }
 }
@@ -1148,6 +1284,7 @@ extension CommunityWebModel: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard webView === self.webView else { return nil }
         guard let url = navigationAction.request.url else { return nil }
         // 데모 목업의 첨부 썸네일은 원본 템플릿대로 target="_blank" 인데 주소가 file:// 다.
         // 그대로 아래 분기로 흘려보내면 아무 데도 안 걸려 링크가 죽은 채로 보인다
@@ -1168,6 +1305,7 @@ extension CommunityWebModel: WKUIDelegate {
     /// 지금 커뮤니티 페이지는 안 쓰지만, 웹 팀이 추가해도 앱이 깨지지 않게 받아 둔다.
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        guard webView === self.webView else { completionHandler(); return }
         guard let presenter = Self.topViewController() else {
             completionHandler()
             return
@@ -1179,6 +1317,7 @@ extension CommunityWebModel: WKUIDelegate {
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        guard webView === self.webView else { completionHandler(false); return }
         guard let presenter = Self.topViewController() else {
             completionHandler(false)
             return
@@ -1204,6 +1343,7 @@ extension CommunityWebModel: WKUIDelegate {
 extension CommunityWebModel: WKDownloadDelegate {
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        guard authorizedDownloads.contains(ObjectIdentifier(download)) else { completionHandler(nil); return }
         // 임시 폴더 아래 다운로드마다 새 디렉터리 — 같은 파일명끼리 덮어쓰지 않는다.
         // 영구 보관이 아니라 미리보기용이다. 시스템이 tmp 를 정리해도 잃을 것이 없다.
         let directory = FileManager.default.temporaryDirectory
@@ -1215,18 +1355,21 @@ extension CommunityWebModel: WKDownloadDelegate {
             completionHandler(nil)
             return
         }
-        let safeName = suggestedFilename.isEmpty ? "attachment" : suggestedFilename
+        let candidate = (suggestedFilename as NSString).lastPathComponent
+        let safeName = candidate.isEmpty || candidate == "." || candidate == ".." ? "attachment" : candidate
         let file = directory.appendingPathComponent(safeName)
         downloadFiles[ObjectIdentifier(download)] = file
         completionHandler(file)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        guard authorizedDownloads.remove(ObjectIdentifier(download)) != nil else { return }
         guard let file = downloadFiles.removeValue(forKey: ObjectIdentifier(download)) else { return }
         previewFile = PreviewFile(url: file)
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        guard authorizedDownloads.remove(ObjectIdentifier(download)) != nil else { return }
         downloadFiles.removeValue(forKey: ObjectIdentifier(download))
         loadFailure = LoadFailure(message: "첨부파일을 내려받지 못했습니다. " + readableMessage(for: error),
                                   url: nil)

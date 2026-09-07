@@ -15,36 +15,62 @@ struct TeacherClassManagementPanel: View {
     @State private var selectedHomeroomID = ""
     @State private var keepPreviousAsCoTeacher = true
     @State private var confirmsHomeroomTransfer = false
+    @State private var showsChangeReview = false
+    @State private var confirmsDiscard = false
+    @State private var originalDraft = TeacherClassManagementPanel.defaultDraft()
+    @State private var selectedClassID: String?
+    @State private var query = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             panelHeader
 
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: Tokens.Space.s2) {
-                    if dashboard.classes.isEmpty {
-                        emptyState("활성 반이 없습니다", "첫 반을 만들고 학생을 배정해 주세요.")
-                    } else {
-                        ForEach(dashboard.classes) { academyClass in
-                            classCard(academyClass)
-                        }
+            TextField("반 이름 검색", text: $query).textFieldStyle(.roundedBorder)
+            GeometryReader { viewport in
+                if StaffWorkspaceMetrics.usesListDetail(width: viewport.size.width) {
+                    HStack(alignment: .top, spacing: Tokens.Space.s3) {
+                        ScrollView {
+                            LazyVStack(spacing: Tokens.Space.s1) {
+                                ForEach(filteredClasses) { academyClass in
+                                    Button { selectedClassID = academyClass.id } label: {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(academyClass.name).font(.mBodyB)
+                                            Text("\(academyClass.studentCount ?? 0)명 · \(scheduleLabel(academyClass))").font(.mMicro)
+                                        }
+                                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                                        .padding(.horizontal, Tokens.Space.s2)
+                                        .background(selectedClass?.id == academyClass.id ? Tokens.primarySoft : Tokens.surface,
+                                                    in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                                    }.buttonStyle(.plain)
+                                }
+                            }
+                        }.frame(width: StaffWorkspaceMetrics.listWidth(width: viewport.size.width))
+                        ScrollView {
+                            if let selectedClass {
+                                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                                    classCard(selectedClass)
+                                    Text("일정 변경은 적용일부터 미래 회차에 반영됩니다. 담당 교사·출석 방식은 저장 전에 변경 내용을 확인합니다.")
+                                        .font(.mCaption).foregroundStyle(Tokens.text2)
+                                }
+                            } else { emptyState("반을 선택해 주세요", "이름으로 검색하거나 새 반을 만들 수 있습니다.") }
+                            archivedClassesContent
+                        }.frame(maxWidth: .infinity)
                     }
-                    if dashboard.isOwner, !(dashboard.archivedClasses ?? []).isEmpty {
-                        Text("보관된 반")
-                            .font(.mCaption).foregroundStyle(Tokens.text2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, Tokens.Space.s2)
-                        ForEach(dashboard.archivedClasses ?? []) { academyClass in
-                            archivedCard(academyClass)
-                        }
-                    }
+                } else {
+                    compactClasses
                 }
             }
-            .refreshable { await model.load() }
         }
         .compactHeightSheet(isPresented: $showsEditor) { editor }
         .compactHeightSheet(item: $managingTeachersClass) { academyClass in
             teacherAssignmentEditor(academyClass)
+        }
+        .onChange(of: dashboard.classes) { _, classes in
+            if let editingClass, !classes.contains(where: { $0.id == editingClass.id && $0.canManage != false }) {
+                showsEditor = false
+                showsChangeReview = false
+                model.errorMessage = "반 관리 권한이 변경되어 편집을 종료했습니다."
+            }
         }
         #if DEBUG
         .onAppear {
@@ -58,21 +84,51 @@ struct TeacherClassManagementPanel: View {
             }
         }
         #endif
-        .confirmationDialog(
-            "이 반을 보관할까요?",
-            isPresented: Binding(
-                get: { archivingClass != nil },
-                set: { if !$0 { archivingClass = nil } }),
-            titleVisibility: .visible,
-            presenting: archivingClass
-        ) { academyClass in
-            Button("\(academyClass.name) 보관", role: .destructive) {
-                archivingClass = nil
-                Task { await model.archiveClass(academyClass) }
+        .compactHeightSheet(item: $archivingClass) { academyClass in
+            StaffChangeReview(title: "반 보관", changes: [
+                StaffChangeValue(label: academyClass.name, before: "운영 중 · 학생 \(academyClass.studentCount ?? 0)명", after: "보관 · 학생 배정 해제")
+            ], impact: "예정 출결 회차와 연결된 초대가 취소됩니다. 과거 수업·출결 기록은 보존됩니다.",
+                actionTitle: "반 보관", destructive: true, isWorking: model.actionID != nil,
+                onCancel: { archivingClass = nil }, onConfirm: {
+                    Task { await model.archiveClass(academyClass); if model.errorMessage == nil { archivingClass = nil } }
+                })
+        }
+    }
+
+    private var filteredClasses: [ServerAPI.AcademyClassSummary] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return dashboard.classes.filter { needle.isEmpty || $0.name.localizedCaseInsensitiveContains(needle) }
+    }
+
+    private var selectedClass: ServerAPI.AcademyClassSummary? {
+        filteredClasses.first(where: { $0.id == selectedClassID }) ?? filteredClasses.first
+    }
+
+    private var compactClasses: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: Tokens.Space.s2) {
+                    if filteredClasses.isEmpty {
+                        emptyState(query.isEmpty ? "활성 반이 없습니다" : "검색 결과가 없습니다", "검색어를 확인하거나 새 반을 만들어 주세요.")
+                    } else {
+                        ForEach(filteredClasses) { academyClass in
+                            classCard(academyClass)
+                        }
+                    }
+                    archivedClassesContent
+                }
             }
-            Button("취소", role: .cancel) { archivingClass = nil }
-        } message: { _ in
-            Text("학생의 반 배정이 해제되고 예정 출결 회차와 연결된 초대가 취소됩니다. 과거 기록은 보존됩니다.")
+            .refreshable { await model.load() }
+    }
+
+    @ViewBuilder private var archivedClassesContent: some View {
+        if dashboard.isOwner, !(dashboard.archivedClasses ?? []).isEmpty {
+                        Text("보관된 반")
+                            .font(.mCaption).foregroundStyle(Tokens.text2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, Tokens.Space.s2)
+                        ForEach(dashboard.archivedClasses ?? []) { academyClass in
+                            archivedCard(academyClass)
+                        }
         }
     }
 
@@ -183,7 +239,7 @@ struct TeacherClassManagementPanel: View {
                             columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s1), count: 7),
                             spacing: Tokens.Space.s1
                         ) {
-                            ForEach(1...7, id: \.self) { day in
+                            ForEach(AcademySchedulePolicy.weekdayLabels.indices, id: \.self) { day in
                                 Button(Self.weekdayNames[day] ?? "-") { toggleDay(day) }
                                     .buttonStyle(.plain)
                                     .font(.mCaption)
@@ -224,15 +280,27 @@ struct TeacherClassManagementPanel: View {
             }
             .navigationTitle(editingClass == nil ? "새 반" : "반 설정")
             .navigationBarTitleDisplayMode(.inline)
-            .interactiveDismissDisabled(model.actionID != nil)
+            .interactiveDismissDisabled(model.actionID != nil || draft != originalDraft)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { showsEditor = false }.disabled(model.actionID != nil)
+                    Button("취소") {
+                        if draft != originalDraft { confirmsDiscard = true } else { showsEditor = false }
+                    }.disabled(model.actionID != nil)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(model.actionID == nil ? "저장" : "저장 중…") { save() }
                         .disabled(model.actionID != nil)
                 }
+            }
+            .confirmationDialog("저장하지 않은 변경을 버릴까요?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+                Button("변경 버리기", role: .destructive) { draft = originalDraft; showsEditor = false }
+                Button("계속 편집", role: .cancel) {}
+            }
+            .compactHeightSheet(isPresented: $showsChangeReview) {
+                StaffChangeReview(title: "반 설정 변경 확인", changes: classChanges,
+                    impact: "적용일 이후 아직 시작하지 않은 기존 출결 회차는 취소되고 새 일정으로 생성됩니다. 과거 출결과 학생 기록은 보존됩니다.",
+                    actionTitle: "설정 적용", isWorking: model.actionID != nil,
+                    onCancel: { showsChangeReview = false }, onConfirm: { commitSave() })
             }
         }
     }
@@ -341,6 +409,7 @@ struct TeacherClassManagementPanel: View {
     private func startNew() {
         editingClass = nil
         draft = Self.defaultDraft()
+        originalDraft = draft
         model.errorMessage = nil
         model.noticeMessage = nil
         showsEditor = true
@@ -351,7 +420,7 @@ struct TeacherClassManagementPanel: View {
         let policy = academyClass.attendancePolicy
         draft = ServerAPI.TeacherAcademyClassDraft(
             name: academyClass.name,
-            weekdays: academyClass.schedule?.weekdays ?? [2],
+            weekdays: academyClass.schedule?.weekdays ?? AcademySchedulePolicy.defaultWeekdays,
             startTime: academyClass.schedule?.startTime ?? "18:00",
             endTime: academyClass.schedule?.endTime ?? "20:00",
             effectiveFrom: academyClass.schedule?.effectiveFrom ?? Self.dateFormatter.string(from: Date()),
@@ -359,6 +428,7 @@ struct TeacherClassManagementPanel: View {
             opensBeforeMinutes: policy?.opensBeforeMinutes ?? 10,
             lateAfterMinutes: policy?.lateAfterMinutes ?? 5,
             closesAfterMinutes: policy?.closesAfterMinutes ?? 20)
+        originalDraft = draft
         model.errorMessage = nil
         model.noticeMessage = nil
         showsEditor = true
@@ -402,16 +472,36 @@ struct TeacherClassManagementPanel: View {
         draft.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !draft.name.isEmpty else { model.errorMessage = "반 이름을 입력해 주세요."; return }
         guard !draft.weekdays.isEmpty else { model.errorMessage = "수업 요일을 한 개 이상 선택해 주세요."; return }
+        guard AcademySchedulePolicy.validWeekdays(draft.weekdays) else {
+            model.errorMessage = "수업 요일 정보를 확인하지 못했습니다. 반 정보를 새로고침해 주세요."; return
+        }
         guard Self.timeMinutes(draft.endTime) > Self.timeMinutes(draft.startTime) else {
             model.errorMessage = "종료 시간은 시작 시간보다 늦어야 합니다."
             return
         }
-        if draft.attendanceMode == "SELF_CODE", draft.closesAfterMinutes <= draft.lateAfterMinutes {
+        if !AcademySchedulePolicy.attendanceWindowIsValid(late: draft.lateAfterMinutes, close: draft.closesAfterMinutes) {
             model.errorMessage = "출석 마감 시간은 지각 기준보다 늦어야 합니다."
             return
         }
+        if editingClass != nil { showsChangeReview = true } else { commitSave() }
+    }
+
+    private var classChanges: [StaffChangeValue] {
+        [
+            .init(label: "수업 요일", before: originalDraft.weekdays.map { Self.weekdayNames[$0] ?? "-" }.joined(separator: "·"), after: draft.weekdays.map { Self.weekdayNames[$0] ?? "-" }.joined(separator: "·")),
+            .init(label: "수업 시간", before: "\(originalDraft.startTime)–\(originalDraft.endTime)", after: "\(draft.startTime)–\(draft.endTime)"),
+            .init(label: "적용일", before: originalDraft.effectiveFrom, after: draft.effectiveFrom),
+            .init(label: "출석 방식", before: originalDraft.attendanceMode == "SELF_CODE" ? "학생 코드" : "수동", after: draft.attendanceMode == "SELF_CODE" ? "학생 코드" : "수동"),
+            .init(label: "출석 열기·지각·마감", before: "\(originalDraft.opensBeforeMinutes) / \(originalDraft.lateAfterMinutes) / \(originalDraft.closesAfterMinutes)분", after: "\(draft.opensBeforeMinutes) / \(draft.lateAfterMinutes) / \(draft.closesAfterMinutes)분")
+        ]
+    }
+
+    private func commitSave() {
+        let savingDraft = draft
+        let classID = editingClass?.id
         Task {
-            if await model.saveClass(classID: editingClass?.id, draft: draft) {
+            if await model.saveClass(classID: classID, draft: savingDraft) {
+                showsChangeReview = false
                 showsEditor = false
             }
         }
@@ -463,7 +553,7 @@ struct TeacherClassManagementPanel: View {
         .background(Tokens.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
     }
 
-    private static let weekdayNames = [1: "일", 2: "월", 3: "화", 4: "수", 5: "목", 6: "금", 7: "토"]
+    private static let weekdayNames = Dictionary(uniqueKeysWithValues: AcademySchedulePolicy.weekdayLabels.enumerated().map { ($0.offset, $0.element) })
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -490,7 +580,7 @@ struct TeacherClassManagementPanel: View {
     private static func defaultDraft() -> ServerAPI.TeacherAcademyClassDraft {
         ServerAPI.TeacherAcademyClassDraft(
             name: "",
-            weekdays: [2],
+            weekdays: AcademySchedulePolicy.defaultWeekdays,
             startTime: "18:00",
             endTime: "20:00",
             effectiveFrom: dateFormatter.string(from: Date()),

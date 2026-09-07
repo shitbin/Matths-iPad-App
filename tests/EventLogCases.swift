@@ -73,6 +73,17 @@ struct EventLogCases {
 
         try checkFixedDashboardContract()
         try await checkInvalidationAndReactivation()
+        let frozenDate = Date(timeIntervalSince1970: 1_700_000_000)
+        for _ in 0..<3 {
+            EventLog.appendGrading(correct: 1, total: 3, durationMs: 1001,
+                receiptID: "kice-fixed-receipt", occurredAt: frozenDate)
+        }
+        let receiptPersisted = await EventLog.flushPendingWrites()
+        precondition(receiptPersisted)
+        let receiptEvents = EventLog.all().filter { $0.clientEventId.hasPrefix("kice-fixed-receipt-") }
+        precondition(receiptEvents.count == 3, "retry of a durable grading receipt must not count repeated events")
+        precondition(receiptEvents.allSatisfy { $0.at == frozenDate }, "recovery must retain the original grading day")
+        precondition(receiptEvents.compactMap(\.durationMs).reduce(0, +) == 1001)
 
         print("EventLog 최근 7일 집계·KST 대시보드 계약 전부 통과")
     }

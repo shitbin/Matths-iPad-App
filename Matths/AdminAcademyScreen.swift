@@ -13,6 +13,7 @@ final class AdminAcademyScreenModel: ObservableObject {
     func resetAndLoad() async {
         generation = UUID()
         dashboard = nil
+        actionID = nil
         errorMessage = nil
         noticeMessage = nil
         await load()
@@ -20,11 +21,14 @@ final class AdminAcademyScreenModel: ObservableObject {
 
     func load() async {
         let requestGeneration = generation
+        let account = DataScope.slot
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         isLoading = dashboard == nil
         errorMessage = nil
         do {
-            let value = try await ServerAPI.adminAcademyDashboard()
-            guard requestGeneration == generation else { return }
+            let value = try await ServerAPI.adminAcademyDashboard(authorization: authorization)
+            guard requestGeneration == generation, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
             dashboard = value
         } catch is CancellationError {
             return
@@ -37,23 +41,33 @@ final class AdminAcademyScreenModel: ObservableObject {
 
     func review(_ academy: ServerAPI.AdminAcademyApplication, approve: Bool) async {
         guard actionID == nil else { return }
+        let requestGeneration = generation
+        let account = DataScope.slot
+        let authorization = ServerAPI.authorizationForCurrentRequest()
         actionID = academy.id
         errorMessage = nil
         noticeMessage = nil
         do {
-            dashboard = try await ServerAPI.reviewAcademyApplication(
-                academyID: academy.id, approve: approve)
+            let response = try await ServerAPI.reviewAcademyApplication(
+                academyID: academy.id, approve: approve, authorization: authorization)
+            guard requestGeneration == generation, account == DataScope.slot,
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
+            dashboard = response
             noticeMessage = approve
                 ? "\(academy.name) 등록을 승인했습니다."
                 : "\(academy.name) 등록을 반려했습니다."
         } catch {
+            guard requestGeneration == generation, account == DataScope.slot else { return }
             errorMessage = readable(error)
         }
         actionID = nil
     }
 
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
+        if (error as? ServerAPIError)?.statusCode == 403 {
+            generation = UUID(); dashboard = nil; actionID = nil; isLoading = false
+        }
+        return (error as? ServerAPIError)?.errorDescription
             ?? (error as NSError).localizedDescription
     }
 }
@@ -71,202 +85,127 @@ struct AdminAcademyScreen: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = AdminAcademyScreenModel()
     @State private var reviewIntent: ReviewIntent?
-    @State private var showsToolHub = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminToolHub")
-        #else
-        false
-        #endif
-    }()
+    @State private var navigation = Self.initialNavigation
     @State private var toolQuery = ""
-    @State private var showsExplorer = {
+
+    private static var initialNavigation: AdminWorkspaceNavigationState {
+        var state = AdminWorkspaceNavigationState()
         #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminAcademyExplorer")
-        #else
-        false
+        let arguments = ProcessInfo.processInfo.arguments
+        let fixtures: [(String, AdminWorkspaceTool)] = [
+            ("-adminAcademyExplorer", .academies), ("-adminOperations", .operations),
+            ("-adminUsers", .users), ("-adminUserActivity", .users), ("-adminUserAssessment", .users),
+            ("-adminFinance", .finance), ("-adminRefunds", .finance), ("-adminPaybacks", .finance),
+            ("-adminCommunity", .community), ("-adminWeeklyMock", .weeklyMock),
+            ("-adminArchive", .archive), ("-adminStore", .store), ("-adminArena", .arena),
+            ("-adminDataAnalysis", .dataAnalysis), ("-adminPdfForensics", .pdfForensics),
+            ("-adminArenaPolicies", .arenaPolicies), ("-adminProblemBanks", .problemBanks),
+            ("-adminCoachSuggestions", .coachSuggestions), ("-adminOperationsGuide", .operationsGuide)
+        ]
+        if let fixture = fixtures.first(where: { arguments.contains($0.0) }) { state.open(fixture.1) }
+        if arguments.contains("-adminToolHub") { state.showDirectory() }
         #endif
-    }()
-    @State private var showsOperations = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminOperations")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsUsers = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminUsers")
-            || ProcessInfo.processInfo.arguments.contains("-adminUserActivity")
-            || ProcessInfo.processInfo.arguments.contains("-adminUserAssessment")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsFinance = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminFinance")
-            || ProcessInfo.processInfo.arguments.contains("-adminRefunds")
-            || ProcessInfo.processInfo.arguments.contains("-adminPaybacks")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsCommunity = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminCommunity")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsWeeklyMock = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminWeeklyMock")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsArchive = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminArchive")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsStore = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminStore")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsArenaAdmin = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminArena")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsDataAnalysis = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminDataAnalysis")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsPdfForensics = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminPdfForensics")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsArenaPolicies = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminArenaPolicies")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsProblemBanks = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminProblemBanks")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsCoachSuggestions = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminCoachSuggestions")
-        #else
-        false
-        #endif
-    }()
-    @State private var showsOperationsGuide = {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("-adminOperationsGuide")
-        #else
-        false
-        #endif
-    }()
+        return state
+    }
+
+    private var showsToolHub: Bool {
+        get { navigation.tool == nil }
+        nonmutating set { if newValue { navigation.showDirectory() } else { navigation.open(.approvals) } }
+    }
+    private var showsExplorer: Bool {
+        get { navigation.tool == .academies }
+        nonmutating set { if newValue { navigation.open(.academies) } else { navigation.showDirectory() } }
+    }
 
     private var compactLandscape: Bool {
         verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize
     }
 
     var body: some View {
-        Group {
-            if showsToolHub {
-                adminToolHub
-            } else if showsOperationsGuide {
-                AdminOperationsGuideScreen { showsOperationsGuide = false }
-            } else if showsCoachSuggestions {
-                CoachSuggestionsScreen { showsCoachSuggestions = false }
-            } else if showsProblemBanks {
-                AdminProblemBankScreen { showsProblemBanks = false }
-            } else if showsArenaPolicies {
-                AdminArenaPolicyScreen { showsArenaPolicies = false }
-            } else if showsPdfForensics {
-                AdminPdfForensicsScreen { showsPdfForensics = false }
-            } else if showsDataAnalysis {
-                AdminDataAnalysisScreen { showsDataAnalysis = false }
-            } else if showsArenaAdmin {
-                AdminArenaScreen { showsArenaAdmin = false }
-            } else if showsStore {
-                AdminStoreScreen { showsStore = false }
-            } else if showsArchive {
-                AdminArchiveScreen { showsArchive = false }
-            } else if showsWeeklyMock {
-                AdminWeeklyMockScreen { showsWeeklyMock = false }
-            } else if showsCommunity {
-                AdminCommunityScreen { showsCommunity = false }
-            } else if showsFinance {
-                AdminFinanceScreen { showsFinance = false }
-            } else if showsUsers {
-                AdminUsersScreen { showsUsers = false }
-            } else if showsOperations {
-                AdminOperationsScreen { showsOperations = false }
-            } else if showsExplorer {
-                AdminAcademyExplorer { showsExplorer = false }
-            } else {
-                GeometryReader { viewport in
-                    Group {
-                        if model.isLoading && model.dashboard == nil {
-                            stateShell {
-                                ProgressView().tint(Tokens.primary)
-                                Text("운영 승인함을 불러오는 중입니다").font(.mHeading)
-                            }
-                        } else if let dashboard = model.dashboard {
-                            dashboardView(dashboard, viewport: viewport)
-                        } else {
-                            failureState
-                        }
+        StaffWorkspaceContainer(
+            title: "운영 관리", subtitle: "승인·운영·정산 작업공간",
+            destinations: AdminWorkspaceArea.allCases.map {
+                StaffWorkspaceDestination(id: $0.rawValue, title: $0.title, symbol: $0.symbol)
+            }, selectedID: navigation.area.rawValue,
+            onSelect: { if let next = AdminWorkspaceArea(rawValue: $0) { navigation.select(next) } }
+        ) {
+            VStack(spacing: 0) {
+                if navigation.tool == nil {
+                HStack {
+                    Text(navigation.area.title).font(.mHeading).foregroundStyle(Tokens.ink)
+                    Spacer()
+                    if navigation.tool != nil {
+                        Button("업무 목록") { navigation.showDirectory() }.font(.mCaption).frame(minHeight: 44)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .background(Tokens.paper)
+                .padding(.horizontal, Tokens.Space.s3)
+                .background(Tokens.surface)
+                }
+                ZStack(alignment: .topLeading) {
+                    ForEach(AdminWorkspaceTool.allCases.filter { navigation.visitedTools.contains($0) }) { tool in
+                        toolContent(tool)
+                            .environment(\.staffWorkspaceActive, navigation.tool == tool)
+                            .opacity(navigation.tool == tool ? 1 : 0)
+                            .allowsHitTesting(navigation.tool == tool)
+                            .accessibilityHidden(navigation.tool != tool)
+                            .zIndex(navigation.tool == tool ? 1 : 0)
+                    }
+                    if navigation.tool == nil { adminToolHub.zIndex(2) }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .task { if model.dashboard == nil { await model.load() } }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            navigation.reset()
+            reviewIntent = nil
+            toolQuery = ""
             Task { await model.resetAndLoad() }
         }
-        .confirmationDialog(
-            reviewIntent?.approve == true ? "학원 등록을 승인할까요?" : "학원 등록을 반려할까요?",
-            isPresented: Binding(
-                get: { reviewIntent != nil },
-                set: { if !$0 { reviewIntent = nil } }),
-            titleVisibility: .visible,
-            presenting: reviewIntent
-        ) { intent in
-            Button(intent.approve ? "승인" : "반려", role: intent.approve ? nil : .destructive) {
-                reviewIntent = nil
-                Task { await model.review(intent.academy, approve: intent.approve) }
+        .compactHeightSheet(item: $reviewIntent) { intent in
+            StaffChangeReview(
+                title: intent.approve ? "학원 등록 승인" : "학원 등록 반려",
+                changes: [StaffChangeValue(label: intent.academy.name, before: "등록 승인 대기", after: intent.approve ? "운영 활성화" : "등록 반려")],
+                impact: intent.approve
+                    ? "계약 유효기간과 신청자 계정을 확인한 후 학원과 원장 권한을 활성화합니다."
+                    : "학원 신청과 원장 소속 요청을 반려합니다. 신청자가 결과를 확인할 수 있습니다.",
+                actionTitle: intent.approve ? "승인" : "반려", destructive: !intent.approve, isWorking: model.actionID != nil,
+                onCancel: { reviewIntent = nil },
+                onConfirm: {
+                    Task {
+                        await model.review(intent.academy, approve: intent.approve)
+                        if model.errorMessage == nil { reviewIntent = nil }
+                    }
+                })
+        }
+    }
+
+    @ViewBuilder private func toolContent(_ tool: AdminWorkspaceTool) -> some View {
+        switch tool {
+        case .approvals:
+            GeometryReader { viewport in
+                Group {
+                    if model.isLoading && model.dashboard == nil {
+                        stateShell { ProgressView().tint(Tokens.primary); Text("운영 승인함을 불러오는 중입니다").font(.mHeading) }
+                    } else if let dashboard = model.dashboard { dashboardView(dashboard, viewport: viewport) }
+                    else { failureState }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            Button("취소", role: .cancel) { reviewIntent = nil }
-        } message: { intent in
-            Text(intent.approve
-                 ? "\(intent.academy.name)의 계약 유효기간과 신청자 계정을 확인한 뒤 활성화합니다."
-                 : "\(intent.academy.name)의 신청 상태와 원장 소속 요청을 반려 처리합니다.")
+        case .operations: AdminOperationsScreen { navigation.showDirectory() }
+        case .academies: AdminAcademyExplorer { navigation.showDirectory() }
+        case .users: AdminUsersScreen { navigation.showDirectory() }
+        case .community: AdminCommunityScreen { navigation.showDirectory() }
+        case .weeklyMock: AdminWeeklyMockScreen { navigation.showDirectory() }
+        case .archive: AdminArchiveScreen { navigation.showDirectory() }
+        case .store: AdminStoreScreen { navigation.showDirectory() }
+        case .arena: AdminArenaScreen { navigation.showDirectory() }
+        case .finance: AdminFinanceScreen { navigation.showDirectory() }
+        case .dataAnalysis: AdminDataAnalysisScreen { navigation.showDirectory() }
+        case .pdfForensics: AdminPdfForensicsScreen { navigation.showDirectory() }
+        case .arenaPolicies: AdminArenaPolicyScreen { navigation.showDirectory() }
+        case .problemBanks: AdminProblemBankScreen { navigation.showDirectory() }
+        case .coachSuggestions: CoachSuggestionsScreen { navigation.showDirectory() }
+        case .operationsGuide: AdminOperationsGuideScreen { navigation.showDirectory() }
         }
     }
 
@@ -275,7 +214,7 @@ struct AdminAcademyScreen: View {
         _ dashboard: ServerAPI.AdminAcademyDashboard,
         viewport: GeometryProxy
     ) -> some View {
-        if compactLandscape {
+        if StaffWorkspaceMetrics.usesListDetail(width: viewport.size.width) {
             HStack(alignment: .top, spacing: Tokens.Space.s3) {
                 summaryColumn(dashboard)
                     .frame(width: min(290, viewport.size.width * 0.34))
@@ -336,7 +275,7 @@ struct AdminAcademyScreen: View {
             } label: {
                 HStack(spacing: Tokens.Space.s2) {
                     Image(systemName: "square.grid.2x2.fill")
-                    Text("운영 도구 15개")
+                    Text("운영 업무 목록")
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.bold))
@@ -353,28 +292,18 @@ struct AdminAcademyScreen: View {
     private var adminToolHub: some View {
         GeometryReader { viewport in
             VStack(spacing: 0) {
-                HStack(spacing: Tokens.Space.s3) {
-                    Button {
-                        showsToolHub = false
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    HStack {
+                        Text("업무를 고르거나 전체 도구를 검색하세요")
+                            .font(.mCaption).foregroundStyle(Tokens.text3)
+                        Spacer(minLength: 0)
+                        Button("이전 업무") {
+                            let area = navigation.area
+                            navigation.select(area)
+                        }.font(.mCaption).frame(minHeight: 44)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("승인함으로 돌아가기")
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("관리자 운영 도구")
-                            .font(.mTitle)
-                            .foregroundStyle(Tokens.ink)
-                        Text("해야 할 일을 검색하거나 업무 영역에서 고르세요")
-                            .font(.mCaption)
-                            .foregroundStyle(Tokens.text3)
-                    }
-                    Spacer(minLength: Tokens.Space.s3)
                     TextField("도구·업무 검색", text: $toolQuery)
                         .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: compactLandscape ? 290 : 360)
                         .accessibilityHint("예: 환불, 신고, PDF, 문제")
                 }
                 .padding(.horizontal, max(16, viewport.safeAreaInsets.leading + 16))
@@ -385,26 +314,16 @@ struct AdminAcademyScreen: View {
                     LazyVGrid(
                         columns: Array(
                             repeating: GridItem(.flexible(), spacing: Tokens.Space.s3),
-                            count: compactLandscape ? 2 : 1
+                            count: viewport.size.width >= 760 ? 2 : 1
                         ),
                         alignment: .leading,
                         spacing: Tokens.Space.s3
                     ) {
-                        toolCard("문의·운영 할 일", detail: "답변 대기 문의와 오늘의 운영 작업", icon: "tray.full.fill", keywords: "문의 공지 할일") { openTool { showsOperations = true } }
-                        toolCard("사용자·제재 관리", detail: "계정·보호자·경고·감사 이력", icon: "person.2.fill", keywords: "회원 학생 부모 제재 감사") { openTool { showsUsers = true } }
-                        toolCard("게시판 신고·제재", detail: "신고 검토와 게시글·댓글 조치", icon: "exclamationmark.bubble.fill", keywords: "커뮤니티 신고 게시글 댓글") { openTool { showsCommunity = true } }
-                        toolCard("주간 모의고사 운영", detail: "회차·채점·이의신청·공정성", icon: "doc.text.fill", keywords: "시험 채점 이의신청 소명") { openTool { showsWeeklyMock = true } }
-                        toolCard("GOAT Arena 운영", detail: "실시간 경기·무결성·랭킹", icon: "crown.fill", keywords: "경기 부정행위 랭킹") { openTool { showsArenaAdmin = true } }
-                        toolCard("전체 학원 운영", detail: "구성원·반·수업·출결·계약", icon: "building.2.fill", keywords: "학원 반 수업 출석 계약") { openTool { showsExplorer = true } }
-                        toolCard("재무·환불·페이백", detail: "출금 장부와 지급 처리", icon: "wonsign.circle.fill", keywords: "결제 돈 출금 환불 페이백") { openTool { showsFinance = true } }
-                        toolCard("자료실·배포 파일", detail: "권한·업로드·휴지통·복구", icon: "folder.fill", keywords: "파일 폴더 자료 복구") { openTool { showsArchive = true } }
-                        toolCard("수험관·상점 운영", detail: "콘텐츠·상품·카테고리", icon: "storefront.fill", keywords: "상품 상점 수험관 콘텐츠") { openTool { showsStore = true } }
-                        toolCard("Arena 정책·가격", detail: "가격·상점·매치메이킹 정책", icon: "slider.horizontal.3", keywords: "가격 정책 매칭") { openTool { showsArenaPolicies = true } }
-                        toolCard("문제 유형·Arena 데이터", detail: "유형 리비전과 T1–T9 데이터", icon: "square.stack.3d.up.fill", keywords: "문제 유형 티어 데이터") { openTool { showsProblemBanks = true } }
-                        toolCard("코치 문구 검수", detail: "학생 제안 승인·반려", icon: "text.bubble.fill", keywords: "코치 문구 제안") { openTool { showsCoachSuggestions = true } }
-                        toolCard("월별 운영 지표", detail: "결제·학습권·Arena 지표", icon: "chart.bar.xaxis", keywords: "통계 분석 지표 월별") { openTool { showsDataAnalysis = true } }
-                        toolCard("PDF·스크린샷 유출 추적", detail: "서명 검증과 OCR 분석", icon: "viewfinder", keywords: "PDF 스크린샷 유출 OCR") { openTool { showsPdfForensics = true } }
-                        toolCard("운영 매뉴얼·DB 스키마", detail: "권한·자동화·보존·장애 대응", icon: "book.closed.fill", keywords: "매뉴얼 DB 스키마 장애 저장") { openTool { showsOperationsGuide = true } }
+                        ForEach(filteredTools) { tool in
+                            toolCard(tool.title, detail: tool.detail, icon: tool.symbol, keywords: tool.area.title) {
+                                navigation.open(tool)
+                            }
+                        }
                     }
                     .padding(.horizontal, max(16, viewport.safeAreaInsets.leading + 16))
                     .padding(.vertical, Tokens.Space.s4)
@@ -432,7 +351,6 @@ struct AdminAcademyScreen: View {
         keywords: String,
         action: @escaping () -> Void
     ) -> some View {
-        if toolQuery.isEmpty || "\(title) \(detail) \(keywords)".localizedCaseInsensitiveContains(toolQuery) {
             Button(action: action) {
                 HStack(spacing: Tokens.Space.s3) {
                     Image(systemName: icon)
@@ -466,19 +384,17 @@ struct AdminAcademyScreen: View {
             .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
             .accessibilityHint("열기")
+    }
+
+    private var filteredTools: [AdminWorkspaceTool] {
+        AdminWorkspaceTool.allCases.filter {
+            (toolQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? $0.area == navigation.area : true)
+                && $0.matches(toolQuery)
         }
     }
 
-    private func openTool(_ action: () -> Void) {
-        action()
-        toolQuery = ""
-        showsToolHub = false
-    }
-
     private var toolSearchHasMatches: Bool {
-        guard !toolQuery.isEmpty else { return true }
-        return "문의 운영 공지 할일 사용자 회원 학생 부모 제재 감사 커뮤니티 신고 게시판 게시글 댓글 주간 모의고사 시험 채점 이의신청 소명 GOAT Arena 경기 부정행위 무결성 랭킹 전체 학원 반 수업 출석 계약 재무 결제 돈 출금 환불 페이백 자료실 배포 파일 폴더 복구 수험관 상품 상점 카테고리 콘텐츠 가격 정책 매치메이킹 문제 유형 티어 데이터 코치 문구 제안 통계 분석 지표 월별 PDF 스크린샷 유출 OCR 매뉴얼 DB 스키마 장애 저장 자동화 보존"
-            .localizedCaseInsensitiveContains(toolQuery)
+        !filteredTools.isEmpty
     }
 
     private func metric(value: Int, label: String, emphasized: Bool) -> some View {

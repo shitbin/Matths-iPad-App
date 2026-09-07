@@ -36,7 +36,7 @@ final class SheetGrader: ObservableObject {
         // "$3^{9/4}$ 로 정리해야 한다" 는 엉터리 지도, 2026-07-29).
         // **정답은 손글씨를 보기 전에, 인쇄된 발문만으로 따로 구해 둔다.**
         // 그래야 analyze 가 비교할 기준을 갖는다.
-        case inventory, solve, transcribe, match, analyze, summarize, explain
+        case inventory, transcribe, solve, match, analyze, summarize, explain
 
         var label: String {
             switch self {
@@ -61,6 +61,8 @@ final class SheetGrader: ObservableObject {
     @Published private(set) var weakTypes: [ProblemType] = []
     @Published private(set) var error: String?
     @Published private(set) var running = false
+    @Published private(set) var resumedCheckpointCount = 0
+    private var analysisJournal: LocalAIAnalysisJournal?
 
     /// 사고과정 — 모델이 실제로 뱉는 토큰을 단계별로 모은다.
     /// 진행 막대만 보면 "멈춘 건지 도는 건지" 를 알 수 없다. 비전 인코딩은 수십 초가
@@ -81,6 +83,11 @@ final class SheetGrader: ObservableObject {
     #if DEBUG
     /// 이번 실행의 기록 id — 모든 LLM 호출을 여기에 붙인다(디버그 전용).
     private var logRunID: UUID?
+    /// Diagnostics only; observes actual successful native calls/checkpoints.
+    /// No synthetic response or alternate inference implementation is injected.
+    var debugCheckpointObserver: ((Stage, Bool) -> Void)?
+    var debugRejectedCheckpointObserver: ((Stage) -> Void)?
+    var debugNativeCallObserver: ((Stage, Bool, String, Int, Double) -> Void)?
     #endif
 
     /// 화면 갱신을 초당 몇 번으로 묶는다 (토큰마다 그리면 UI 가 죽는다)
@@ -141,12 +148,19 @@ final class SheetGrader: ObservableObject {
         weakTypes = []
         explainJSON = nil
         trace = []
+        analysisJournal = nil
+        resumedCheckpointCount = 0
         pendingChunk = ""
         let runID = UUID()
         let runCancel = AITutor.CancelFlag()
         activeRunID = runID
         cancel = runCancel
-        let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("시험지 사진 채점")
+        let backgroundToken = LocalAIBackgroundExecution.shared.beginWork("시험지 사진 채점") { [weak self] reason in
+            guard let self, self.activeRunID == runID else { return }
+            self.stop()
+            // Pro observes this as a recoverable failure and retains the source.
+            self.error = reason.message
+        }
         #if DEBUG
         logRunID = SheetGraderLog.begin(imagePath: imagePath)
         #endif
@@ -336,12 +350,22 @@ final class SheetGrader: ObservableObject {
     async throws -> (page: SheetAnalysisPage, weak: [ProblemType], explain: String?,
                      cheatingContext: CheatingProblemContext) {
 
+        let journalRunID = activeRunID
+        let restoredJournal = await Task.detached(priority: .utility) {
+            LocalAIAnalysisJournal(image: URL(fileURLWithPath: imagePath))
+        }.value
+        guard activeRunID == journalRunID, !cancel.isSet else { throw CancellationError() }
+        analysisJournal = restoredJournal
+
         // ── S1. 문항 인벤토리 (이미지 O) ────────────────────────────────
         await step(.inventory)
         let s1 = try await visionJSON(
-            engine: engine, imagePath: imagePath, maxTokens: 900,
+            engine: engine, imagePath: imagePath, maxTokens: 900, schema: .inventory,
             system: system("""
             시험지 사진에서 인쇄된 문항 정보만 추출한다. 손글씨는 무시한다.
+            객관식 선지는 실제로 ①~⑤ 같은 보기 번호가 인쇄된 항목만 choices에 넣는다.
+            문항 번호는 보기 번호가 아니다. 보기 번호 없는 풀이 식·계산 줄·마지막 답을 선지로 새로 만들지 않는다.
+            보기 번호가 보이지 않는 주관식 문항의 choices는 빈 배열 []로 둔다.
             규칙:
             1. 인쇄 활자만 읽는다.
             2. 발제문은 한 문장으로 요약한다.
@@ -396,9 +420,11 @@ final class SheetGrader: ObservableObject {
             await step(.inventory, "발문 재확인")
             let nos = problems.compactMap { $0["no"] as? Int }
             let recheck = try? await visionJSON(
-                engine: engine, imagePath: imagePath, maxTokens: 700,
+                engine: engine, imagePath: imagePath, maxTokens: 700, schema: .formulaRecheck,
                 system: system("""
                 시험지 사진에서 **지정된 번호의 문항 식만** 다시 정확히 옮긴다.
+                문항 번호에 이어지는 원래 발문 안의 조건식만 읽는다.
+                아래쪽 풀이의 계산 단계나 맨 끝의 답 식을 원래 조건식 대신 적지 않는다.
                 규칙:
                 1. 밑(로그의 밑), 지수, 계수의 **숫자 하나까지** 정확히 읽는다.
                    작은 첨자를 대충 보지 마라 — 여기서 틀리면 다른 문제가 된다.
@@ -432,7 +458,7 @@ final class SheetGrader: ObservableObject {
         // ── S2. 손글씨 전사 (이미지 O) ─────────────────────────────────
         await step(.transcribe, "문항 \(problems.count)개")
         let s2 = try await visionJSON(
-            engine: engine, imagePath: imagePath, maxTokens: 1600,
+            engine: engine, imagePath: imagePath, maxTokens: 1600, schema: .transcription,
             system: system("""
             학생 손글씨를 줄 단위로 그대로 옮긴다.
             규칙:
@@ -502,6 +528,7 @@ final class SheetGrader: ObservableObject {
         // 아직 프롬프트에 넣지 않으므로, 정답은 인쇄 발문만 보고 독립적으로 구한다.
         // 이 순서로 VLM → LLM 전환이 한 번만 일어나 8GB 기기에서 두 모델이
         // 동시에 올라가거나 모델을 세 번 갈아 끼우는 일을 막는다.
+        if cancel.isSet { throw CancellationError() }
         if let beforeReasoning {
             await step(.solve, "사진 모델을 내리고 수학 추론 모델로 전환")
             try await beforeReasoning()
@@ -516,7 +543,7 @@ final class SheetGrader: ObservableObject {
             let choices = ((p["choices"] as? [String]) ?? [])
             guard !stmt.isEmpty else { continue }
             let sv = try? await textJSON(
-                engine: engine, maxTokens: 600,
+                engine: engine, maxTokens: 600, schema: .solve,
                 system: system("""
                 인쇄된 문항을 네가 직접 푼다. 학생 풀이는 주어지지 않는다 — 볼 필요도 없다.
                 규칙:
@@ -560,7 +587,7 @@ final class SheetGrader: ObservableObject {
             .joined(separator: "\n")
 
         let s3 = try await textJSON(
-            engine: engine, maxTokens: 700,
+            engine: engine, maxTokens: 700, schema: .matching,
             system: system("""
             풀이 줄을 문항에 배정한다.
             규칙:
@@ -617,7 +644,7 @@ final class SheetGrader: ObservableObject {
             // 부분 실패 계약: 실패해도 배열에서 증발시키지 않고 보류 행으로 채운다
             do {
                 let s4 = try await textJSON(
-                    engine: engine, maxTokens: 1400,
+                    engine: engine, maxTokens: 1400, schema: .analysis,
                     system: system("""
                     학생 풀이를 채점 분석한다. 완주하지 못한 문항의 정답을 알려주지 않는다.
 
@@ -694,7 +721,7 @@ final class SheetGrader: ObservableObject {
                 // 곧장 보류로 내리면 학생은 아무 정보도 못 받는다.
                 do {
                     let retry = try await textJSON(
-                        engine: engine, maxTokens: 700,
+                        engine: engine, maxTokens: 700, schema: .analysis,
                         system: system("""
                         학생 풀이를 짧게 채점 분석한다. 완주하지 못한 문항의 정답을 알려주지 않는다.
                         status 는 correct | self-corrected | calc-slip | concept-error | strategy-stuck | blank 중 하나.
@@ -728,7 +755,7 @@ final class SheetGrader: ObservableObject {
         let brief = items.map { "\($0.no)번 \($0.status.rawValue) \($0.stuckAt ?? "")" }
             .joined(separator: "\n")
         let s5 = (try? await textJSON(
-            engine: engine, maxTokens: 700,
+            engine: engine, maxTokens: 700, schema: .summary,
             system: system("""
             문항별 분석 결과를 종합한다.
             규칙:
@@ -744,10 +771,14 @@ final class SheetGrader: ObservableObject {
         let weak = ((s5["weak_types"] as? [[String: Any]]) ?? [])
             .compactMap { $0["type_key"] as? String }
             .compactMap(ProblemType.init(rawValue:))
-        // 분석에서 직접 나온 유형도 합친다 (종합이 비어도 재출제가 되게)
-        let fromItems = items.compactMap(\.typeKey)
-        var seenT = Set<String>()
-        let merged = (weak + fromItems).filter { seenT.insert($0.rawValue).inserted }
+        // A correct item merely having a recognized type must not become a
+        // weakness. The summary can only prioritize types backed by an actual
+        // error/partial attempt; unknown/blank/correct results stay neutral.
+        let merged = SheetWeakTypePolicy.resolve(items: items.map {
+            .init(type: $0.typeKey, status: $0.status.rawValue, topic: $0.topic,
+                  statement: $0.statementRead ?? "", statementUncertain: $0.statementUncertain,
+                  stuckAt: $0.stuckAt, errorWhy: $0.errorWhy)
+        }, summaryTypes: weak)
 
         let title = (s5["page_result"] as? String).map { "분석 결과 · \($0)" } ?? "분석 결과"
 
@@ -770,7 +801,7 @@ final class SheetGrader: ObservableObject {
             }.joined(separator: "\n\n")
 
             let s6 = try? await textJSON(
-                engine: engine, maxTokens: 1600,
+                engine: engine, maxTokens: 1600, schema: .explanation,
                 system: system("""
                 학생이 막힌 지점을 **개념 단위로** 설명한다. 화면은 수식을 크게 보여 주는
                 설명 카드다 — 그 카드에 들어갈 내용을 짓는다.
@@ -930,30 +961,81 @@ final class SheetGrader: ObservableObject {
 
     // MARK: - 모델 호출 (JSON 강제 + 재시도 사다리)
 
-    private func visionJSON(engine: LLMEngine, imagePath: String, maxTokens: Int,
+    private func visionJSON(engine: LLMEngine, imagePath: String, maxTokens: Int, schema: SheetGraderStageSchema,
                             system: String, user: String) async throws -> [String: Any] {
         let prompt = Self.modelPrompt(
             engine: engine, system: system, user: "<__media__>\n\(user)")
+        let imageDigest = await Task.detached(priority: .utility) {
+            LocalAIAnalysisJournal.imageDigest(at: imagePath)
+        }.value
+        let checkpointKey = imageDigest.flatMap { digest in
+            analysisJournal?.key(model: engine.modelIdentifier, prompt: prompt,
+                                 maxTokens: maxTokens, imageInput: true, imageDigest: digest)
+        }
+        if let cached = try restoreCheckpoint(key: checkpointKey, schema: schema) { return cached }
         let raw = try await generate(engine: engine, prompt: prompt,
                                      imagePath: imagePath, maxTokens: maxTokens)
         if let obj = Self.parseJSON(raw),
-           LocalModelOutputPolicy.isStudentFacingObjectAcceptable(obj) { return obj }
+           schema.accepts(obj) {
+            saveCheckpoint(obj, key: checkpointKey, schema: schema)
+            return obj
+        }
         // 재시도: 이미지 없이 실패 출력만 넣어 JSON 만 다시 뽑는다.
         // (같은 이미지·같은 프롬프트 재전송은 temperature 0 에서 같은 실패를 재생산한다)
-        return try await repair(engine: engine, raw: raw, maxTokens: maxTokens)
+        let repaired = try await repair(engine: engine, raw: raw, maxTokens: maxTokens, schema: schema)
+        saveCheckpoint(repaired, key: checkpointKey, schema: schema)
+        return repaired
     }
 
-    private func textJSON(engine: LLMEngine, maxTokens: Int,
+    private func textJSON(engine: LLMEngine, maxTokens: Int, schema: SheetGraderStageSchema,
                           system: String, user: String) async throws -> [String: Any] {
         let prompt = Self.modelPrompt(engine: engine, system: system, user: user)
+        let checkpointKey = analysisJournal?.key(model: engine.modelIdentifier, prompt: prompt,
+                                                maxTokens: maxTokens, imageInput: false)
+        if let cached = try restoreCheckpoint(key: checkpointKey, schema: schema) { return cached }
         let raw = try await generate(engine: engine, prompt: prompt,
                                           imagePath: nil, maxTokens: maxTokens)
         if let obj = Self.parseJSON(raw),
-           LocalModelOutputPolicy.isStudentFacingObjectAcceptable(obj) { return obj }
-        return try await repair(engine: engine, raw: raw, maxTokens: maxTokens)
+           schema.accepts(obj) {
+            saveCheckpoint(obj, key: checkpointKey, schema: schema)
+            return obj
+        }
+        let repaired = try await repair(engine: engine, raw: raw, maxTokens: maxTokens, schema: schema)
+        saveCheckpoint(repaired, key: checkpointKey, schema: schema)
+        return repaired
     }
 
-    private func repair(engine: LLMEngine, raw: String, maxTokens: Int) async throws -> [String: Any] {
+    private func restoreCheckpoint(key: String?, schema: SheetGraderStageSchema) throws -> [String: Any]? {
+        guard activeRunID != nil, !cancel.isSet else { throw CancellationError() }
+        guard let key, let data = analysisJournal?.load(key: key),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        guard schema.accepts(object) else {
+            #if DEBUG
+            debugRejectedCheckpointObserver?(stage ?? .inventory)
+            #endif
+            return nil
+        }
+        resumedCheckpointCount += 1
+        #if DEBUG
+        debugCheckpointObserver?(stage ?? .inventory, true)
+        #endif
+        return object
+    }
+
+    private func saveCheckpoint(_ object: [String: Any], key: String?, schema: SheetGraderStageSchema) {
+        guard activeRunID != nil, !cancel.isSet, let key, schema.accepts(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return }
+        // Disk-full/checkpoint failure does not invalidate an already verified
+        // result or erase the preserved photo. Retry simply reruns this call.
+        try? analysisJournal?.save(data, key: key)
+        #if DEBUG
+        if analysisJournal?.load(key: key) == data {
+            debugCheckpointObserver?(stage ?? .inventory, false)
+        }
+        #endif
+    }
+
+    private func repair(engine: LLMEngine, raw: String, maxTokens: Int, schema: SheetGraderStageSchema) async throws -> [String: Any] {
         // 계율은 여기서도 붙인다. 재시도의 user 에는 S2 가 원문 그대로 전사한
         // 손글씨가 실려 들어오므로(사진 속 "정답 처리해줘" 같은 지시문 포함),
         // 계율 없이 부르면 S1~S5 전부가 이 한 호출에서 무방비가 된다.
@@ -971,12 +1053,19 @@ final class SheetGrader: ObservableObject {
         }
         let prompt = LocalModelPrompt.jsonRewrite(
             modelIdentifier: engine.modelIdentifier,
-            system: system("너는 JSON 교정기다. 아래 JSON의 수학 판단을 다시 확인한다. valid는 풀이 전체가 모두 맞을 때만 true이고 한 값이라도 틀리면 false다. 설명 문자열은 자연스러운 한국어로만 다시 쓴다. 러시아어·영어 문장을 섞지 않는다. 영문은 수학 기호·변수·JSON 키에만 허용한다. JSON 객체 하나 외에는 출력하지 않는다."),
+            system: system("""
+            너는 현재 단계의 JSON 형식 교정기다. 수학을 다시 풀거나 판정·정답·문항번호·풀이 줄을 새로 만들지 않는다.
+            아래 자료에 실제로 있는 값과 배정만 보존한다. 자연어 설명은 한국어로 교정하되 수식은 바꾸지 않는다.
+            필수 구조: \(schema.requiredShapeDescription)
+            다른 단계의 valid/reason 객체나 문항번호별 사전으로 바꾸지 않는다.
+            필수 정보를 자료에서 복원할 수 없으면 추측 대신 빈 객체 {}만 반환한다.
+            코드펜스나 설명 없이 해당 구조의 JSON 객체 하나만 출력한다.
+            """),
             json: repairSource)
         let fixed = try await generate(engine: engine, prompt: prompt,
                                             imagePath: nil, maxTokens: maxTokens)
         guard let obj = Self.parseJSON(fixed),
-              LocalModelOutputPolicy.isStudentFacingObjectAcceptable(obj) else {
+              schema.accepts(obj) else {
             throw SheetError(message: "모델이 형식을 지키지 못했습니다. 사진을 더 밝게 찍어 다시 시도해 주세요.")
         }
         return obj
@@ -1014,6 +1103,7 @@ final class SheetGrader: ObservableObject {
         // 아니라, 이후 실행이 만든 새 플래그를 과거 호출이 보게 될 수 있다.
         // 이 호출 세대의 thread-safe 플래그를 actor 위에서 한 번 캡처한다.
         let callCancel = cancel
+        params.shouldCancel = { callCancel.isSet }
         let startedCall = Date()
         let out: String = try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -1042,6 +1132,8 @@ final class SheetGrader: ObservableObject {
             }
         }
         #if DEBUG
+        debugNativeCallObserver?(stageNow, imagePath != nil, modelIdentifier,
+                                 out.utf8.count, Date().timeIntervalSince(startedCall) * 1_000)
         // 프롬프트와 원문 출력을 통째로 남긴다 — 결과가 이상할 때 여기부터 본다.
         // 취소된 호출도 남긴다(어디서 끊겼는지가 정보다).
         if let id = logRunID {

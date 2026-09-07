@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-struct AdminClassOperationsInput {
+struct AdminClassOperationsInput: Equatable {
     let weekdays: [Int]
     let startTime: String
     let endTime: String
@@ -15,7 +15,7 @@ struct AdminClassOperationsInput {
 private struct AdminClassOperationsEditor: View {
     let academyClass: ServerAPI.AcademyClassSummary
     let onCancel: () -> Void
-    let onSave: (AdminClassOperationsInput) -> Void
+    let onSave: (AdminClassOperationsInput) async -> String?
 
     @State private var weekdays: Set<Int>
     @State private var startTime: Date
@@ -26,13 +26,16 @@ private struct AdminClassOperationsEditor: View {
     @State private var lateAfterMinutes: Int
     @State private var closesAfterMinutes: Int
     @State private var showsSaveConfirmation = false
+    @State private var isSaving = false
+    @State private var saveError: String?
+    @State private var confirmsDiscard = false
 
-    private let weekdayLabels = ["일", "월", "화", "수", "목", "금", "토"]
+    private let weekdayLabels = AcademySchedulePolicy.weekdayLabels
 
     init(
         academyClass: ServerAPI.AcademyClassSummary,
         onCancel: @escaping () -> Void,
-        onSave: @escaping (AdminClassOperationsInput) -> Void
+        onSave: @escaping (AdminClassOperationsInput) async -> String?
     ) {
         self.academyClass = academyClass
         self.onCancel = onCancel
@@ -106,41 +109,65 @@ private struct AdminClassOperationsEditor: View {
                             .foregroundStyle(Tokens.danger)
                     }
                 }
+                if let saveError { Section { Text(saveError).foregroundStyle(Tokens.dangerInk) } }
             }
+            .disabled(isSaving)
             .scrollContentBackground(.hidden)
             .background(Tokens.surface)
             .navigationTitle("일정·출석 설정")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소", action: onCancel)
+                    Button("취소") { confirmsDiscard = true }.disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("저장") { showsSaveConfirmation = true }
-                        .disabled(validationMessage != nil)
+                        .disabled(validationMessage != nil || isSaving)
                 }
             }
-            .confirmationDialog(
-                "새 운영 설정을 적용할까요?",
-                isPresented: $showsSaveConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("적용") { onSave(input) }
-                Button("취소", role: .cancel) {}
-            } message: {
-                Text("아직 시작하지 않은 기존 회차가 취소되고 새 일정으로 다시 생성됩니다.")
+            .interactiveDismissDisabled(true)
+            .confirmationDialog("편집을 취소할까요?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+                Button("변경 버리기", role: .destructive, action: onCancel)
+                Button("계속 편집", role: .cancel) {}
+            }
+            .compactHeightSheet(isPresented: $showsSaveConfirmation) {
+                StaffChangeReview(title: "운영 설정 변경 확인", changes: changes,
+                    impact: "적용일부터 아직 시작하지 않은 기존 회차가 취소되고 새 일정으로 생성됩니다. 과거 출결 기록은 보존됩니다.",
+                    actionTitle: "적용", isWorking: isSaving,
+                    onCancel: { showsSaveConfirmation = false }, onConfirm: {
+                        guard !isSaving else { return }
+                        let value = input
+                        isSaving = true
+                        Task {
+                            saveError = await onSave(value)
+                            isSaving = false
+                            if saveError != nil { showsSaveConfirmation = false }
+                        }
+                    })
             }
         }
+        .environment(\.timeZone, TimeZone(identifier: "Asia/Seoul") ?? .current)
         .presentationDetents([.large])
+    }
+
+    private var changes: [StaffChangeValue] {
+        [
+            .init(label: "수업 요일", before: (academyClass.schedule?.weekdays ?? []).map { AcademySchedulePolicy.weekdayLabel($0) ?? "확인 필요" }.joined(separator: "·"), after: weekdays.sorted().map { AcademySchedulePolicy.weekdayLabel($0) ?? "확인 필요" }.joined(separator: "·")),
+            .init(label: "수업 시간", before: "\(academyClass.schedule?.startTime ?? "미설정")–\(academyClass.schedule?.endTime ?? "미설정")", after: "\(input.startTime)–\(input.endTime)"),
+            .init(label: "적용일", before: academyClass.schedule?.effectiveFrom ?? "미설정", after: input.effectiveFrom),
+            .init(label: "출석 방식", before: academyClass.attendancePolicy?.mode == "SELF_CODE" ? "학생 코드" : "수동", after: attendanceMode == "SELF_CODE" ? "학생 코드" : "수동"),
+            .init(label: "출석 열기·지각·마감", before: "\(academyClass.attendancePolicy?.opensBeforeMinutes ?? 10) / \(academyClass.attendancePolicy?.lateAfterMinutes ?? 5) / \(academyClass.attendancePolicy?.closesAfterMinutes ?? 20)분", after: "\(opensBeforeMinutes) / \(lateAfterMinutes) / \(closesAfterMinutes)분")
+        ]
     }
 
     private var validationMessage: String? {
         if weekdays.isEmpty { return "수업 요일을 하나 이상 선택해 주세요." }
+        if !AcademySchedulePolicy.validWeekdays(Array(weekdays)) { return "수업 요일 정보를 확인하지 못했습니다. 반 정보를 새로고침해 주세요." }
         if minuteOfDay(endTime) <= minuteOfDay(startTime) {
             return "수업 종료 시간은 시작 시간보다 늦어야 합니다."
         }
-        if lateAfterMinutes > closesAfterMinutes {
-            return "지각 기준은 출석 마감보다 빠르거나 같아야 합니다."
+        if !AcademySchedulePolicy.attendanceWindowIsValid(late: lateAfterMinutes, close: closesAfterMinutes) {
+            return "출석 마감 시간은 지각 기준보다 늦어야 합니다."
         }
         return nil
     }
@@ -158,13 +185,13 @@ private struct AdminClassOperationsEditor: View {
     }
 
     private func minuteOfDay(_ date: Date) -> Int {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let components = Self.schoolCalendar.dateComponents([.hour, .minute], from: date)
         return (components.hour ?? 0) * 60 + (components.minute ?? 0)
     }
 
     private static func parseTime(_ raw: String?, fallbackHour: Int) -> Date {
         let parts = (raw ?? "").split(separator: ":").compactMap { Int($0) }
-        return Calendar.current.date(
+        return schoolCalendar.date(
             bySettingHour: parts.first ?? fallbackHour,
             minute: parts.count > 1 ? parts[1] : 0,
             second: 0,
@@ -182,7 +209,7 @@ private struct AdminClassOperationsEditor: View {
     }
 
     private static func timeKey(_ date: Date) -> String {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let components = schoolCalendar.dateComponents([.hour, .minute], from: date)
         return String(format: "%02d:%02d", components.hour ?? 0, components.minute ?? 0)
     }
 
@@ -194,23 +221,31 @@ private struct AdminClassOperationsEditor: View {
             format: "%04d-%02d-%02d",
             components.year ?? 0, components.month ?? 0, components.day ?? 0)
     }
+
+    private static var schoolCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
+        return calendar
+    }
 }
 
 private struct AdminClassHomeroomEditor: View {
     let academyClass: ServerAPI.AcademyClassSummary
     let staff: [ServerAPI.TeacherAcademyStaff]
     let onCancel: () -> Void
-    let onSave: (String, Bool) -> Void
+    let onSave: (String, Bool) async -> String?
 
     @State private var nextTeacherUserID: String
     @State private var retainPreviousAsCoTeacher = true
     @State private var showsSaveConfirmation = false
+    @State private var isSaving = false
+    @State private var saveError: String?
 
     init(
         academyClass: ServerAPI.AcademyClassSummary,
         staff: [ServerAPI.TeacherAcademyStaff],
         onCancel: @escaping () -> Void,
-        onSave: @escaping (String, Bool) -> Void
+        onSave: @escaping (String, Bool) async -> String?
     ) {
         self.academyClass = academyClass
         self.staff = staff
@@ -257,33 +292,38 @@ private struct AdminClassHomeroomEditor: View {
                         .font(.mMicro)
                         .foregroundStyle(Tokens.text2)
                 }
+                if let saveError { Section { Text(saveError).foregroundStyle(Tokens.dangerInk) } }
             }
+            .disabled(isSaving)
             .scrollContentBackground(.hidden)
             .background(Tokens.surface)
             .navigationTitle("담임 이전")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소", action: onCancel)
+                    Button("취소", action: onCancel).disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("이전") { showsSaveConfirmation = true }
-                        .disabled(nextTeacherUserID.isEmpty)
+                        .disabled(nextTeacherUserID.isEmpty || isSaving)
                 }
             }
-            .confirmationDialog(
-                "담임 선생님을 이전할까요?",
-                isPresented: $showsSaveConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("담임 이전") {
-                    onSave(nextTeacherUserID, retainPreviousAsCoTeacher)
-                }
-                Button("취소", role: .cancel) {}
-            } message: {
-                Text(retainPreviousAsCoTeacher
-                     ? "기존 담임은 보조 선생님으로 유지됩니다."
-                     : "기존 담임은 이 반의 교사 목록에서도 제외됩니다.")
+            .interactiveDismissDisabled(true)
+            .compactHeightSheet(isPresented: $showsSaveConfirmation) {
+                StaffChangeReview(title: "담임 이전 확인", changes: [
+                    .init(label: academyClass.name, before: academyClass.homeroomTeacher?.name ?? "미지정", after: candidates.first(where: { $0.user?.id == nextTeacherUserID })?.user?.name ?? "미지정"),
+                    .init(label: "기존 담임 역할", before: "담임", after: retainPreviousAsCoTeacher ? "보조 선생님" : "반 담당 해제")
+                ], impact: "새 담임에게 반 운영 권한이 즉시 이전됩니다. 기존 학생·과제·출결 데이터는 유지됩니다.",
+                    actionTitle: "담임 이전", destructive: true, isWorking: isSaving,
+                    onCancel: { showsSaveConfirmation = false }, onConfirm: {
+                        guard !isSaving else { return }
+                        isSaving = true
+                        Task {
+                            saveError = await onSave(nextTeacherUserID, retainPreviousAsCoTeacher)
+                            isSaving = false
+                            if saveError != nil { showsSaveConfirmation = false }
+                        }
+                    })
             }
         }
         .presentationDetents([.medium, .large])
@@ -293,16 +333,19 @@ private struct AdminClassHomeroomEditor: View {
 private struct AdminAttendanceOverrideEditor: View {
     let record: ServerAPI.AdminAcademyAttendanceRecord
     let onCancel: () -> Void
-    let onSave: (String, String) -> Void
+    let onSave: (String, String) async -> String?
 
     @State private var status: String
     @State private var note: String
     @State private var showsSaveConfirmation = false
+    @State private var isSaving = false
+    @State private var saveError: String?
+    @State private var confirmsDiscard = false
 
     init(
         record: ServerAPI.AdminAcademyAttendanceRecord,
         onCancel: @escaping () -> Void,
-        onSave: @escaping (String, String) -> Void
+        onSave: @escaping (String, String) async -> String?
     ) {
         self.record = record
         self.onCancel = onCancel
@@ -341,28 +384,44 @@ private struct AdminAttendanceOverrideEditor: View {
                         .font(.mMicro)
                         .foregroundStyle(Tokens.warning)
                 }
+                if let saveError { Section { Text(saveError).foregroundStyle(Tokens.dangerInk) } }
             }
+            .disabled(isSaving)
             .scrollContentBackground(.hidden)
             .background(Tokens.surface)
             .navigationTitle("출결 기록 보정")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소", action: onCancel)
+                    Button("취소") {
+                        if status != record.status || note != record.note { confirmsDiscard = true } else { onCancel() }
+                    }.disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("저장") { showsSaveConfirmation = true }
+                        .disabled(isSaving || note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .confirmationDialog(
-                "출결 기록을 보정할까요?",
-                isPresented: $showsSaveConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("보정 저장") { onSave(status, note) }
-                Button("취소", role: .cancel) {}
-            } message: {
-                Text("\(attendanceLabel(record.status))에서 \(attendanceLabel(status))(으)로 변경하며 감사 이력을 남깁니다.")
+            .interactiveDismissDisabled(true)
+            .confirmationDialog("보정 내용을 버릴까요?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+                Button("변경 버리기", role: .destructive, action: onCancel)
+                Button("계속 편집", role: .cancel) {}
+            }
+            .compactHeightSheet(isPresented: $showsSaveConfirmation) {
+                StaffChangeReview(title: "출결 보정 확인", changes: [
+                    .init(label: record.student?.name ?? "학생", before: attendanceLabel(record.status), after: attendanceLabel(status))
+                ], impact: "이전·변경 상태와 작업자가 감사 이력에 남습니다. 학생의 출결 통계가 변경됩니다.",
+                    reason: note.trimmingCharacters(in: .whitespacesAndNewlines), reasonIsRecorded: true,
+                    actionTitle: "보정 저장", isWorking: isSaving,
+                    onCancel: { showsSaveConfirmation = false }, onConfirm: {
+                        guard !isSaving else { return }
+                        isSaving = true
+                        Task {
+                            saveError = await onSave(status, note.trimmingCharacters(in: .whitespacesAndNewlines))
+                            isSaving = false
+                            if saveError != nil { showsSaveConfirmation = false }
+                        }
+                    })
             }
         }
         .presentationDetents([.medium, .large])
@@ -395,10 +454,30 @@ final class AdminAcademyExplorerModel: ObservableObject {
 
     private var listGeneration = UUID()
     private var detailGeneration = UUID()
+    private var scopeGeneration = UUID()
+
+    private struct RequestOwner {
+        let generation: UUID
+        let account: String
+        let authorization: ServerAPI.AuthorizationSnapshot
+    }
+    private func requestOwner() -> RequestOwner {
+        RequestOwner(generation: scopeGeneration, account: DataScope.slot,
+                     authorization: ServerAPI.authorizationForCurrentRequest())
+    }
+    private func isCurrent(_ owner: RequestOwner) -> Bool {
+        owner.generation == scopeGeneration && owner.account == DataScope.slot
+            && ServerAPI.isCurrentAuthorization(owner.authorization)
+    }
 
     func resetAndLoad() async {
         listGeneration = UUID()
         detailGeneration = UUID()
+        scopeGeneration = UUID()
+        actionID = nil
+        previewURL = nil
+        searchText = ""
+        status = "ALL"
         page = nil
         detail = nil
         selectedAcademyID = nil
@@ -408,6 +487,8 @@ final class AdminAcademyExplorerModel: ObservableObject {
     }
 
     func loadList(pageNumber: Int = 1, preserveSelection: Bool = false) async {
+        guard actionID == nil else { return }
+        let owner = requestOwner()
         let generation = UUID()
         listGeneration = generation
         isLoadingList = true
@@ -416,8 +497,8 @@ final class AdminAcademyExplorerModel: ObservableObject {
             let response = try await ServerAPI.adminAcademyList(
                 search: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
                 status: status,
-                page: pageNumber)
-            guard listGeneration == generation else { return }
+                page: pageNumber, authorization: owner.authorization)
+            guard listGeneration == generation, isCurrent(owner) else { return }
             page = response
             let stillVisible = preserveSelection
                 && response.academies.contains { $0.id == selectedAcademyID }
@@ -437,6 +518,7 @@ final class AdminAcademyExplorerModel: ObservableObject {
     }
 
     func select(_ academy: ServerAPI.AdminAcademyListItem) async {
+        guard actionID == nil else { return }
         guard academy.id != selectedAcademyID || detail == nil else { return }
         selectedAcademyID = academy.id
         detail = nil
@@ -445,14 +527,15 @@ final class AdminAcademyExplorerModel: ObservableObject {
 
     func loadDetail(academyID: String? = nil, period: String? = nil) async {
         guard let academyID = academyID ?? selectedAcademyID else { return }
+        let owner = requestOwner()
         let generation = UUID()
         detailGeneration = generation
         isLoadingDetail = true
         errorMessage = nil
         do {
             let response = try await ServerAPI.adminAcademyDetail(
-                academyID: academyID, period: period)
-            guard detailGeneration == generation, selectedAcademyID == academyID else { return }
+                academyID: academyID, period: period, authorization: owner.authorization)
+            guard detailGeneration == generation, selectedAcademyID == academyID, isCurrent(owner) else { return }
             detail = response
         } catch is CancellationError {
             return
@@ -469,14 +552,18 @@ final class AdminAcademyExplorerModel: ObservableObject {
         await loadList(pageNumber: 1)
     }
 
-    func updateProfile(action: String, name: String? = nil) async {
-        guard let academyID = selectedAcademyID, actionID == nil else { return }
+    @discardableResult func updateProfile(action: String, name: String? = nil) async -> Bool {
+        guard let academyID = selectedAcademyID, actionID == nil else { return false }
+        let owner = requestOwner()
         actionID = action
+        defer { if owner.generation == scopeGeneration { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
-            detail = try await ServerAPI.updateAdminAcademyProfile(
-                academyID: academyID, action: action, name: name)
+            let response = try await ServerAPI.updateAdminAcademyProfile(
+                academyID: academyID, action: action, name: name, authorization: owner.authorization)
+            guard isCurrent(owner), selectedAcademyID == academyID else { return false }
+            detail = response
             noticeMessage = switch action {
             case "RENAME": "학원 이름을 변경했습니다."
             case "PAUSE": "학원 운영을 일시중지했습니다."
@@ -485,10 +572,12 @@ final class AdminAcademyExplorerModel: ObservableObject {
             default: "학원 정보를 변경했습니다."
             }
             await refreshListSummary()
+            return isCurrent(owner)
         } catch {
+            guard isCurrent(owner) else { return false }
             errorMessage = readable(error)
         }
-        actionID = nil
+        return false
     }
 
     func updateProfileImage(jpegData: Data) async {
@@ -512,20 +601,26 @@ final class AdminAcademyExplorerModel: ObservableObject {
 
     func preview(_ file: ServerAPI.AcademyWeek.File, from week: ServerAPI.AdminAcademyWeek) async {
         guard let academyID = selectedAcademyID, actionID == nil else { return }
+        let owner = requestOwner()
         actionID = "preview:\(file.id)"
         errorMessage = nil
         do {
-            previewURL = try await ServerAPI.downloadAdminAcademyFile(
-                academyID: academyID, weekID: week.id, file: file)
+            let url = try await ServerAPI.downloadAdminAcademyFile(
+                academyID: academyID, weekID: week.id, file: file, account: owner.account, authorization: owner.authorization)
+            guard isCurrent(owner), selectedAcademyID == academyID else { return }
+            previewURL = url
         } catch {
+            guard isCurrent(owner) else { return }
             errorMessage = readable(error)
         }
         actionID = nil
     }
 
-    func updateContract(endsAt: Date) async {
-        guard let academyID = selectedAcademyID, actionID == nil else { return }
+    @discardableResult func updateContract(endsAt: Date) async -> Bool {
+        guard let academyID = selectedAcademyID, actionID == nil else { return false }
+        let owner = requestOwner()
         actionID = "CONTRACT"
+        defer { if owner.generation == scopeGeneration { actionID = nil } }
         errorMessage = nil
         noticeMessage = nil
         do {
@@ -535,14 +630,18 @@ final class AdminAcademyExplorerModel: ObservableObject {
             let dateKey = String(
                 format: "%04d-%02d-%02d",
                 components.year ?? 0, components.month ?? 0, components.day ?? 0)
-            detail = try await ServerAPI.updateAdminAcademyContract(
-                academyID: academyID, contractEndsAt: dateKey)
+            let response = try await ServerAPI.updateAdminAcademyContract(
+                academyID: academyID, contractEndsAt: dateKey, authorization: owner.authorization)
+            guard isCurrent(owner), selectedAcademyID == academyID else { return false }
+            detail = response
             noticeMessage = "계약 만료일을 변경했습니다."
             await refreshListSummary()
+            return isCurrent(owner)
         } catch {
+            guard isCurrent(owner) else { return false }
             errorMessage = readable(error)
         }
-        actionID = nil
+        return false
     }
 
     func updateStaff(staffID: String, action: String) async {
@@ -586,9 +685,9 @@ final class AdminAcademyExplorerModel: ObservableObject {
         }
     }
 
-    func updateClassOperations(classID: String, input: AdminClassOperationsInput) async {
-        guard let academyID = selectedAcademyID else { return }
-        await performMutation(actionID: "class-operations:\(classID)", notice: "수업 일정과 출석 방식을 변경했습니다.") {
+    func updateClassOperations(classID: String, input: AdminClassOperationsInput) async -> Bool {
+        guard let academyID = selectedAcademyID else { return false }
+        return await performMutation(actionID: "class-operations:\(classID)", notice: "수업 일정과 출석 방식을 변경했습니다.") {
             try await ServerAPI.updateAdminAcademyClassOperations(
                 academyID: academyID,
                 classID: classID,
@@ -605,9 +704,9 @@ final class AdminAcademyExplorerModel: ObservableObject {
 
     func transferClassHomeroom(
         classID: String, nextTeacherUserID: String, retainPreviousAsCoTeacher: Bool
-    ) async {
-        guard let academyID = selectedAcademyID else { return }
-        await performMutation(actionID: "class-homeroom:\(classID)", notice: "담임 선생님을 변경했습니다.") {
+    ) async -> Bool {
+        guard let academyID = selectedAcademyID else { return false }
+        return await performMutation(actionID: "class-homeroom:\(classID)", notice: "담임 선생님을 변경했습니다.") {
             try await ServerAPI.transferAdminAcademyClassHomeroom(
                 academyID: academyID,
                 classID: classID,
@@ -633,9 +732,9 @@ final class AdminAcademyExplorerModel: ObservableObject {
         }
     }
 
-    func updateAttendance(attendanceID: String, status: String, note: String) async {
-        guard let academyID = selectedAcademyID else { return }
-        await performMutation(actionID: "attendance-record:\(attendanceID)", notice: "출결 기록을 보정했습니다.") {
+    func updateAttendance(attendanceID: String, status: String, note: String) async -> Bool {
+        guard let academyID = selectedAcademyID else { return false }
+        return await performMutation(actionID: "attendance-record:\(attendanceID)", notice: "출결 기록을 보정했습니다.") {
             try await ServerAPI.updateAdminAcademyAttendance(
                 academyID: academyID,
                 attendanceID: attendanceID,
@@ -644,23 +743,32 @@ final class AdminAcademyExplorerModel: ObservableObject {
         }
     }
 
-    private func performMutation(
+    @discardableResult private func performMutation(
         actionID nextActionID: String,
         notice: String,
         operation: () async throws -> ServerAPI.AdminAcademyDetail
-    ) async {
-        guard actionID == nil else { return }
+    ) async -> Bool {
+        guard actionID == nil else { return false }
+        let owner = requestOwner()
+        let academyID = selectedAcademyID
         actionID = nextActionID
         errorMessage = nil
         noticeMessage = nil
         do {
-            detail = try await operation()
+            let response = try await operation()
+            guard isCurrent(owner), selectedAcademyID == academyID else { return false }
+            detail = response
             noticeMessage = notice
             await refreshListSummary()
+            guard isCurrent(owner) else { return false }
+            actionID = nil
+            return true
         } catch {
+            guard isCurrent(owner) else { return false }
             errorMessage = readable(error)
         }
         actionID = nil
+        return false
     }
 
     private func staffNotice(_ action: String) -> String {
@@ -683,16 +791,22 @@ final class AdminAcademyExplorerModel: ObservableObject {
 
     private func refreshListSummary() async {
         guard let current = page?.pagination.page else { return }
+        let owner = requestOwner()
         if let response = try? await ServerAPI.adminAcademyList(
             search: searchText.trimmingCharacters(in: .whitespacesAndNewlines),
             status: status,
-            page: current) {
+            page: current, authorization: owner.authorization), isCurrent(owner) {
             page = response
         }
     }
 
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
+        if (error as? ServerAPIError)?.statusCode == 403 {
+            scopeGeneration = UUID(); listGeneration = UUID(); detailGeneration = UUID()
+            page = nil; detail = nil; selectedAcademyID = nil; previewURL = nil
+            actionID = nil; isLoadingList = false; isLoadingDetail = false
+        }
+        return (error as? ServerAPIError)?.errorDescription
             ?? (error as NSError).localizedDescription
     }
 }
@@ -759,6 +873,10 @@ struct AdminAcademyExplorer: View {
     @State private var attendanceRecord: ServerAPI.AdminAcademyAttendanceRecord?
     @State private var showsAcademyPhotoPicker = false
     @State private var confirmsProfileImageRemoval = false
+    @State private var narrowShowsDetail = false
+    @State private var showsRenameReview = false
+    @State private var showsContractReview = false
+    @State private var confirmsProfileDraftDiscard = false
 
     init(onClose: @escaping () -> Void) {
         self.onClose = onClose
@@ -771,26 +889,23 @@ struct AdminAcademyExplorer: View {
     var body: some View {
         GeometryReader { viewport in
             Group {
-                if compactLandscape {
+                if StaffWorkspaceMetrics.usesListDetail(width: viewport.size.width) && !dynamicTypeSize.isAccessibilitySize {
                     HStack(spacing: Tokens.Space.s3) {
                         listPane
-                            .frame(width: min(330, viewport.size.width * 0.38))
+                            .frame(width: StaffWorkspaceMetrics.listWidth(width: viewport.size.width))
                         detailPane
                     }
                     .padding(.horizontal, max(12, viewport.safeAreaInsets.leading + 12))
                     .padding(.vertical, Tokens.Space.s2)
                 } else {
-                    ScrollView {
-                        VStack(spacing: Tokens.Space.s4) {
-                            listPane
-                                .frame(minHeight: 360)
+                    ZStack(alignment: .topLeading) {
+                        listPane.opacity(narrowShowsDetail ? 0 : 1).allowsHitTesting(!narrowShowsDetail)
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Button { narrowShowsDetail = false } label: { Label("학원 목록", systemImage: "chevron.left") }.frame(minHeight: 44)
                             detailPane
-                                .frame(minHeight: 420)
-                        }
-                        .readableWidth(Tokens.readableWidth)
-                        .adaptiveHPadding()
-                        .adaptiveVPadding()
+                        }.opacity(narrowShowsDetail ? 1 : 0).allowsHitTesting(narrowShowsDetail)
                     }
+                    .padding(Tokens.Space.s3)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -799,7 +914,23 @@ struct AdminAcademyExplorer: View {
         .task { if model.page == nil { await model.loadList() } }
         .onAppear { requestDebugLandscapeIfNeeded() }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
+            narrowShowsDetail = false
+            mutationIntent = nil
+            operationsClass = nil
+            homeroomClass = nil
+            attendanceRecord = nil
+            showsRenameEditor = false
+            showsContractEditor = false
+            showsRenameReview = false
+            showsContractReview = false
+            profileActionToConfirm = nil
             Task { await model.resetAndLoad() }
+        }
+        .onChange(of: model.selectedAcademyID) { _, selection in
+            guard selection == nil else { return }
+            narrowShowsDetail = false; mutationIntent = nil; operationsClass = nil; homeroomClass = nil
+            attendanceRecord = nil; showsRenameEditor = false; showsContractEditor = false
+            showsRenameReview = false; showsContractReview = false; showsAcademyPhotoPicker = false
         }
         .compactHeightSheet(isPresented: $showsRenameEditor) { renameEditor }
         .compactHeightSheet(isPresented: $showsContractEditor) { contractEditor }
@@ -808,8 +939,11 @@ struct AdminAcademyExplorer: View {
                 academyClass: academyClass,
                 onCancel: { operationsClass = nil },
                 onSave: { input in
-                    operationsClass = nil
-                    Task { await model.updateClassOperations(classID: academyClass.id, input: input) }
+                    if await model.updateClassOperations(classID: academyClass.id, input: input) {
+                        operationsClass = nil
+                        return nil
+                    }
+                    return model.errorMessage ?? "저장하지 못했습니다. 입력한 내용은 유지됩니다."
                 })
         }
         .compactHeightSheet(item: $homeroomClass) { academyClass in
@@ -818,13 +952,14 @@ struct AdminAcademyExplorer: View {
                 staff: model.detail?.staff ?? [],
                 onCancel: { homeroomClass = nil },
                 onSave: { nextTeacherUserID, retainPrevious in
-                    homeroomClass = nil
-                    Task {
-                        await model.transferClassHomeroom(
+                    if await model.transferClassHomeroom(
                             classID: academyClass.id,
                             nextTeacherUserID: nextTeacherUserID,
-                            retainPreviousAsCoTeacher: retainPrevious)
+                            retainPreviousAsCoTeacher: retainPrevious) {
+                        homeroomClass = nil
+                        return nil
                     }
+                    return model.errorMessage ?? "담임을 이전하지 못했습니다. 선택한 내용은 유지됩니다."
                 })
         }
         .compactHeightSheet(item: $attendanceRecord) { record in
@@ -832,11 +967,11 @@ struct AdminAcademyExplorer: View {
                 record: record,
                 onCancel: { attendanceRecord = nil },
                 onSave: { status, note in
-                    attendanceRecord = nil
-                    Task {
-                        await model.updateAttendance(
-                            attendanceID: record.id, status: status, note: note)
+                    if await model.updateAttendance(attendanceID: record.id, status: status, note: note) {
+                        attendanceRecord = nil
+                        return nil
                     }
+                    return model.errorMessage ?? "출결을 저장하지 못했습니다. 입력한 내용은 유지됩니다."
                 })
         }
         .compactHeightSheet(isPresented: $showsAcademyPhotoPicker) {
@@ -1028,6 +1163,7 @@ struct AdminAcademyExplorer: View {
         let selected = academy.id == model.selectedAcademyID
         return Button {
             detailSection = .overview
+            narrowShowsDetail = true
             Task { await model.select(academy) }
         } label: {
             HStack(spacing: Tokens.Space.s2) {
@@ -1210,7 +1346,11 @@ struct AdminAcademyExplorer: View {
     private func detailContent(_ detail: ServerAPI.AdminAcademyDetail) -> some View {
         switch detailSection {
         case .overview: overview(detail)
-        case .analytics: analyticsView(detail.analytics)
+        case .analytics:
+            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                analyticsView(detail.analytics)
+                WeeklyMockInsightsPanel(scope: .admin(academyID: detail.academy.id))
+            }
         case .staff: staffList(detail.staff)
         case .students: studentList(detail.students)
         case .classes: classList(detail.classes)
@@ -1992,13 +2132,12 @@ struct AdminAcademyExplorer: View {
                     .foregroundStyle(Tokens.text3)
                 Spacer(minLength: 0)
                 Button("이름 저장") {
-                    let name = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    showsRenameEditor = false
-                    Task { await model.updateProfile(action: "RENAME", name: name) }
+                    showsRenameReview = true
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).count < 2
-                          || renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).count > 80)
+                          || renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).count > 80 || model.actionID != nil)
+                if let error = model.errorMessage { Text(error).font(.mCaption).foregroundStyle(Tokens.dangerInk) }
             }
             .padding(Tokens.Space.s4)
             .background(Tokens.surface)
@@ -2006,8 +2145,26 @@ struct AdminAcademyExplorer: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { showsRenameEditor = false }
+                    Button("취소") { confirmsProfileDraftDiscard = true }.disabled(model.actionID != nil)
                 }
+            }
+            .interactiveDismissDisabled(true)
+            .confirmationDialog("이름 변경을 취소할까요?", isPresented: $confirmsProfileDraftDiscard, titleVisibility: .visible) {
+                Button("변경 버리기", role: .destructive) { showsRenameEditor = false }
+                Button("계속 편집", role: .cancel) {}
+            }
+            .compactHeightSheet(isPresented: $showsRenameReview) {
+                StaffChangeReview(title: "학원명 변경 확인", changes: [
+                    .init(label: "학원명", before: model.detail?.academy.name ?? "확인 필요", after: renameDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+                ], impact: "학생과 교사의 앱·웹 화면에 새 이름이 표시됩니다. 소속·수업·출결 데이터는 유지됩니다.",
+                    actionTitle: "이름 적용", isWorking: model.actionID != nil,
+                    onCancel: { showsRenameReview = false }, onConfirm: {
+                        let name = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        Task {
+                            if await model.updateProfile(action: "RENAME", name: name) { showsRenameEditor = false }
+                            showsRenameReview = false
+                        }
+                    })
             }
         }
         .presentationDetents([.medium])
@@ -2029,11 +2186,11 @@ struct AdminAcademyExplorer: View {
                     .tint(Tokens.primary)
                 Spacer(minLength: 0)
                 Button("계약 만료일 저장") {
-                    let date = contractDraft
-                    showsContractEditor = false
-                    Task { await model.updateContract(endsAt: date) }
+                    showsContractReview = true
                 }
                 .buttonStyle(PrimaryButtonStyle())
+                .disabled(model.actionID != nil)
+                if let error = model.errorMessage { Text(error).font(.mCaption).foregroundStyle(Tokens.dangerInk) }
             }
             .padding(Tokens.Space.s4)
             .background(Tokens.surface)
@@ -2041,8 +2198,26 @@ struct AdminAcademyExplorer: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { showsContractEditor = false }
+                    Button("취소") { confirmsProfileDraftDiscard = true }.disabled(model.actionID != nil)
                 }
+            }
+            .interactiveDismissDisabled(true)
+            .confirmationDialog("계약 변경을 취소할까요?", isPresented: $confirmsProfileDraftDiscard, titleVisibility: .visible) {
+                Button("변경 버리기", role: .destructive) { showsContractEditor = false }
+                Button("계속 편집", role: .cancel) {}
+            }
+            .compactHeightSheet(isPresented: $showsContractReview) {
+                StaffChangeReview(title: "계약 변경 확인", changes: [
+                    .init(label: "계약 만료일", before: model.detail?.academy.contractEndsAt ?? "미설정", after: contractDraft.formatted(date: .abbreviated, time: .omitted))
+                ], impact: "만료로 보관된 학원은 이전 운영 상태로 복구될 수 있고 원장의 교사 접근 기한이 함께 갱신됩니다.",
+                    actionTitle: "계약 적용", isWorking: model.actionID != nil,
+                    onCancel: { showsContractReview = false }, onConfirm: {
+                        let date = contractDraft
+                        Task {
+                            if await model.updateContract(endsAt: date) { showsContractEditor = false }
+                            showsContractReview = false
+                        }
+                    })
             }
         }
         .presentationDetents([.large])

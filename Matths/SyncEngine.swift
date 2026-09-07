@@ -381,6 +381,8 @@ final class SyncEngine: ObservableObject {
 
     private var queue: [SyncOp] = []
     private var flushing = false
+    private let flushCompletion = AsyncCompletionSignal()
+    private var flushingOwner: SyncAccountOwner?
     private var pulling = false
     private var progressPulling = false
     private var stuckPointPulling = false
@@ -779,7 +781,8 @@ final class SyncEngine: ObservableObject {
 
     /// 평가·기출의 여러 문항을 HTTP 한 번으로 올린다. 한 문항당 큐/요청 하나를
     /// 만들지 않으면서 서버 대시보드에는 일반 연습과 같은 정오 이벤트로 남긴다.
-    func enqueueGradingEvents(correct: Int, total: Int, durationMs: Int? = nil) {
+    func enqueueGradingEvents(correct: Int, total: Int, durationMs: Int? = nil,
+                              receiptID: String? = nil, occurredAt: Date? = nil) {
         let safeTotal = max(0, total)
         guard safeTotal > 0 else { return }
         var payload: [String: SyncValue] = [
@@ -787,15 +790,17 @@ final class SyncEngine: ObservableObject {
             "totalCount": .i(safeTotal),
         ]
         if let durationMs { payload["durationMs"] = .i(max(0, durationMs)) }
-        enqueue(.init(kind: .gradingBatch, payload: payload))
+        let op = SyncOp(id: receiptID ?? UUID().uuidString, kind: .gradingBatch, payload: payload, createdAt: occurredAt ?? Date())
+        if receiptID != nil { enqueueOnce(op) } else { enqueue(op) }
     }
 
     /// 오답 적재 — 로컬 오답노트에 새로 들어온 항목
-    func enqueueWrongNote(_ note: WrongNoteEntry) {
-        enqueue(wrongNoteOp(note))
+    func enqueueWrongNote(_ note: WrongNoteEntry, receiptID: String? = nil, occurredAt: Date? = nil) {
+        let op = wrongNoteOp(note, receiptID: receiptID, occurredAt: occurredAt)
+        if receiptID != nil { enqueueOnce(op) } else { enqueue(op) }
     }
 
-    private func wrongNoteOp(_ note: WrongNoteEntry) -> SyncOp {
+    private func wrongNoteOp(_ note: WrongNoteEntry, receiptID: String? = nil, occurredAt: Date? = nil) -> SyncOp {
         var p: [String: SyncValue] = [
             "clientAttemptId": .s(note.id),
             "typeKey": .s(note.typeKey),
@@ -820,7 +825,8 @@ final class SyncEngine: ObservableObject {
         if let n = note.nextReviewAt {
             p["nextReviewAt"] = .s(ISO8601DateFormatter().string(from: n))
         }
-        return .init(kind: .wrongNote, payload: p)
+        if let occurredAt { p["updatedAt"] = .s(ISO8601DateFormatter().string(from: occurredAt)) }
+        return .init(id: receiptID ?? UUID().uuidString, kind: .wrongNote, payload: p, createdAt: occurredAt ?? Date())
     }
 
     /// 재오답을 서버에 알린다 — 서버 id 가 있으면 복습 결과로, 없으면 bulk 재전송으로.
@@ -841,7 +847,7 @@ final class SyncEngine: ObservableObject {
     /// 복습 결과 — SRS 단계가 전진/리셋된 사실을 서버에 올린다.
     /// 복습 화면에서 맞힌 경우처럼 "정답으로 졸업/전진" 은 이 엔드포인트만 표현할 수 있다
     /// (bulk 는 오답 적재용이라 correct 를 받지 않는다).
-    func enqueueReviewResult(_ note: WrongNoteEntry, correct: Bool) {
+    func enqueueReviewResult(_ note: WrongNoteEntry, correct: Bool, receiptID: String? = nil, occurredAt: Date? = nil) {
         // 첫 bulk 응답을 받기 전에도 복습할 수 있다. 그 구간에는 서버 ObjectId가
         // 없으므로 clientAttemptId(UUID)를 주소로 쓰고, 서버가 둘 다 해석한다.
         // 예전 guard는 사용자에게 성공으로 보인 복습 결과를 조용히 버렸고,
@@ -859,7 +865,8 @@ final class SyncEngine: ObservableObject {
         if let n = note.nextReviewAt {
             p["nextReviewAt"] = .s(ISO8601DateFormatter().string(from: n))
         }
-        enqueue(.init(kind: .reviewResult, payload: p))
+        let op = SyncOp(id: receiptID ?? UUID().uuidString, kind: .reviewResult, payload: p, createdAt: occurredAt ?? Date())
+        if receiptID != nil { enqueueOnce(op) } else { enqueue(op) }
     }
 
     func enqueueStuckPoint(_ point: StuckPointRecord) {
@@ -897,6 +904,14 @@ final class SyncEngine: ObservableObject {
         pending = queue.count
         scheduleJournalAppend([op], for: loadedSlot)
         Task { await flush() }
+    }
+
+    private func enqueueOnce(_ op: SyncOp) {
+        guard isServerAccountSlot, currentAccountOwner() != nil,
+              !invalidatedJournalSlots.contains(DataScope.slot) else { return }
+        syncSlotIfNeeded()
+        guard !queue.contains(where: { $0.id == op.id }) else { return }
+        enqueue(op)
     }
 
     @discardableResult
@@ -1052,13 +1067,21 @@ final class SyncEngine: ObservableObject {
     ///     전송을 영원히 막지 않게.
     ///  ③ 분류 불가(상태코드 없음) — 보수적으로 ① 취급한다. 기록 보존이 우선이다.
     func flush() async {
-        guard !flushing else { return }
+        if flushing, let epoch = flushCompletion.current {
+            let requestingOwner = currentAccountOwner()
+            let previousOwner = flushingOwner
+            guard await flushCompletion.wait(for: epoch), !Task.isCancelled else { return }
+            if requestingOwner != previousOwner, requestingOwner == currentAccountOwner() { await flush() }
+            return
+        }
         syncSlotIfNeeded()          // 계정이 바뀌었으면 여기서 큐를 갈아끼운다
         guard let owner = currentAccountOwner(),
               loadedSessionGeneration == owner.sessionGeneration else { return }
         flushing = true
+        flushingOwner = owner
+        let epoch = flushCompletion.begin()
         var sentLearningMutation = false
-        defer { flushing = false }
+        defer { flushing = false; flushingOwner = nil; flushCompletion.finish(epoch) }
 
         // 오프라인·토큰 만료여도 로컬 journal ack는 끝낸다. background/계정 전환이
         // 네트워크 가능 여부 때문에 메모리-only op를 남기면 안 된다.
@@ -1189,6 +1212,18 @@ final class SyncEngine: ObservableObject {
                 if queue.first?.id == op.id { return }
             }
         }
+    }
+
+    /// Proves only that this account's durable write queue was drained. The caller
+    /// must still compare quarantine counters and read fresh canonical progress.
+    /// Unrelated GET failures are not evidence that an acknowledged write failed.
+    func flushForLearningReceipt() async -> Bool {
+        guard let owner = currentAccountOwner(), canReachServer else { return false }
+        await flush()
+        guard !Task.isCancelled, isCurrentAccountOwner(owner), !flushing,
+              !invalidatedJournalSlots.contains(owner.slot), queue.isEmpty, pending == 0 else { return false }
+        guard await ensureJournalDurable(for: owner) else { return false }
+        return isCurrentAccountOwner(owner) && canReachServer && queue.isEmpty && pending == 0
     }
 
     private func send(

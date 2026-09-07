@@ -3,69 +3,110 @@ import SwiftUI
 @MainActor
 final class SupportInquiryScreenModel: ObservableObject {
     @Published var dashboard: ServerAPI.SupportDashboard?
-    @Published var subject = ""
-    @Published var content = ""
+    @Published var subject = "" { didSet { saveDraft() } }
+    @Published var content = "" { didSet { saveDraft() } }
     @Published var isLoading = false
     @Published var isSubmitting = false
     @Published var errorMessage: String?
     @Published var noticeMessage: String?
+    @Published private(set) var draftRecoveryRequired = false
+    private weak var store: AppStore?
+    private var owner: AppStore.AccountSessionBoundary?
+    private var revision = NativeServiceRequestRevision()
+    private var actionID = UUID()
+    private var draft = NativeServiceDraft(slot: DataScope.slot, resource: "support")
+    private var restoring = false
+    private var draftIsReadable = true
 
-    private var generation = UUID()
-
-    func load(reset: Bool = false) async {
-        if reset {
-            generation = UUID()
-            dashboard = nil
-        }
-        let requestGeneration = generation
-        isLoading = dashboard == nil
-        errorMessage = nil
+    func bind(_ value: AppStore) {
+        store = value
+        guard owner == nil || owner.map({ !value.ownsCurrentAccountSession($0) }) == true else { return }
+        owner = value.captureAccountSessionBoundary()
+        _ = revision.begin(); actionID = UUID()
+        dashboard = nil; isLoading = false; isSubmitting = false; noticeMessage = nil
+        restoring = true
         do {
-            let value = try await ServerAPI.supportDashboard()
-            guard requestGeneration == generation else { return }
-            dashboard = value
-        } catch is CancellationError {
-            return
+            draft = try NativeServiceDraftDisk.load(slot: DataScope.slot, resource: "support")
+            subject = draft.fields["subject"] ?? ""; content = draft.fields["content"] ?? ""
+            draftIsReadable = true; draftRecoveryRequired = false
         } catch {
-            guard requestGeneration == generation else { return }
+            subject = ""; content = ""; draftIsReadable = false; draftRecoveryRequired = true
+            errorMessage = "저장된 문의 초안을 읽지 못했습니다. 기존 파일은 보관되어 있습니다."
+        }
+        restoring = false
+    }
+    func recoverDraft() {
+        guard let store, let owner, store.ownsCurrentAccountSession(owner), !isSubmitting else { return }
+        do {
+            try NativeServiceDraftDisk.backup(slot: DataScope.slot, resource: "support")
+            draft = .init(slot: DataScope.slot, resource: "support", fields: ["subject": subject, "content": content])
+            try NativeServiceDraftDisk.save(draft)
+            draftIsReadable = true; draftRecoveryRequired = false
+            noticeMessage = "이전 초안을 별도 보관하고 새 초안을 시작했습니다."
+            errorMessage = nil
+        } catch { errorMessage = "이전 초안을 안전하게 보관하지 못했습니다. 저장 공간을 확인해 주세요." }
+    }
+    private func saveDraft() {
+        guard !restoring, draftIsReadable, let store, let owner, store.ownsCurrentAccountSession(owner), draft.slot == DataScope.slot else { return }
+        draft.fields = ["subject": subject, "content": content]
+        do { try NativeServiceDraftDisk.save(draft) }
+        catch { errorMessage = "문의 초안을 저장하지 못했습니다. 저장 공간을 확인해 주세요." }
+    }
+    func load(reset: Bool = false) async {
+        if let store { bind(store) }
+        guard !isSubmitting, let store, let owner,
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let requestID = revision.begin()
+        isLoading = dashboard == nil; errorMessage = nil
+        defer { if revision.accepts(requestID) { isLoading = false } }
+        do {
+            let value = try await ServerAPI.supportDashboard(authorization: authorization)
+            guard !Task.isCancelled, revision.accepts(requestID), store.ownsCurrentAccountSession(owner),
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
+            dashboard = value
+        } catch {
+            guard revision.accepts(requestID), store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = readable(error)
         }
-        if requestGeneration == generation { isLoading = false }
     }
-
     func submit() async {
         let cleanSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (2...120).contains(cleanSubject.count) else {
-            errorMessage = "제목을 2~120자로 입력해 주세요."
-            return
-        }
-        guard (10...5000).contains(cleanContent.count) else {
-            errorMessage = "내용을 10~5000자로 입력해 주세요."
-            return
-        }
-        guard !isSubmitting else { return }
-        isSubmitting = true
-        errorMessage = nil
-        noticeMessage = nil
+        guard (2...120).contains(cleanSubject.utf16.count) else { errorMessage = "제목을 2~120자로 입력해 주세요."; return }
+        guard (10...5000).contains(cleanContent.utf16.count) else { errorMessage = "내용을 10~5000자로 입력해 주세요."; return }
+        guard !isSubmitting, draftIsReadable, let store, let owner, store.ownsCurrentAccountSession(owner),
+              let authorization = ServerAPI.captureAuthorization() else { return }
+        let originalSubject = subject, originalContent = content
+        let ticket = draft.ticket(for: ["subject": cleanSubject, "content": cleanContent])
+        do { try NativeServiceDraftDisk.save(draft) }
+        catch { errorMessage = "중복 접수를 방지할 기록을 저장하지 못했습니다. 저장 공간을 확인해 주세요."; return }
+        let action = UUID(); actionID = action; _ = revision.begin()
+        isSubmitting = true; errorMessage = nil; noticeMessage = nil
+        defer { if actionID == action { isSubmitting = false } }
         do {
-            let value = try await ServerAPI.createSupportInquiry(
-                subject: cleanSubject, content: cleanContent)
+            let value = try await ServerAPI.createSupportInquiry(subject: cleanSubject, content: cleanContent,
+                                                                 requestID: ticket, authorization: authorization)
+            guard !Task.isCancelled, actionID == action, store.ownsCurrentAccountSession(owner),
+                  ServerAPI.isCurrentAuthorization(authorization) else { return }
             dashboard = value
-            subject = ""
-            content = ""
+            let disk = try? NativeServiceDraftDisk.load(slot: DataScope.slot, resource: "support")
+            if subject == originalSubject && content == originalContent,
+               disk?.fields == ["subject": originalSubject, "content": originalContent], disk?.submissionID == ticket {
+                restoring = true; subject = ""; content = ""; restoring = false
+                draft.fields = [:]; draft.submissionID = nil; draft.submittedFingerprint = nil
+                do { try NativeServiceDraftDisk.save(draft) }
+                catch { errorMessage = "문의는 접수됐지만 기기의 초안 정리가 지연됐습니다. 접수 내역을 확인해 주세요." }
+            }
             noticeMessage = value.submission?.emailStatus == "failed"
                 ? "문의는 저장됐습니다. 운영팀 이메일 알림은 재확인 중입니다."
                 : "문의를 접수했습니다. 답변은 가입 이메일로 전달됩니다."
         } catch {
+            guard actionID == action, store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = readable(error)
         }
-        isSubmitting = false
     }
-
     private func readable(_ error: Error) -> String {
-        (error as? ServerAPIError)?.errorDescription
-            ?? (error as NSError).localizedDescription
+        (error as? ServerAPIError)?.errorDescription ?? "요청을 처리하지 못했습니다. 연결을 확인하고 다시 시도해 주세요."
     }
 }
 
@@ -96,7 +137,7 @@ struct SupportInquiryScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Tokens.paper)
-        .task { if model.dashboard == nil { await model.load() } }
+        .task { model.bind(store); if model.dashboard == nil { await model.load() } }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
             Task { await model.load(reset: true) }
         }
@@ -166,7 +207,7 @@ struct SupportInquiryScreen: View {
                                                      style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: Tokens.Radius.sm, style: .continuous)
-                            .strokeBorder(model.content.count > 5000 ? Tokens.danger : Tokens.line,
+                            .strokeBorder(model.content.utf16.count > 5000 ? Tokens.danger : Tokens.line,
                                           lineWidth: 1)
                     }
                     .accessibilityLabel("문의 내용")
@@ -177,31 +218,35 @@ struct SupportInquiryScreen: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .allowsHitTesting(false)
                 }
-                Text("\(model.content.count)/5000")
+                Text("\(model.content.utf16.count)/5000")
                     .font(.mMicro.monospacedDigit())
-                    .foregroundStyle(model.content.count > 5000 ? Tokens.danger : Tokens.text3)
+                    .foregroundStyle(model.content.utf16.count > 5000 ? Tokens.danger : Tokens.text3)
                     .padding(8).allowsHitTesting(false)
             }
 
             submitButton
             feedbackText
+            if model.draftRecoveryRequired {
+                Button("이전 초안 보관 후 새로 작성") { model.recoverDraft() }.font(.mCallout).frame(minHeight: 44)
+            }
         }
         .supportInquirySurface()
     }
 
     @ViewBuilder private var submitButton: some View {
         let disabled = model.isSubmitting
-            || !(2...120).contains(model.subject.trimmingCharacters(in: .whitespacesAndNewlines).count)
-            || !(10...5000).contains(model.content.trimmingCharacters(in: .whitespacesAndNewlines).count)
+            || model.draftRecoveryRequired
+            || !(2...120).contains(model.subject.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count)
+            || !(10...5000).contains(model.content.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count)
         if compactLandscape {
-            Button { Task { await model.submit() } } label: {
+            Button { NativeServiceActions.run(store: store) { await model.submit() } } label: {
                 if model.isSubmitting { ProgressView().tint(Tokens.onBrand) }
                 else { Text("문의 접수") }
             }
             .buttonStyle(.borderedProminent).tint(Tokens.actionPrimary)
             .frame(maxWidth: .infinity, minHeight: 44).disabled(disabled)
         } else {
-            Button { Task { await model.submit() } } label: {
+            Button { NativeServiceActions.run(store: store) { await model.submit() } } label: {
                 if model.isSubmitting { ProgressView().tint(Tokens.onBrand) }
                 else { Text("문의 접수") }
             }
@@ -239,7 +284,7 @@ struct SupportInquiryScreen: View {
                     Image(systemName: "checkmark.bubble.fill")
                         .font(.system(size: 28, weight: .semibold)).foregroundStyle(Tokens.text3)
                     Text("접수한 문의가 없습니다.").font(.mBodyB).foregroundStyle(Tokens.ink)
-                    Text("왼쪽 입력창에서 바로 운영팀에 문의할 수 있습니다.")
+                    Text("새 문의에 내용을 적어 운영팀에 보낼 수 있습니다.")
                         .font(.mCaption).foregroundStyle(Tokens.text3)
                 }
                 .frame(maxWidth: .infinity, minHeight: 170)

@@ -116,10 +116,11 @@ extension ServerAPI {
 
             func mode(at index: Int) -> String {
                 if let modes = questionModes, modes.indices.contains(index),
-                   modes[index] == "multiple-choice" {
-                    return "multiple-choice"
+                   ["multiple-choice", "short-answer"].contains(modes[index]) {
+                    return modes[index]
                 }
-                // 서버의 고정 수능형 규약: 1~21 선다, 22~30 단답.
+                // Legacy servers without per-question metadata used the fixed
+                // CSAT order. v3's explicit mixed modes above take precedence.
                 return index < 21 ? "multiple-choice" : "short-answer"
             }
         }
@@ -334,92 +335,96 @@ extension ServerAPI {
         var objection: WeeklyMockObjection
     }
 
-    static func weeklyMockDashboard() async throws -> WeeklyMockDashboard {
+    static func weeklyMockDashboard(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> WeeklyMockDashboard {
         let value: WeeklyMockDashboardEnvelope = try await request(
-            "GET", "/api/v1/weekly-mock-exams", body: nil, authed: true)
+            "GET", "/api/v1/weekly-mock-exams", body: nil, authed: true, authorization: authorization)
         return value.weeklyMock
     }
 
-    static func weeklyMockAttempt(examId: String) async throws -> WeeklyMockAttempt {
+    static func weeklyMockAttempt(examId: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> WeeklyMockAttempt {
         let value: WeeklyMockAttemptEnvelope = try await request(
-            "GET", "/api/v1/weekly-mock-exams/\(examId)", body: nil, authed: true)
+            "GET", "/api/v1/weekly-mock-exams/\(examId)", body: nil, authed: true, authorization: authorization)
         return value.attempt
     }
 
-    static func startWeeklyMock(examId: String) async throws -> WeeklyMockAttempt {
+    static func startWeeklyMock(examId: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> WeeklyMockAttempt {
         let value: WeeklyMockStartEnvelope = try await request(
-            "POST", "/api/v1/weekly-mock-exams/\(examId)/start", body: [:], authed: true)
+            "POST", "/api/v1/weekly-mock-exams/\(examId)/start", body: [:], authed: true, authorization: authorization)
         return value.attempt
     }
 
     static func saveWeeklyMockDraft(
         examId: String,
         answers: [String],
-        telemetry: [WeeklyMockTelemetryEvent]
+        telemetry: [WeeklyMockTelemetryEvent],
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> WeeklyMockDraftResponse.Draft {
         let value: WeeklyMockDraftResponse = try await request(
             "PATCH", "/api/v1/weekly-mock-exams/\(examId)/draft",
             body: ["answers": answers, "telemetryEvents": telemetry.map(\.json)],
-            authed: true)
+            authed: true, authorization: authorization)
         return value.draft
     }
 
     static func submitWeeklyMock(
         examId: String,
         answers: [String],
-        telemetry: [WeeklyMockTelemetryEvent]
+        telemetry: [WeeklyMockTelemetryEvent],
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> WeeklyMockSubmitResponse {
         try await request(
             "POST", "/api/v1/weekly-mock-exams/\(examId)/submit",
             body: ["answers": answers, "telemetryEvents": telemetry.map(\.json)],
-            authed: true)
+            authed: true, authorization: authorization)
     }
 
-    static func expireWeeklyMock(examId: String) async throws -> WeeklyMockExpireResponse {
+    static func expireWeeklyMock(examId: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> WeeklyMockExpireResponse {
         try await request(
-            "POST", "/api/v1/weekly-mock-exams/\(examId)/expire", body: [:], authed: true)
+            "POST", "/api/v1/weekly-mock-exams/\(examId)/expire", body: [:], authed: true, authorization: authorization)
     }
 
     static func selectWeeklyMockRepresentative(
         weekKey: String,
         attemptId: String? = nil,
-        deferSelection: Bool = false
+        deferSelection: Bool = false,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws {
         var body: [String: Any] = ["defer": deferSelection]
         if let attemptId { body["attemptId"] = attemptId }
         let _: WeeklyMockSelectionEnvelope = try await request(
             "POST", "/api/v1/weekly-mock-exams/weeks/\(weekKey)/selection",
-            body: body, authed: true)
+            body: body, authed: true, authorization: authorization)
     }
 
-    static func weeklyMockIntegrityCases() async throws -> [WeeklyMockIntegrityCase] {
+    static func weeklyMockIntegrityCases(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> [WeeklyMockIntegrityCase] {
         let value: WeeklyMockIntegrityEnvelope = try await request(
-            "GET", "/api/v1/weekly-mock-exams/integrity-cases", body: nil, authed: true)
+            "GET", "/api/v1/weekly-mock-exams/integrity-cases", body: nil, authed: true, authorization: authorization)
         return value.integrityCases
     }
 
-    static func weeklyMockIntegrityCase(id: String) async throws -> WeeklyMockIntegrityCase {
+    static func weeklyMockIntegrityCase(id: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> WeeklyMockIntegrityCase {
         let value: WeeklyMockIntegrityDetailEnvelope = try await request(
-            "GET", "/api/v1/weekly-mock-exams/integrity-cases/\(id)", body: nil, authed: true)
+            "GET", "/api/v1/weekly-mock-exams/integrity-cases/\(id)", body: nil, authed: true, authorization: authorization)
         return value.integrityCase
     }
 
-    static func weeklyMockObjectionOptions() async throws -> [WeeklyMockObjectionExam] {
+    static func weeklyMockObjectionOptions(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> [WeeklyMockObjectionExam] {
         let value: WeeklyMockObjectionOptionsEnvelope = try await request(
-            "GET", "/api/v1/weekly-mock-exams/objections/options", body: nil, authed: true)
+            "GET", "/api/v1/weekly-mock-exams/objections/options", body: nil, authed: true, authorization: authorization)
         return value.exams
     }
 
-    static func weeklyMockObjections() async throws -> [WeeklyMockObjection] {
+    static func weeklyMockObjections(authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> [WeeklyMockObjection] {
         let value: WeeklyMockObjectionsEnvelope = try await request(
-            "GET", "/api/v1/weekly-mock-exams/objections", body: nil, authed: true)
+            "GET", "/api/v1/weekly-mock-exams/objections", body: nil, authed: true, authorization: authorization)
         return value.objections
     }
 
     static func createWeeklyMockObjection(
         examId: String,
         questionNumber: Int,
-        issueDetail: String
+        issueDetail: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> WeeklyMockObjection {
         let value: WeeklyMockObjectionEnvelope = try await request(
             "POST", "/api/v1/weekly-mock-exams/objections",
@@ -428,17 +433,18 @@ extension ServerAPI {
                 "questionNumber": questionNumber,
                 "issueDetail": issueDetail,
             ],
-            authed: true)
+            authed: true, authorization: authorization)
         return value.objection
     }
 
     /// Bearer로 문제지를 받은 뒤 PDF magic bytes를 확인하고, 백업 제외된 캐시에 둡니다.
     static func downloadWeeklyMockPaper(
         examId: String,
-        accountSlot: String
+        accountSlot: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> URL {
         let request = try authorizedRequest(
-            "GET", "/api/v1/weekly-mock-exams/\(examId)/paper", timeout: 120)
+            "GET", "/api/v1/weekly-mock-exams/\(examId)/paper", timeout: 120, authorization: authorization)
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
         let errorBody = (try? Data(contentsOf: temporaryURL)) ?? Data()
         try validateAuthorizedResponse(
@@ -478,7 +484,8 @@ extension ServerAPI {
         caseId: String,
         files: [URL],
         note: String,
-        submissionId: String
+        submissionId: String,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> WeeklyMockEvidenceReceipt {
         guard !files.isEmpty, files.count <= 10 else {
             throw ServerAPIError(message: "소명 파일을 1개 이상 10개 이하로 선택해주세요.", code: "INVALID_EVIDENCE_FILES")
@@ -488,7 +495,7 @@ extension ServerAPI {
             "POST",
             "/api/v1/weekly-mock-exams/integrity-cases/\(caseId)/evidence",
             contentType: "multipart/form-data; boundary=\(boundary)",
-            timeout: 180)
+            timeout: 180, authorization: authorization)
         request.setValue(submissionId, forHTTPHeaderField: "Idempotency-Key")
 
         let multipart = FileManager.default.temporaryDirectory

@@ -18,8 +18,15 @@ enum MatthsLayoutClass: String, Sendable {
 }
 
 enum UniversalLayoutPolicy {
+    static func problemPaneWidth(usableWidth: CGFloat, height: CGFloat, hasChoices: Bool) -> CGFloat {
+        let fraction: CGFloat = height < 420 && hasChoices ? 0.56 : 0.42
+        return min(560, max(240, min(usableWidth - 280, usableWidth * fraction)))
+    }
+    static func usesCompactOnboardingChoices(width: CGFloat, height: CGFloat, accessibilityText: Bool) -> Bool {
+        width >= 560 && height > 0 && height < 420 && !accessibilityText
+    }
     static func usesProblemSplit(width: CGFloat, height: CGFloat, accessibilityText: Bool) -> Bool {
-        width >= 620 && height >= 240 && !accessibilityText
+        width >= 560 && height >= 240 && !accessibilityText
     }
     /// Apple Pencil이 없는 iPhone은 손가락 입력이 꺼진 채 시작하면 풀이를 쓸 수 없다.
     /// iPad는 기존 Pencil 우선·팜 리젝션 동작을 그대로 유지한다.

@@ -69,7 +69,6 @@ enum ModelDownloadSelfTest {
         let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let root = documents.appendingPathComponent("ModelDownloadSelfTest", isDirectory: true)
         let destination = root.appendingPathComponent("model.gguf")
-        let receipt = destination.appendingPathExtension("matths-integrity")
         try? fm.removeItem(at: root)
 
         var atomicReplacement = false
@@ -93,8 +92,8 @@ enum ModelDownloadSelfTest {
                 minimumBytes: 4,
                 expectedSHA256: expected)
             atomicReplacement = (try Data(contentsOf: destination)) == replacement
-            integrityReceiptMatches = (try? String(contentsOf: receipt, encoding: .utf8)) ==
-                "\(expected)\n\(replacement.count)\n"
+            integrityReceiptMatches = ModelIntegrityReceipt.read(
+                for: destination, expectedSHA256: expected)
 
             let preservedHash = try LocalAIModelPack.sha256(of: destination)
             let corrupt = root.appendingPathComponent("corrupt.part")

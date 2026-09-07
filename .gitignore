@@ -29,4 +29,5 @@ ConceptMotion/
 # Deterministic generator dependencies and local build products
 node_modules/
 .Matths-UIQA.xcodeproj/
+.Matths-DeviceQA.xcodeproj/
 *.generating

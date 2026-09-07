@@ -6,6 +6,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 xcrun swiftc \
+  "$ROOT/Matths/ProtectedFileWriter.swift" \
   "$ROOT/Matths/DataScope.swift" \
   "$ROOT/Matths/TutorConversationStore.swift" \
   "$ROOT/tests/TutorConversationStoreCases.swift" \

@@ -35,12 +35,32 @@ struct HintWebView: UIViewRepresentable {
         web.backgroundColor = .clear
         WebContentAccessibility.configure(web)
         if let url = Self.htmlURL {
+            context.coordinator.loadedHint = hintText
+            context.coordinator.loadedVisualization = visualizationJSON
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
         return web
     }
 
     func updateUIView(_ web: WKWebView, context: Context) {
+        context.coordinator.rebind(height: $height)
+        if context.coordinator.loadedHint != hintText
+            || context.coordinator.loadedVisualization != visualizationJSON,
+           let url = Self.htmlURL {
+            context.coordinator.loadedHint = hintText
+            context.coordinator.loadedVisualization = visualizationJSON
+            let controller = web.configuration.userContentController
+            controller.removeAllUserScripts()
+            controller.addUserScript(WKUserScript(
+                source: payloadJS(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(
+                source: WebContentAccessibility.bootstrapScript(
+                    size: dynamicTypeSize, reduceMotion: reduceMotion,
+                    userMotionEnabled: userMotionEnabled),
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            return
+        }
         WebContentAccessibility.update(
             web,
             size: dynamicTypeSize,
@@ -74,7 +94,11 @@ struct HintWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
         @Binding var height: CGFloat
+        var loadedHint: String?
+        var loadedVisualization: String?
         init(height: Binding<CGFloat>) { _height = height }
+
+        func rebind(height: Binding<CGFloat>) { _height = height }
 
         func userContentController(_ controller: WKUserContentController,
                                    didReceive message: WKScriptMessage) {

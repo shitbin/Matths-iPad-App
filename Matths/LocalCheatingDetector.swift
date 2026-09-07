@@ -64,6 +64,7 @@ struct LocalCheatingDetector {
         params.topK = 20
         params.minP = 0
         params.presencePenalty = 0
+        params.shouldCancel = { cancel?.isCancelled == true }
 
         do {
             let engineBox = EngineBox(engine)

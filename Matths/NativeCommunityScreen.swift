@@ -2,6 +2,7 @@ import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import ImageIO
 
 struct NativeCommunityScreen: View {
     @EnvironmentObject private var store: AppStore
@@ -20,6 +21,7 @@ struct NativeCommunityScreen: View {
     @State private var showsComposer = false
     @State private var showsBlockedUsers = false
     @State private var accountSlot = DataScope.slot
+    @State private var listRequestID = UUID()
 
     private var visibleBoards: [(String, String)] {
         let publicBoards = [("high-school", "통합 게시판")]
@@ -88,8 +90,10 @@ struct NativeCommunityScreen: View {
             .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { note in
                 guard let next = note.object as? String, next != accountSlot else { return }
                 accountSlot = next
+                listRequestID = UUID()
                 data = nil
-                page = 1
+                page = 1; board = "high-school"; search = ""; submittedSearch = ""; category = ""
+                selectedPost = nil; showsComposer = false; showsBlockedUsers = false
                 Task { await load(reset: true) }
             }
             .compactHeightSheet(item: $selectedPost) { post in
@@ -331,7 +335,7 @@ struct NativeCommunityScreen: View {
     private var pagination: some View {
         HStack {
             Button("이전") {
-                page = max(1, page - 1)
+                page = max(1, (data?.pagination.page ?? page) - 1)
                 Task { await load(reset: false) }
             }.disabled(data?.pagination.hasPrevious != true || isLoading)
             Spacer()
@@ -339,7 +343,7 @@ struct NativeCommunityScreen: View {
                 .font(.mCaption).monospacedDigit()
             Spacer()
             Button("다음") {
-                page += 1
+                page = (data?.pagination.page ?? page) + 1
                 Task { await load(reset: false) }
             }.disabled(data?.pagination.hasNext != true || isLoading)
         }
@@ -421,12 +425,19 @@ struct NativeCommunityScreen: View {
         if reset { data = nil }
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        let identity = UUID(); listRequestID = identity
+        let owner = store.captureAccountSessionBoundary()
+        let authorization = ServerAPI.captureAuthorization()
+        defer { if listRequestID == identity { isLoading = false } }
         do {
-            data = try await ServerAPI.communityPage(
+            let value = try await ServerAPI.communityPage(
                 board: board, search: submittedSearch, sort: sort,
-                category: category, page: page)
+                category: category, page: page, authorization: authorization)
+            guard listRequestID == identity, !Task.isCancelled, store.ownsCurrentAccountSession(owner),
+                  authorization.map(ServerAPI.isCurrentAuthorization) ?? !ServerAPI.hasToken else { return }
+            data = value; page = max(1, value.pagination.page)
         } catch {
+            guard listRequestID == identity, store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             errorMessage = (error as? ServerAPIError)?.errorDescription ?? "게시판을 불러오지 못했습니다."
         }
     }
@@ -434,6 +445,7 @@ struct NativeCommunityScreen: View {
 
 private struct NativeCommunityDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AppStore
     let post: ServerAPI.CommunityPost
     let onChanged: () -> Void
     let onLogin: () -> Void
@@ -451,6 +463,9 @@ private struct NativeCommunityDetailSheet: View {
     @State private var previewURL: URL?
     @State private var downloadingID: String?
     @State private var accountSlot = DataScope.slot
+    @State private var detailRequestID = UUID()
+    @State private var sheetOwner: AppStore.AccountSessionBoundary?
+    @State private var commentDraft: NativeServiceDraft?
 
     var body: some View {
         NavigationStack {
@@ -495,10 +510,17 @@ private struct NativeCommunityDetailSheet: View {
                     }
                 }
             }
-            .task { await load() }
+            .task {
+                sheetOwner = store.captureAccountSessionBoundary()
+                restoreCommentDraft()
+                await load()
+            }
+            .onChange(of: comment) { _, _ in saveCommentDraft() }
+            .onChange(of: commentAnonymous) { _, _ in saveCommentDraft() }
+            .onChange(of: reportReason) { _, _ in saveCommentDraft() }
             .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { note in
                 guard let next = note.object as? String, next != accountSlot else { return }
-                accountSlot = next
+                detailRequestID = UUID(); detail = nil; previewURL = nil
                 dismiss()
             }
             .compactHeightSheet(item: Binding(
@@ -595,7 +617,8 @@ private struct NativeCommunityDetailSheet: View {
                 Toggle("익명으로 작성", isOn: $commentAnonymous)
                 Button("댓글 등록") { Task { await submitComment() } }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isActing)
+                    .disabled(comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || comment.utf16.count > 2000 || isActing)
+                Text("\(comment.utf16.count)/2000 · 작성 중인 댓글은 이 기기에 보관됩니다.").font(.mCaption).foregroundStyle(Tokens.text2)
             }
         }
     }
@@ -606,68 +629,136 @@ private struct NativeCommunityDetailSheet: View {
     }
 
     @MainActor private func load() async {
+        guard accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true else { return }
+        let identity = UUID(); detailRequestID = identity
+        let owner = store.captureAccountSessionBoundary()
+        let authorization = ServerAPI.captureAuthorization()
         isLoading = true; errorMessage = nil
-        defer { isLoading = false }
-        do { detail = try await ServerAPI.communityDetail(post) }
-        catch { errorMessage = message(error) }
+        defer { if detailRequestID == identity { isLoading = false } }
+        do {
+            let value = try await ServerAPI.communityDetail(post, authorization: authorization)
+            guard detailRequestID == identity, store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            detail = value
+        } catch { if detailRequestID == identity, store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = message(error) } }
     }
 
     @MainActor private func vote(_ value: Int) async {
-        guard var detail else { return }
+        guard !isActing, var detail, accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true else { return }
+        let owner = store.captureAccountSessionBoundary()
+        detailRequestID = UUID()
         isActing = true; defer { isActing = false }
         do {
             let receipt = try await ServerAPI.voteCommunityPost(postId: post.id, value: value)
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             detail.viewerVote = receipt.viewerVote
             detail.post.upvoteCount = receipt.upvoteCount
             detail.post.downvoteCount = receipt.downvoteCount
             self.detail = detail
             onChanged()
-        } catch { errorMessage = message(error) }
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = message(error) } }
     }
 
     @MainActor private func submitComment() async {
+        guard !isActing, accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true else { return }
+        guard (1...2000).contains(comment.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count) else { return }
+        let owner = store.captureAccountSessionBoundary()
+        let sentComment = comment, sentAnonymous = commentAnonymous
+        detailRequestID = UUID()
         isActing = true; defer { isActing = false }
         do {
-            _ = try await ServerAPI.createCommunityComment(postId: post.id, content: comment, anonymous: commentAnonymous)
-            comment = ""; commentAnonymous = false
-            await load(); onChanged()
-        } catch { errorMessage = message(error) }
+            guard var saved = commentDraft else { throw CocoaError(.fileReadCorruptFile) }
+            if saved.submissionID == nil { saved.submissionID = UUID().uuidString }
+            saved.fields = ["comment": sentComment, "anonymous": String(sentAnonymous), "reportReason": reportReason]
+            try NativeServiceDraftDisk.save(saved); commentDraft = saved
+            guard let operationID = saved.submissionID else { throw CocoaError(.coderInvalidValue) }
+            _ = try await ServerAPI.createCommunityComment(postId: post.id, content: sentComment, anonymous: sentAnonymous,
+                                                           account: accountSlot, operationID: operationID)
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            if comment == sentComment,
+               commentDraft == nil || (try? NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-comment:" + post.id))?.fields["comment"] == sentComment {
+                comment = ""; commentAnonymous = false
+                commentDraft = .init(slot: accountSlot, resource: "community-comment:" + post.id)
+                saveCommentDraft()
+                if let disk = try? NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-comment:" + post.id),
+                   disk.submissionID == nil, disk.fields["comment"] == "", let auth = ServerAPI.captureAuthorization() {
+                    try? await CommunityRequestIdentity.shared.finishAcknowledgedDraft(
+                        owner: MobileRequestOwner(account: accountSlot, authorization: auth), operationID: operationID)
+                }
+            }
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            await load()
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            onChanged()
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = message(error) + " 등록됐을 수 있으니 댓글 목록을 새로고침한 뒤 다시 시도해 주세요." } }
     }
 
     @MainActor private func report() async {
+        guard !isActing, accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true else { return }
+        let owner = store.captureAccountSessionBoundary()
         guard reportReason.trimmingCharacters(in: .whitespacesAndNewlines).count >= 5 else {
             errorMessage = "신고 사유를 5자 이상 입력해주세요."; return
         }
         isActing = true; defer { isActing = false }
         do {
             try await ServerAPI.reportCommunityPost(postId: post.id, reason: reportReason)
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             reportReason = ""; detail?.viewerReported = true
-        } catch { errorMessage = message(error) }
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = message(error) } }
     }
 
     @MainActor private func deletePost() async {
+        guard !isActing, accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true else { return }
+        let owner = store.captureAccountSessionBoundary()
         isActing = true; defer { isActing = false }
-        do { try await ServerAPI.deleteCommunityPost(postId: post.id); onChanged(); dismiss() }
-        catch { errorMessage = message(error) }
+        do {
+            try await ServerAPI.deleteCommunityPost(postId: post.id)
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            onChanged(); dismiss()
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = message(error) } }
     }
 
     @MainActor private func block() async {
+        guard !isActing, accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true else { return }
+        let owner = store.captureAccountSessionBoundary()
         let target = blockTarget; blockTarget = nil
         isActing = true; defer { isActing = false }
         do {
             try await ServerAPI.blockCommunityAuthor(postId: post.id, commentId: target == "post" ? nil : target)
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
             onChanged(); dismiss()
-        } catch { errorMessage = message(error) }
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = message(error) } }
     }
 
     @MainActor private func download(_ attachment: ServerAPI.CommunityPost.Attachment) async {
+        guard downloadingID == nil, accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true else { return }
+        let owner = store.captureAccountSessionBoundary()
+        let slot = accountSlot, authorization = ServerAPI.captureAuthorization()
         downloadingID = attachment.id; defer { downloadingID = nil }
-        do { previewURL = try await ServerAPI.downloadCommunityAttachment(attachment) }
-        catch { errorMessage = message(error) }
+        do {
+            let url = try await ServerAPI.downloadCommunityAttachment(attachment, accountSlot: slot, authorization: authorization)
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            previewURL = url
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = message(error) } }
     }
 
     private func message(_ error: Error) -> String {
         (error as? ServerAPIError)?.errorDescription ?? "게시판 요청을 완료하지 못했습니다."
+    }
+    private func restoreCommentDraft() {
+        guard accountSlot == DataScope.slot else { return }
+        do {
+            let saved = try NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-comment:" + post.id)
+            commentDraft = saved
+            comment = saved.fields["comment"] ?? ""
+            commentAnonymous = saved.fields["anonymous"] == "true"
+            reportReason = saved.fields["reportReason"] ?? ""
+        } catch { errorMessage = "댓글 초안을 읽지 못했습니다. 기존 파일은 보관되어 있습니다." }
+    }
+    private func saveCommentDraft() {
+        guard accountSlot == DataScope.slot, sheetOwner.map(store.ownsCurrentAccountSession) == true, var saved = commentDraft else { return }
+        saved.fields = ["comment": comment, "anonymous": String(commentAnonymous), "reportReason": reportReason]
+        do { try NativeServiceDraftDisk.save(saved); commentDraft = saved }
+        catch { errorMessage = "댓글 초안을 저장하지 못했습니다. 저장 공간을 확인해 주세요." }
     }
 }
 
@@ -689,6 +780,14 @@ private struct NativeCommunityComposerSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var accountSlot = DataScope.slot
+    @State private var owner: AppStore.AccountSessionBoundary?
+    @State private var draft: NativeServiceDraft?
+    @State private var originalNames: [String: String] = [:]
+    @State private var isImporting = false
+    @State private var importID = UUID()
+    @State private var confirmsDiscard = false
+    @State private var confirmsRetry = false
+    @State private var submissionUncertain = false
 
     init(initialBoard: String, onCreated: @escaping (ServerAPI.CommunityPost) -> Void) {
         self.initialBoard = initialBoard
@@ -719,7 +818,7 @@ private struct NativeCommunityComposerSheet: View {
                             Text(item.1).tag(item.0)
                         }
                     }.pickerStyle(.menu)
-                    TextField("제목 2자 이상", text: $title).textFieldStyle(.roundedBorder)
+                    TextField("제목 2~120자", text: $title).textFieldStyle(.roundedBorder)
                     TextEditor(text: $content)
                         .frame(minHeight: 180)
                         .padding(Tokens.Space.s2)
@@ -727,14 +826,20 @@ private struct NativeCommunityComposerSheet: View {
                         .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.md).strokeBorder(Tokens.line) }
                     Toggle("익명으로 작성", isOn: $anonymous)
                     attachmentControls
+                    Text("제목 \(title.utf16.count)/120 · 내용 \(content.utf16.count)/10000").font(.mCaption).foregroundStyle(Tokens.text2)
+                    Text("작성 중인 글과 첨부파일은 이 계정의 기기에 임시 저장됩니다.").font(.mCaption).foregroundStyle(Tokens.text2)
+                    if isImporting { ProgressView("첨부파일을 준비하고 있어요") }
                     if let errorMessage { Label(errorMessage, systemImage: "exclamationmark.triangle.fill").font(.mCaption).foregroundStyle(Tokens.danger) }
                     Button {
-                        Task { await save() }
+                        if submissionUncertain { confirmsRetry = true } else { Task { await save() } }
                     } label: {
                         Label(isSaving ? "등록 중" : "게시글 등록", systemImage: "paperplane.fill").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(!valid || isSaving || access?.remainingPosts == 0)
+                    .disabled(!valid || draft == nil || isSaving || isImporting || access == nil || access?.remainingPosts == 0)
+                    if access == nil && !isLoading {
+                        Button("작성 권한 다시 확인") { Task { await loadAccess() } }.frame(minHeight: 44)
+                    }
                 }
                 .frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
                 .adaptiveHPadding().adaptiveVPadding()
@@ -742,19 +847,33 @@ private struct NativeCommunityComposerSheet: View {
             .background(Tokens.paper)
             .navigationTitle("새 게시글")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.disabled(isSaving) } }
-            .task { await loadAccess() }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("초안 보관 후 닫기") { saveDraft(); dismiss() }.disabled(isSaving) }
+                ToolbarItem(placement: .confirmationAction) { Button("초안 지우기") { confirmsDiscard = true }.disabled(isSaving || isImporting) }
+            }
+            .interactiveDismissDisabled(isSaving || isImporting)
+            .task { owner = store.captureAccountSessionBoundary(); restoreDraft(); await loadAccess() }
+            .onChange(of: title) { _, _ in saveDraft() }
+            .onChange(of: content) { _, _ in saveDraft() }
+            .onChange(of: board) { _, _ in saveDraft() }
+            .onChange(of: anonymous) { _, _ in saveDraft() }
             .onChange(of: photos) { _, items in Task { await importPhotos(items) } }
             .fileImporter(isPresented: $showsFileImporter, allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
                 importFiles(result)
             }
-            .onDisappear { if !isSaving { cleanup() } }
+            .onDisappear { importID = UUID(); if !isSaving { saveDraft() } }
             .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { note in
                 guard let next = note.object as? String, next != accountSlot else { return }
-                accountSlot = next
-                cleanup()
+                importID = UUID()
                 dismiss()
             }
+            .confirmationDialog("작성 중인 초안을 지울까요?", isPresented: $confirmsDiscard) {
+                Button("초안과 첨부 삭제", role: .destructive) { discardDraft(); dismiss() }
+            } message: { Text("등록한 게시글에는 영향이 없습니다. 기기에 보관한 이 초안만 삭제합니다.") }
+            .confirmationDialog("이미 게시글이 등록됐을 수 있습니다", isPresented: $confirmsRetry) {
+                Button("게시판에서 먼저 확인") { dismiss() }
+                Button("미등록을 확인했어요 · 다시 등록") { Task { await save() } }
+            } message: { Text("응답을 받지 못해 등록 여부를 확인할 수 없습니다. 같은 글이 있는지 확인한 뒤 다시 등록해 주세요.") }
         }
     }
 
@@ -764,7 +883,7 @@ private struct NativeCommunityComposerSheet: View {
             ForEach(files, id: \.path) { file in
                 HStack {
                     Image(systemName: "paperclip")
-                    Text(file.lastPathComponent).lineLimit(1)
+                    Text(originalNames[file.lastPathComponent] ?? file.lastPathComponent).lineLimit(1)
                     Spacer()
                     Button { remove(file) } label: { Image(systemName: "xmark.circle.fill") }
                         .accessibilityLabel("첨부 삭제")
@@ -777,7 +896,8 @@ private struct NativeCommunityComposerSheet: View {
                 Button { showsFileImporter = true } label: { Label("파일", systemImage: "doc.badge.plus") }
                     .buttonStyle(SecondaryButtonStyle())
             }
-            .disabled(files.count >= 5 || access?.canUploadFiles == false)
+            .disabled(files.count >= 5 || access?.canUploadFiles != true || isImporting || isSaving)
+            Text("사진 10MB · 문서/압축파일 25MB · 합계 50MB").font(.mCaption).foregroundStyle(Tokens.text2)
             if access?.canUploadFiles == false {
                 Text("경고가 있는 계정은 첨부파일 없이 글을 작성할 수 있습니다.").font(.mCaption).foregroundStyle(Tokens.warningInk)
             }
@@ -785,72 +905,168 @@ private struct NativeCommunityComposerSheet: View {
     }
 
     private var valid: Bool {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 &&
-        content.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 && !isLoading
+        (2...120).contains(title.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count) &&
+        (2...10000).contains(content.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count) && !isLoading
     }
 
+    private var ownsDraft: Bool {
+        accountSlot == DataScope.slot && owner.map(store.ownsCurrentAccountSession) == true
+    }
     @MainActor private func loadAccess() async {
-        if !composerBoards.contains(where: { $0.0 == board }) {
-            board = "high-school"
-        }
-        do { access = try await ServerAPI.communityPostingAccess() }
-        catch { errorMessage = (error as? ServerAPIError)?.errorDescription ?? "작성 가능 여부를 확인하지 못했습니다." }
-        isLoading = false
-    }
-
-    @MainActor private func save() async {
-        isSaving = true; errorMessage = nil
+        guard ownsDraft else { return }
+        isLoading = true
+        let boundary = store.captureAccountSessionBoundary()
+        defer { if store.ownsCurrentAccountSession(boundary) { isLoading = false } }
+        if !composerBoards.contains(where: { $0.0 == board }) { board = "high-school" }
         do {
-            let post = try await ServerAPI.createCommunityPost(
-                board: board, title: title, content: content, anonymous: anonymous, files: files)
-            cleanup(); files = []; onCreated(post)
+            let value = try await ServerAPI.communityPostingAccess()
+            guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
+            access = value
+        } catch { if ownsDraft, !Task.isCancelled { errorMessage = (error as? ServerAPIError)?.errorDescription ?? "작성 가능 여부를 확인하지 못했습니다." } }
+    }
+    private var draftFields: [String: String] {
+        var fields = ["board": board, "title": title, "content": content, "anonymous": String(anonymous),
+                      "submissionUncertain": String(submissionUncertain)]
+        for (name, original) in originalNames { fields["name:" + name] = original }
+        return fields
+    }
+    private func restoreDraft() {
+        guard ownsDraft else { return }
+        do {
+            let saved = try NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-composer")
+            draft = saved
+            if saved.fields.isEmpty { return }
+            board = saved.fields["board"] ?? board
+            title = saved.fields["title"] ?? ""; content = saved.fields["content"] ?? ""
+            anonymous = saved.fields["anonymous"] == "true"
+            submissionUncertain = saved.fields["submissionUncertain"] == "true"
+            let directory = DataScope.directory(for: accountSlot).resolvingSymlinksInPath()
+            files = saved.attachments.compactMap { name in
+                guard name.hasPrefix("community-draft-") else { return nil }
+                let url = directory.appendingPathComponent(name)
+                guard url.resolvingSymlinksInPath().deletingLastPathComponent() == directory,
+                      FileManager.default.fileExists(atPath: url.path) else { return nil }
+                return url
+            }
+            for name in saved.attachments { originalNames[name] = saved.fields["name:" + name] ?? name }
+            if files.count != saved.attachments.count { errorMessage = "일부 첨부파일을 찾지 못했습니다. 내용을 확인하고 다시 첨부해 주세요." }
+            if submissionUncertain { errorMessage = "이 글이 이미 등록됐을 수 있습니다. 게시판에서 확인한 뒤 다시 등록해 주세요." }
+        } catch { errorMessage = "초안을 읽지 못했습니다. 원본은 보관되어 있습니다. 초안 지우기로 새로 시작할 수 있어요." }
+    }
+    private func saveDraft() {
+        guard ownsDraft, var saved = draft else { return }
+        saved.fields = draftFields; saved.attachments = files.map(\.lastPathComponent)
+        do { try NativeServiceDraftDisk.save(saved); draft = saved }
+        catch { errorMessage = "초안을 저장하지 못했습니다. 저장 공간을 확인해 주세요." }
+    }
+    private func discardDraft() {
+        guard ownsDraft else { return }
+        cleanup()
+        files = []; title = ""; content = ""; originalNames = [:]; submissionUncertain = false
+        draft = .init(slot: accountSlot, resource: "community-composer")
+        saveDraft()
+    }
+    @MainActor private func save() async {
+        guard ownsDraft, !isSaving, !isImporting, valid, let access, access.remainingPosts > 0,
+              files.isEmpty || access.canUploadFiles else { return }
+        saveDraft()
+        guard var saved = draft else { return }
+        if saved.submissionID == nil { saved.submissionID = UUID().uuidString }
+        do { try NativeServiceDraftDisk.save(saved); draft = saved }
+        catch { errorMessage = "등록 전 초안을 안전하게 저장하지 못했습니다."; return }
+        let boundary = store.captureAccountSessionBoundary()
+        let sentFields = saved.fields, sentAttachments = saved.attachments
+        isSaving = true; errorMessage = nil
+        defer { if store.ownsCurrentAccountSession(boundary) { isSaving = false } }
+        do {
+            guard let operationID = saved.submissionID else { throw CocoaError(.coderInvalidValue) }
+            let post = try await ServerAPI.createCommunityPost(board: board, title: title, content: content,
+                                                               anonymous: anonymous, files: files, originalNames: originalNames,
+                                                               account: accountSlot, operationID: operationID)
+            guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
+            if let disk = try? NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-composer"),
+               disk.fields == sentFields, disk.attachments == sentAttachments {
+                discardDraft()
+                if let disk = try? NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-composer"),
+                   disk.submissionID == nil, disk.fields["content"] == "", let auth = ServerAPI.captureAuthorization() {
+                    try? await CommunityRequestIdentity.shared.finishAcknowledgedDraft(
+                        owner: MobileRequestOwner(account: accountSlot, authorization: auth), operationID: operationID)
+                }
+            }
+            guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
+            onCreated(post)
         } catch {
-            errorMessage = (error as? ServerAPIError)?.errorDescription ?? "게시글을 등록하지 못했습니다."
-            isSaving = false
+            guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
+            let rejected = (error as? ServerAPIError)?.statusCode.map { (400..<500).contains($0) } == true
+                || (error as? ServerAPIError)?.code == "COMMUNITY_UPLOAD_NOT_STARTED"
+            submissionUncertain = !rejected
+            errorMessage = (error as? ServerAPIError)?.errorDescription ?? "등록 여부를 확인하지 못했습니다. 게시판을 확인한 뒤 다시 시도해 주세요."
+            saveDraft()
         }
     }
-
     @MainActor private func importPhotos(_ items: [PhotosPickerItem]) async {
-        defer { photos = [] }
+        guard !items.isEmpty, ownsDraft, !isSaving, !isImporting else { return }
+        let identity = UUID(); importID = identity; isImporting = true
+        defer { if importID == identity { photos = []; isImporting = false } }
         for item in items.prefix(max(0, 5 - files.count)) {
-            guard let source = try? await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: source),
-                  let data = image.jpegData(compressionQuality: 0.88),
-                  data.count <= 10 * 1024 * 1024 else {
-                errorMessage = "10MB 이하 사진만 첨부할 수 있습니다."; continue
+            guard let source = try? await item.loadTransferable(type: Data.self), source.count <= 40 * 1024 * 1024 else {
+                if ownsDraft { errorMessage = "사진을 읽지 못했거나 원본이 너무 큽니다." }; continue
+            }
+            let data = await Task.detached(priority: .userInitiated) {
+                NativeServicePhotoPreparation.prepareJPEG(source)
+            }.value
+            guard ownsDraft, importID == identity, !Task.isCancelled else { return }
+            guard let data, NativeServiceInputPolicy.allowsAttachment(extension: "jpg", bytes: data.count, totalBytes: attachmentBytes + data.count) else {
+                errorMessage = "사진은 10MB, 전체 첨부는 50MB까지 보관할 수 있습니다."; continue
             }
             let url = temporaryURL(extension: "jpg")
-            do { try data.write(to: url, options: .atomic); files.append(url) }
-            catch { errorMessage = "사진을 임시 보관하지 못했습니다." }
+            do {
+                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                files.append(url); originalNames[url.lastPathComponent] = "사진-\(files.count).jpg"; saveDraft()
+            } catch { errorMessage = "사진을 임시 보관하지 못했습니다." }
         }
     }
-
+    private var attachmentBytes: Int {
+        files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
     private func importFiles(_ result: Result<[URL], Error>) {
+        guard ownsDraft, !isSaving, !isImporting else { return }
         do {
             for source in try result.get().prefix(max(0, 5 - files.count)) {
                 let access = source.startAccessingSecurityScopedResource()
                 defer { if access { source.stopAccessingSecurityScopedResource() } }
+                let bytes = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
+                guard bytes <= 25 * 1024 * 1024,
+                      NativeServiceInputPolicy.allowsAttachment(extension: source.pathExtension, bytes: bytes, totalBytes: attachmentBytes + bytes) else {
+                    errorMessage = "지원되는 사진(10MB)·문서/압축파일(25MB)을 골라 주세요. 합계는 50MB까지입니다."; continue
+                }
                 let data = try Data(contentsOf: source, options: [.mappedIfSafe])
-                guard data.count <= 10 * 1024 * 1024 else { errorMessage = "10MB 이하 파일만 첨부할 수 있습니다."; continue }
-                let url = temporaryURL(extension: source.pathExtension)
-                try data.write(to: url, options: .atomic); files.append(url)
+                let url = temporaryURL(extension: source.pathExtension.lowercased())
+                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                files.append(url); originalNames[url.lastPathComponent] = source.lastPathComponent; saveDraft()
             }
-        } catch { errorMessage = "선택한 파일을 읽지 못했습니다." }
+        } catch { if !(error is CancellationError) { errorMessage = "선택한 파일을 읽지 못했습니다." } }
     }
-
     private func temporaryURL(extension ext: String) -> URL {
-        DataScope.url("community-draft-\(UUID().uuidString).\(ext.isEmpty ? "bin" : ext)")
+        DataScope.url("community-draft-\(UUID().uuidString).\(ext.isEmpty ? "bin" : ext)", for: accountSlot)
     }
-    private func remove(_ file: URL) { files.removeAll { $0 == file }; try? FileManager.default.removeItem(at: file) }
+    private func remove(_ file: URL) {
+        guard ownsDraft, !isSaving else { return }
+        files.removeAll { $0 == file }; originalNames.removeValue(forKey: file.lastPathComponent)
+        try? FileManager.default.removeItem(at: file); saveDraft()
+    }
     private func cleanup() { files.forEach { try? FileManager.default.removeItem(at: $0) } }
 }
 
 private struct NativeCommunityBlockedUsersSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: AppStore
     @State private var users: [ServerAPI.CommunityBlockedUser] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var accountSlot = DataScope.slot
+    @State private var owner: AppStore.AccountSessionBoundary?
+    @State private var unblocking: Set<String> = []
     var body: some View {
         NavigationStack {
             List {
@@ -863,28 +1079,37 @@ private struct NativeCommunityBlockedUsersSheet: View {
                             Text(user.anonymous ? "익명 사용자" : "커뮤니티 사용자").font(.mCaption).foregroundStyle(Tokens.text2)
                         }
                         Spacer()
-                        Button("차단 해제") { Task { await unblock(user) } }
+                        Button(unblocking.contains(user.id) ? "해제 중" : "차단 해제") { Task { await unblock(user) } }.disabled(unblocking.contains(user.id))
                     }.frame(minHeight: 52)
                 }
             }
             .navigationTitle("차단한 사용자")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
-            .task { await load() }
+            .task { owner = store.captureAccountSessionBoundary(); await load() }
             .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { note in
                 guard let next = note.object as? String, next != accountSlot else { return }
-                accountSlot = next
+                users = []
                 dismiss()
             }
         }
     }
     @MainActor private func load() async {
+        guard let owner, store.ownsCurrentAccountSession(owner), accountSlot == DataScope.slot else { return }
         isLoading = true; defer { isLoading = false }
-        do { users = try await ServerAPI.communityBlockedUsers() }
-        catch { errorMessage = (error as? ServerAPIError)?.errorDescription ?? "차단 목록을 불러오지 못했습니다." }
+        do {
+            let values = try await ServerAPI.communityBlockedUsers()
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            users = values
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = (error as? ServerAPIError)?.errorDescription ?? "차단 목록을 불러오지 못했습니다." } }
     }
     @MainActor private func unblock(_ user: ServerAPI.CommunityBlockedUser) async {
-        do { try await ServerAPI.unblockCommunityUser(user.id); users.removeAll { $0.id == user.id } }
-        catch { errorMessage = (error as? ServerAPIError)?.errorDescription ?? "차단을 해제하지 못했습니다." }
+        guard let owner, store.ownsCurrentAccountSession(owner), accountSlot == DataScope.slot, !unblocking.contains(user.id) else { return }
+        unblocking.insert(user.id); defer { unblocking.remove(user.id) }
+        do {
+            try await ServerAPI.unblockCommunityUser(user.id)
+            guard store.ownsCurrentAccountSession(owner), !Task.isCancelled else { return }
+            users.removeAll { $0.id == user.id }
+        } catch { if store.ownsCurrentAccountSession(owner), !Task.isCancelled { errorMessage = (error as? ServerAPIError)?.errorDescription ?? "차단을 해제하지 못했습니다." } }
     }
 }
 

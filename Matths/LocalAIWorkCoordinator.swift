@@ -18,11 +18,15 @@ actor LocalAIWorkCoordinator {
         case tutorResponse = "tutor-response"
         /// 사용자가 요청한 모델 재로드·사진 선택 전 메모리 해제.
         case modelMaintenance = "model-maintenance"
+        /// Resource pressure cleanup must run immediately after the current
+        /// owner returns, ahead of any queued memory-heavy grading request.
+        case resourceRecovery = "resource-recovery"
         /// 채점·정산을 바꾸지 않는 비동기 풀이 무결성 검토.
         case integrityReview = "integrity-review"
 
         fileprivate var priority: Int {
             switch self {
+            case .resourceRecovery:return 400
             case .sheetGrading:   return 300
             case .modelMaintenance:return 250
             case .tutorResponse:  return 200
@@ -63,7 +67,7 @@ actor LocalAIWorkCoordinator {
         let requestedAt = Date()
         try Task.checkCancellation()
 
-        return try await withTaskCancellationHandler {
+        let lease: Lease = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 if Task.isCancelled {
                     continuation.resume(throwing: CancellationError())
@@ -90,6 +94,13 @@ actor LocalAIWorkCoordinator {
         } onCancel: {
             Task { await self.cancelWaiting(id: id) }
         }
+        // Cancellation may race a grant: the waiter is no longer in the queue,
+        // so cancelWaiting cannot find it. Return that exact lease before throwing.
+        if Task.isCancelled {
+            release(lease)
+            throw CancellationError()
+        }
+        return lease
     }
 
     /// 소유자가 받은 lease와 정확히 같은 id만 해제할 수 있다. 늦게 끝난 이전 Task가

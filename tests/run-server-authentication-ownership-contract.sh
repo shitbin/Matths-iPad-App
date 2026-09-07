@@ -11,7 +11,7 @@ swiftc \
   -o "$BUILD_DIR/auth-ownership"
 "$BUILD_DIR/auth-ownership"
 
-python3 - "$ROOT" <<'PY'
+python3 - "$ROOT" "$BUILD_DIR" <<'PY'
 from pathlib import Path
 import sys
 
@@ -189,6 +189,46 @@ if ".onDisappear { cancelAuthentication() }" not in auth_code:
     fail("email authentication ownership is not cancelled when its sheet disappears")
 if ".onDisappear { cancelGoogleSignIn() }" not in auth_code:
     fail("social authentication ownership is not cancelled when AuthScreen disappears")
+
+sync_logout = body(app, "func signOut()")
+if sync_logout.find("ServerAPI.beginSignOut()") > sync_logout.find("Task {"):
+    fail("signOut intent must be captured before scheduling its Task")
+transition = body(app, "private func transitionToSignedOut(")
+if transition.find("guard ownsIntent()") > transition.find("await switchDataSlot("):
+    fail("stale auth cleanup can supersede a newer account transition")
+transition_commit = body(transition, "beforeSwitch:")
+for call in ["ServerAPI.finishSignOut(signOutID)", "ServerAPI.finishAuthenticationExpiration(expirationID)", "guard accepted else"]:
+    if call not in transition_commit:
+        fail("auth cleanup must conditionally re-check ownership after flush: " + call)
+if "ServerAPI.logout()" in transition:
+    fail("deferred auth cleanup must not unconditionally reset a newer login")
+expired_observer = body(app, "authenticationExpiredObserver = NotificationCenter.default.addObserver(")
+if "self.signOut()" in expired_observer or "expirationID" not in expired_observer:
+    fail("expiration notification lost its intent ownership")
+notify = body(server, "private static func notifyAuthenticationExpired(message:")
+if "TokenBox.expirationTicket()" not in notify or '"expirationID": expirationID' not in notify:
+    fail("auth expiration must carry a non-secret generation ticket")
+token_box = body(server, "private enum TokenBox")
+for marker, call in [
+    ("static func finishSignOut(_ id: UUID)", "authenticationOwnership.completeSignOut(id)"),
+    ("static func finishExpiration(_ id: UUID)", "authenticationOwnership.completeExpiration(id, hasCredential: loadUnlocked() != nil)"),
+]:
+    if call not in body(token_box, marker): fail("Keychain auth cleanup is not gated by the tested state machine")
+
+generated = "extension AuthTransitionHarness {\n"
+generated += "func signOut() {" + sync_logout + "}\n"
+generated += "func signOut(discardingCurrentSlot: Bool) async -> Bool {" + body(app, "func signOut(discardingCurrentSlot: Bool)") + "}\n"
+generated += "private func transitionToSignedOut(discardingCurrentSlot: Bool, signOutID: UUID? = nil, expirationID: UUID? = nil) async -> Bool {" + transition + "}\n"
+generated += "func deliverExpiration(_ id: UUID) async -> Bool { await transitionToSignedOut(discardingCurrentSlot: false, expirationID: id) }\n}\n"
+(Path(sys.argv[2]) / "ProductionAuthTransitions.swift").write_text("import Foundation\n" + generated)
 PY
+
+swiftc -parse-as-library \
+  "$ROOT/Matths/ServerAuthenticationOwnership.swift" \
+  "$ROOT/Matths/ServerTokenOwnership.swift" \
+  "$ROOT/tests/ServerAuthenticationExpiryInterleavingCases.swift" \
+  "$BUILD_DIR/ProductionAuthTransitions.swift" \
+  -o "$BUILD_DIR/auth-expiry-interleavings"
+"$BUILD_DIR/auth-expiry-interleavings"
 
 echo "Server authentication ownership contract passed."

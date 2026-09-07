@@ -35,6 +35,7 @@ struct CoachGuidanceCases {
         spiceChangesToneOnly()
         correctAnswerUsesThisAttempt()
         multipleChoiceUsesTheNumberOnScreen()
+        conceptChoicesAreNotMistakenForCalculations()
         silentStaysSilent()
         streakStillSoftens()
         guidanceIsDeterministic()
@@ -166,6 +167,16 @@ struct CoachGuidanceCases {
                      "객관식 형식 설명이 없다: \(g.observation)")
         precondition(g.nextAction.contains("3번을 정답이라고 두고"),
                      "다음 행동이 고른 보기로 만들어지지 않았다: \(g.nextAction)")
+    }
+
+    static func conceptChoicesAreNotMistakenForCalculations() {
+        var coach = CoachEngine()
+        let concept = GeneratedProblem(typeKey: "polynomial-arithmetic-condition-reading", typeName: "조건과 범위 확인", choices: ["조건 표시", "무조건 대입"])
+        let guidance = coach.guidance(problem: concept, studentInput: "a", correct: true)
+        precondition(guidance != nil)
+        let text = guidance.map(lines) ?? ""
+        precondition(!text.contains("마지막 계산") && !text.contains("두 사건") && !text.contains("분자로"))
+        precondition(text.contains("보기") && text.contains("조건"))
     }
 
     // 무음은 문구를 내지 않는다.

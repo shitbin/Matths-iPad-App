@@ -16,7 +16,10 @@ struct ResponsiveProblemWorkspace: Layout {
     }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard subviews.count == 2 else { return .zero }
-        let width = proposal.width ?? 700
+        // ViewThatFits must be able to reject the split at narrow widths. Merely
+        // echoing every proposed width squeezed two panels even on phone portrait.
+        let minimumWidth = max(520, (leadingWidth ?? 240) + (trailingWidth ?? 280) + spacing)
+        let width = max(minimumWidth, proposal.width ?? minimumWidth)
         let (left, right) = widths(width)
         let a = subviews[0].sizeThatFits(.init(width: left, height: proposal.height))
         let b = subviews[1].sizeThatFits(.init(width: right, height: proposal.height))

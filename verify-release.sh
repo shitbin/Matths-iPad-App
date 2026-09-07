@@ -79,27 +79,44 @@ echo "[2/6] DEBUG 전용 통로"
 # 출시판에 남으면 운영 서버가 메일 키를 잃는 순간 계정 탈취 통로가 된다 — #if DEBUG 회귀를 기계로 잡는다.
 for s in "서버 주소 (개발용)" "기록 보기 (디버그)" "채점 기록 · 디버그" \
          "개발 서버 미리보기 코드" \
-         "LESSON-DEBUG" "-fakeAnalysis" "-fakeTrace" "-proReport"; do
+         "LESSON-DEBUG" "-fakeAnalysis" "-fakeTrace" "-proReport" \
+         "LocalNativeIntegrationLogin" "NativeLLMRuntimeSelfTest" "ProNativeRuntimeSelfTest" \
+         "MATTHS_LOCAL_QA_EMAIL" "MATTHS_LOCAL_QA_PASSWORD" \
+         "native-local-login-qa.json" "native-llm-runtime-qa.json" "ProNativeRuntimeQA"; do
   report "$s" "$(count_fixed_bytes "$BIN" "$s")"
 done
 
 echo
 echo "[3/6] 서버 주소"
 report "변경 가능한 모델 /resolve/main" "$(count_fixed_bytes "$BIN" "/resolve/main/")"
-hosts=$(strings "$BIN" | grep -oE "https://[a-zA-Z0-9._/-]+" | grep -v "huggingface.co" | sort -u)
+# Keep the complete URL token, including query/fragment/encoded path/userinfo/
+# port characters. Truncating at those characters would turn a lookalike into
+# the one explicitly permitted public update link below. Exempt model URLs by
+# their actual host, never by a substring in an unrelated URL's path.
+hosts=$(strings "$BIN" | grep -oE "https://[^[:space:][:cntrl:]\"'<>]+" | grep -vE '^https://huggingface[.]co(/|$)' | sort -u)
 if [ -z "$hosts" ]; then
   echo "  ✗ API 주소가 하나도 없다 — 빌드가 잘못됐다"; fail=$((fail+1))
 else
+  found_api=0
   while IFS= read -r h; do
     case "$h" in
       https://www.matths.kr|https://www.matths.kr/*)
+        found_api=1
         echo "  ✓ $h" ;;
+      https://apps.apple.com/app/id6803569629)
+        # A public App Store Link opens the installed app's update page. It is
+        # not an API host and does not satisfy the required canonical API URL.
+        echo "  ✓ 공개 업데이트 링크(API 아님): $h" ;;
       *)
         echo "  ✗ 운영 정본이 아닌 API 주소다: $h"
         echo "     → ServerAPI.defaultURL 을 https://www.matths.kr 로 고정한 뒤 다시 돌려라."
         fail=$((fail+1)) ;;
     esac
   done <<< "$hosts"
+  if [ "$found_api" -eq 0 ]; then
+    echo "  ✗ 운영 API 주소가 없다 — 공개 업데이트 링크는 API 주소가 아니다"
+    fail=$((fail+1))
+  fi
 fi
 
 echo

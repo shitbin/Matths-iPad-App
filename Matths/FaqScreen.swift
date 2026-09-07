@@ -17,13 +17,15 @@ final class FaqScreenModel: ObservableObject {
         selectFirst: Bool = false
     ) async {
         if reset {
-            generation = UUID()
             dashboard = nil
             selectedItem = nil
+            query = ""
         }
+        generation = UUID()
         let current = generation
-        isLoading = dashboard == nil
+        isLoading = true
         errorMessage = nil
+        defer { if current == generation { isLoading = false } }
         do {
             let value = try await ServerAPI.faq(
                 query: code == nil ? query : "",
@@ -46,7 +48,6 @@ final class FaqScreenModel: ObservableObject {
             errorMessage = (error as? ServerAPIError)?.errorDescription
                 ?? (error as NSError).localizedDescription
         }
-        if current == generation { isLoading = false }
     }
 
     func select(_ item: ServerAPI.FAQItem) {
@@ -90,7 +91,11 @@ struct FaqScreen: View {
                         listPanel(dashboard, compact: false)
                     }
                 } else {
-                    stateView(model.errorMessage ?? "도움말을 불러오지 못했습니다.")
+                    VStack {
+                        stateView(model.errorMessage ?? "도움말을 불러오지 못했습니다.")
+                        Button("다시 시도") { Task { await model.load() } }.buttonStyle(PrimaryButtonStyle())
+                        Button("문의하기") { store.route = .support }.frame(minHeight: 44)
+                    }.padding(Tokens.Space.s4)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -53,14 +53,15 @@ extension ServerAPI {
     /// 앱은 웹 세션 쿠키나 결제키를 직접 보관하지 않는다.
     static func createCommerceHandoff(
         productCode: String? = nil,
-        mode: String = "pricing"
+        mode: String = "pricing",
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> CommerceHandoffResponse.Handoff {
         var body: [String: Any] = ["mode": mode]
         if let productCode, !productCode.isEmpty {
             body["productCode"] = productCode
         }
         let response: CommerceHandoffResponse = try await request(
-            "POST", "/api/v1/commerce/handoffs", body: body, authed: true)
+            "POST", "/api/v1/commerce/handoffs", body: body, authed: true, authorization: authorization)
         return response.handoff
     }
 }

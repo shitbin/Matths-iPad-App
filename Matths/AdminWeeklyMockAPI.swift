@@ -70,6 +70,16 @@ extension ServerAPI {
     }
 
     struct AdminMockQuestionReview: Codable, Hashable, Identifiable {
+        struct Concept: Codable, Hashable {
+            var curriculumId: String
+            var courseId: String
+            var courseTitle: String
+            var unitId: String
+            var unitTitle: String
+            var conceptId: String
+            var conceptTitle: String
+            var conceptKey: String
+        }
         var number: Int
         var mode: String
         var submittedAnswer: String
@@ -77,6 +87,7 @@ extension ServerAPI {
         var isCorrect: Bool
         var points: Int
         var explanation: AdminMockExplanation?
+        var concept: Concept?
         var id: Int { number }
     }
 

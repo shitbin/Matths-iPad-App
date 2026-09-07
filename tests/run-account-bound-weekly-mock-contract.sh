@@ -20,7 +20,8 @@ grep -Fq 'DataScope.defaultsKey(' "$screen"
 
 # 화면 인스턴스도 계정 전환 알림을 받아 이전 학생의 비동기 상태를 폐기한다.
 grep -Fq 'DataScope.didSwitchNotification' "$screen"
-grep -Fq '.id(accountSlot)' "$screen"
+grep -Fq '.id(owner?.id)' "$screen"
+grep -Fq 'owner = AccountRequestOwner(store: store)' "$screen"
 
 # 서버 상태 코드를 그대로 학생에게 노출하지 않고, 긴 시험명은 세로로 확장한다.
 grep -Fq 'examStatusLabel(exam.attemptStatus)' "$screen"

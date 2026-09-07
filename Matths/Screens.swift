@@ -29,10 +29,10 @@ struct SolveScreen: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var screenshotGuard: ScreenshotGuard
-    @State private var drawing = PKDrawing()
-    @State private var answer = ""
-    @State private var problemHeight: CGFloat = 120
-    @State private var pickedKey: String?          // 뱅크 5지선다 선택
+    @StateObject private var workspaceDraft = PracticeWorkspaceDraftModel()
+    private var drawing: PKDrawing { workspaceDraft.drawing }
+    private var answer: String { workspaceDraft.answer }
+    private var pickedKey: String? { workspaceDraft.pickedKey }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHint = false            // 복습 시각 힌트 펼침
     @State private var showReplay = false          // 복습 풀이 애니메이션 다시 보기
@@ -42,7 +42,6 @@ struct SolveScreen: View {
     @FocusState private var answerFocused: Bool
     @State private var noteAllowsFinger = UniversalLayoutPolicy.defaultsToFingerDrawing(
         on: UIDevice.current.userInterfaceIdiom == .phone ? .phone : .pad)
-    @State private var noteZoom: CGFloat = 1
     @State private var noteTool: SolutionCanvasTool = .pen
     @State private var noteInkWidth: CGFloat = 3
     @State private var noteUndoStack: [PKDrawing] = []
@@ -85,23 +84,33 @@ struct SolveScreen: View {
                 store.abandonExam()
             }
 
-            if usesPhoneLandscapeWorkspace {
-                phoneLandscapeWorkspace
-            } else {
-                standardScrollableWorkspace
+            if workspaceDraft.isLoading { ProgressView("저장한 풀이를 불러오는 중") }
+            if let error = workspaceDraft.error {
+                VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                    Text(error).font(.mCallout).foregroundStyle(Tokens.dangerInk)
+                    HStack {
+                        Button("다시 불러오기") { Task { await openWorkspaceDraft() } }
+                        if workspaceDraft.canResetPreservingOriginal {
+                            Button("원본 보관 후 새로 쓰기") { Task { _ = await workspaceDraft.resetPreservingOriginal() } }
+                        }
+                    }.font(.mCallout).frame(minHeight: 44)
+                }.padding(Tokens.Space.s3)
             }
+
+            GeometryReader { viewport in
+                if UniversalLayoutPolicy.usesProblemSplit(width: viewport.size.width, height: viewport.size.height,
+                    accessibilityText: workspaceTypeSize.isAccessibilitySize)
+                    || (keyboardVisible && viewport.size.width >= 560 && !workspaceTypeSize.isAccessibilitySize) {
+                    phoneLandscapeWorkspace
+                } else {
+                    standardScrollableWorkspace
+                }
+            }.disabled(workspaceDraft.isLoading || !workspaceDraft.isWritable)
         }
         .background(Tokens.paper)
-        // 문항이 바뀌면 답과 필기를 비운다
-        .onChange(of: store.examIndex) {
-            answer = ""
-            pickedKey = nil
-            drawing = PKDrawing()
-            noteZoom = 1
-            noteUndoStack.removeAll()
-            noteRedoStack.removeAll()
-            showHint = false
-        }
+        .task(id: workspaceIdentity) { await openWorkspaceDraft() }
+        .onDisappear { Task { _ = await workspaceDraft.flush() } }
+        .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in workspaceDraft.detach() }
         .onReceive(NotificationCenter.default.publisher(
             for: UIResponder.keyboardWillShowNotification)) { _ in
                 keyboardVisible = true
@@ -118,52 +127,45 @@ struct SolveScreen: View {
     /// iPhone 가로는 폭은 넓지만 세로가 390pt 안팎이다. `ViewThatFits`에 맡기면
     /// 각 칸의 이상적인 너비 때문에 세로 적층으로 물러나고, 학생이 문제와 노트를
     /// 오가며 스크롤해야 했다. 이 문맥은 책을 펼친 것처럼 좌우 고정 작업대를 쓴다.
-    private var usesPhoneLandscapeWorkspace: Bool {
-        verticalSizeClass == .compact && !workspaceTypeSize.isAccessibilitySize
-    }
-
     private var standardScrollableWorkspace: some View {
         ScrollView {
-            // 왼손잡이 모드: 노트가 왼쪽 — 쓰는 손이 문제를 가리지 않는 방향으로
-            ViewThatFits(in: .horizontal) {
-                // 좌우로 나뉘는 폭에서는 답 입력을 **문제 바로 아래**에 둔다.
-                // 화면 맨 아래 고정하면 iPad 가로에서 문제와 입력창 사이에
-                // 빈 공간이 크게 남고, 학생 시선이 위아래로 길게 왕복한다
-                // (사용자가 "위로 이동" 이라고 표시한 그 거리다).
-                if store.leftHandedOn && !workspaceTypeSize.isAccessibilitySize {
-                    ResponsiveProblemWorkspace(spacing: Tokens.Space.s6, leadingFraction: 0.58) {
-                        right
-                        VStack(alignment: .leading, spacing: Tokens.Space.s4) { left; gradeBar }
-                    }
-                } else if !workspaceTypeSize.isAccessibilitySize {
-                    ResponsiveProblemWorkspace(spacing: Tokens.Space.s6) {
-                        VStack(alignment: .leading, spacing: Tokens.Space.s4) { left; gradeBar }
-                        right
-                    }
-                }
-                // 좁은 폭(아이폰 세로)에서는 세로로 쌓이므로 입력창이 자연히
-                // 문제 아래에 온다. 여기서는 하단 고정이 맞다 — 아래 inset 이 그 역할.
-                VStack(spacing: Tokens.Space.s6) { left; right }
-            }
-            .padding(Tokens.Space.s6)
+            VStack(spacing: Tokens.Space.s6) { left; right }.padding(Tokens.Space.s4)
         }
         // 좁은 폭에서만 하단에 고정한다. 손풀이 캔버스에 필기한 뒤 답을 적으러
         // 위로 스크롤해 돌아가는 왕복을 없앤다.
         // safeAreaInset 이라 키보드가 올라오면 바도 함께 올라온다.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if horizontalSizeClass == .compact { gradeBar }
+            gradeBar
         }
+    }
+
+    private var workspaceFingerprint: String {
+        guard let problem = store.currentProblem else { return "" }
+        return PracticeWorkspaceDraft.questionFingerprint(id: problem.id, typeKey: problem.typeKey,
+            statement: problem.statement, choices: problem.choices,
+            revisionHint: problem.answer + "|" + (problem.visualizationJSON ?? ""))
+    }
+    private var workspaceIdentity: String { DataScope.slot + ":" + workspaceFingerprint }
+    private func openWorkspaceDraft() async {
+        guard store.currentProblem != nil else { return }
+        answerFocused = false
+        noteUndoStack.removeAll(); noteRedoStack.removeAll()
+        showHint = false; showReplay = false
+        let keys: Set<String> = store.currentProblem?.choices.map { Set(["a", "b", "c", "d", "e"].prefix($0.count)) } ?? []
+        await workspaceDraft.open(fingerprint: workspaceFingerprint, allowedChoiceKeys: keys, store: store)
     }
 
     /// iPhone 가로 전용 한 화면 작업대.
     /// 왼쪽은 문제와 답, 오른쪽은 필기 노트를 맡고 바깥 ScrollView를 두지 않는다.
-    /// 44:56 비율은 긴 수학 발문을 읽을 최소 폭과 손가락 필기 폭의 타협점이다.
+    /// 짧은 화면의 객관식은 문제 쪽을 넓히되 노트 280pt를 보존한다.
+    /// 주관식과 높이가 충분한 창에서는 필기 공간을 더 크게 유지한다.
     private var phoneLandscapeWorkspace: some View {
         GeometryReader { proxy in
-            let outer: CGFloat = Tokens.Space.s3
+            let outer: CGFloat = proxy.size.height < 420 ? Tokens.Space.s2 : Tokens.Space.s3
             let gutter: CGFloat = Tokens.Space.s3
             let usableWidth = max(1, proxy.size.width - outer * 2 - gutter)
-            let problemWidth = min(390, max(300, usableWidth * 0.44))
+            let problemWidth = UniversalLayoutPolicy.problemPaneWidth(usableWidth: usableWidth,
+                height: proxy.size.height, hasChoices: !(store.currentProblem?.choices?.isEmpty ?? true))
             let paneHeight = max(1, proxy.size.height - outer * 2)
 
             Group {
@@ -196,7 +198,7 @@ struct SolveScreen: View {
     }
 
     private var landscapeProblemPane: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+        VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             // 짧은 문항은 그대로 한 화면에 머물고, Dynamic Type·장문 발문처럼
             // 물리적으로 높이를 넘는 경우에만 문제 쪽이 독립적으로 스크롤된다.
             // 문제 높이가 커져도 채점 바를 아래로 밀어내면 5지선다를 골라도
@@ -221,22 +223,9 @@ struct SolveScreen: View {
     private var landscapeKeyboardProblemPane: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s1) {
             ScrollView(.vertical) {
-                if let problem = store.currentProblem, problem.needsMathTypesetting {
-                    ProblemWebView(
-                        problem: problem,
-                        height: $problemHeight,
-                        pickedKey: $pickedKey,
-                        usesCompactLandscapeLayout: true)
-                        .frame(height: problemHeight)
-                        .id("keyboard-\(problem.id)")
-                } else if let problem = store.currentProblem {
-                    Text(problem.statement)
-                        .font(.mCallout).foregroundStyle(Tokens.ink)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Tokens.Space.s3)
-                        .padding(.vertical, Tokens.Space.s1)
+                if let problem = store.currentProblem {
+                    PracticeProblemContent(problem: problem, pickedKey: $workspaceDraft.pickedKey, compact: true)
+                        .padding(Tokens.Space.s3)
                 }
             }
             .scrollBounceBehavior(.basedOnSize, axes: .vertical)
@@ -252,9 +241,9 @@ struct SolveScreen: View {
 
     private func landscapeNotePane(height: CGFloat) -> some View {
         SolutionNote(
-            drawing: $drawing,
+            drawing: $workspaceDraft.drawing,
             allowsFinger: $noteAllowsFinger,
-            zoom: $noteZoom,
+            zoom: $workspaceDraft.zoom,
             selectedTool: $noteTool,
             inkWidth: $noteInkWidth,
             undoStack: $noteUndoStack,
@@ -270,27 +259,18 @@ struct SolveScreen: View {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 // 동적 생성 문항이면 유형·단원이 함께 나온다.
                 // 발제문의 수치·정답은 생성기(네이티브/뱅크)가 회차 시드로 뽑은 것.
-                Text(store.currentProblem.map { "\($0.unit) · 예상 \($0.minutes)분" }
-                     ?? "응용 · 예상 5분")
-                    .font(.mMicro).foregroundStyle(Tokens.text3)
-                if let p = store.currentProblem, p.needsMathTypesetting {
-                    // 뱅크 문항 — KaTeX 발제문 + 5지선다를 웹뷰로
-                    ProblemWebView(
-                        problem: p,
-                        height: $problemHeight,
-                        pickedKey: $pickedKey,
-                        usesCompactLandscapeLayout: usesPhoneLandscapeWorkspace)
-                        .frame(height: problemHeight)
-                        .id(p.id)
-                } else if let problem = store.currentProblem {
-                    Text(problem.statement)
-                        .font(.mBody).foregroundStyle(Tokens.ink)
-                        .lineSpacing(6)
-                        .fixedSize(horizontal: false, vertical: true)
+                if verticalSizeClass != .compact || store.currentProblem?.isMultipleChoice != true {
+                    Text(store.currentProblem.map { "\($0.unit) · 예상 \($0.minutes)분" }
+                         ?? "응용 · 예상 5분")
+                        .font(.mMicro).foregroundStyle(Tokens.text3)
+                }
+                if let problem = store.currentProblem {
+                    PracticeProblemContent(problem: problem, pickedKey: $workspaceDraft.pickedKey,
+                        compact: verticalSizeClass == .compact && !workspaceTypeSize.isAccessibilitySize)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .card(padding: usesPhoneLandscapeWorkspace ? Tokens.Space.s3 : Tokens.Space.s6)
+            .card(padding: verticalSizeClass == .compact ? Tokens.Space.s2 : Tokens.Space.s4)
 
             // 답안 입력·채점 버튼은 하단 고정 바(gradeBar)로 갔다 —
             // 캔버스 아래로 스크롤해도 항상 손 닿는 자리에 있어야 한다.
@@ -388,9 +368,9 @@ struct SolveScreen: View {
 
     private var right: some View {
         SolutionNote(
-            drawing: $drawing,
+            drawing: $workspaceDraft.drawing,
             allowsFinger: $noteAllowsFinger,
-            zoom: $noteZoom,
+            zoom: $workspaceDraft.zoom,
             selectedTool: $noteTool,
             inkWidth: $noteInkWidth,
             undoStack: $noteUndoStack,
@@ -408,7 +388,7 @@ struct SolveScreen: View {
                 Spacer(minLength: 0)
             } else {
                 HStack(spacing: 0) {
-                    TextField("답을 입력하세요", text: $answer)
+                    TextField("답을 입력하세요", text: $workspaceDraft.answer)
                         .font(.mBody)
                         .textFieldStyle(.plain)
                         .padding(.leading, Tokens.Space.s4)
@@ -473,7 +453,7 @@ struct SolveScreen: View {
         HStack(spacing: Tokens.Space.s2) {
             if store.currentProblem?.isMultipleChoice != true {
                 HStack(spacing: 0) {
-                    TextField("답 입력", text: $answer)
+                    TextField("답 입력", text: $workspaceDraft.answer)
                         .font(.mCallout)
                         .textFieldStyle(.plain)
                         .padding(.leading, Tokens.Space.s3)
@@ -529,6 +509,7 @@ struct SolveScreen: View {
 
     /// 채점 — 버튼 탭과 답 입력 필드의 Return 이 같은 액션을 공유한다 (감사 1651·1660)
     private func grade() {
+        guard workspaceDraft.isWritable, !workspaceDraft.isLoading else { return }
         answerFocused = false
         if let p = store.currentProblem {
             // 동적 문항 — 정답 대조 + 필기 스냅샷(틀리면 오답노트에 저장)
@@ -546,6 +527,7 @@ struct SolveScreen: View {
 #endif
 
 struct SessionBar: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     let progress: Double
     let label: String
     let onClose: () -> Void
@@ -565,7 +547,7 @@ struct SessionBar: View {
         // 좌우 둥근 모서리/센서 영역을 직접 피하지 않으면 닫기와 진행 라벨이 화면
         // 밖으로 반쯤 잘린다. 세로·iPad에서는 기존 16pt 여백만 그대로 남는다.
         .safeAreaPadding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, Tokens.Space.s2)
+        .padding(.vertical, verticalSizeClass == .compact ? 0 : Tokens.Space.s2)
         .background(Tokens.surface)
         .overlay(alignment: .bottom) { Divider().overlay(Tokens.line) }
     }
@@ -606,10 +588,11 @@ struct ResultScreen: View {
             SessionBar(progress: 1, label: "채점 결과") { store.route = .home }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Space.s6) {
+                VStack(alignment: .leading, spacing: usesPhoneLandscapeStickyActions ? Tokens.Space.s3 : Tokens.Space.s6) {
                     verdictHeader(grading: grading)
+                    answerComparison(grading: grading)
                     if let guidance = store.coachGuidance {
-                        CoachBubble(guidance: guidance)
+                        if store.currentProblem?.isMultipleChoice != true { CoachBubble(guidance: guidance) }
                     } else if let line = store.coachLine, !line.isEmpty {
                         CoachBubble(guidance: CoachGuidance(
                             observation: line,
@@ -618,7 +601,7 @@ struct ResultScreen: View {
                         ))
                     }
                     stepList(grading: grading)
-                    feedbackCard(grading: grading)
+                    if grading.overall != .correct, store.currentProblem?.isMultipleChoice != true { feedbackCard(grading: grading) }
                     // 검수 캡처 모드에서는 디버그 빌드라도 그리지 않는다 (R-01)
                     #if DEBUG
                     if !RuntimeMode.isReviewCapture,
@@ -629,12 +612,11 @@ struct ResultScreen: View {
                     }
                     #endif
                     // 완답이면 짚을 갈림길이 없다. 해설이 한 덩어리(뱅크)면 짚을 단계도 없다.
-                    if grading.overall != .correct && stepCount >= 2 {
-                        reasonTagCard
-                    }
-                    // 틀린 이유 7종 (웹 errorType) — 오답노트 필터의 축이 된다
                     if grading.overall != .correct {
-                        errorTypeCard
+                        DisclosureGroup("틀린 이유 남기기") {
+                            if stepCount >= 2 { reasonTagCard }
+                            errorTypeCard
+                        }.font(.mBody)
                     }
                     // 풀이 애니메이션 — 짚은 단계부터 수치 그대로 재생.
                     // 단계를 짚는 순간 자동으로 등장한다 (그냥 복습으로 떠넘기지 않는다).
@@ -667,7 +649,8 @@ struct ResultScreen: View {
                             .padding(.top, Tokens.Space.s2)
                     }
                 }
-                .padding(Tokens.Space.s6)
+                .padding(.horizontal, Tokens.Space.s6)
+                .padding(.vertical, usesPhoneLandscapeStickyActions ? Tokens.Space.s3 : Tokens.Space.s6)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -713,6 +696,37 @@ struct ResultScreen: View {
             value: store.cheatingReviews)
     }
 
+    @ViewBuilder private func answerComparison(grading: GradingResult) -> some View {
+        if let problem = store.currentProblem {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Tokens.Space.s4) {
+                        answerValue("내 답", value: store.lastStudentInput, choiceCount: problem.choices?.count)
+                        answerValue("정답", value: problem.answer, choiceCount: problem.choices?.count)
+                    }
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        answerValue("내 답", value: store.lastStudentInput, choiceCount: problem.choices?.count)
+                        answerValue("정답", value: problem.answer, choiceCount: problem.choices?.count)
+                    }
+                }
+                if grading.overall != .correct, let choices = problem.choices,
+                   let number = PracticeAnswerPresentation.choiceNumber(problem.answer, count: choices.count) {
+                    MathInline(text: choices[number - 1], font: .mCallout, color: Tokens.ink)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func answerValue(_ title: String, value: String?, choiceCount: Int?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s2) {
+            Text(title).font(.mCaption).foregroundStyle(Tokens.text2)
+            MathInline(text: PracticeAnswerPresentation.label(value, choiceCount: choiceCount),
+                       font: .mBodyB, color: Tokens.ink)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     /// 세션을 진행하는 버튼은 결과 설명의 길이와 무관하게 손에 닿아야 한다.
     /// 일반 화면에서는 문서 끝에 놓고, iPhone 가로에서는 위 safeAreaInset이 같은
     /// 행을 하단에 고정한다.
@@ -721,7 +735,9 @@ struct ResultScreen: View {
             if !store.exam.isEmpty {
                 Button(store.examIndex + 1 < store.exam.count
                        ? "다음 문항 (\(store.examIndex + 2)/\(store.exam.count))"
-                       : "평가 끝내기") { store.advanceExam() }
+                       : (FirstLearningJourneyStore.shared.journey.conceptID == store.examSourceConceptV2ID
+                          && FirstLearningJourneyStore.shared.journey.seed == store.lastExamSeed
+                          ? "첫 학습 결과 보기" : "학습 마치기")) { store.advanceExam() }
                     .buttonStyle(PrimaryButtonStyle()).frame(maxWidth: 240)
                 Button("다시 풀기") { store.route = .solve }
                     .buttonStyle(SecondaryButtonStyle())
@@ -767,13 +783,6 @@ struct ResultScreen: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if let pts = grading.awardedPoints {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text("부분점수").font(.mMicro).foregroundStyle(Tokens.text3)
-                        (Text("\(Int(pts))").font(.mStatLarge).foregroundStyle(accent(for: grading))
-                         + Text(" / 4").font(Font.stat(18)).foregroundStyle(Tokens.text3))
-                    }
-                }
             }
             ExamRule()
         }
@@ -1033,7 +1042,7 @@ struct ResultScreen: View {
     private func subtitle(for grading: GradingResult) -> String {
         switch grading.overall {
         case .answerOnly: return "최종 답은 정답과 같지만, 중간에 성립하지 않는 식이 있습니다."
-        case .correct:    return "풀이 흐름이 일관되게 성립합니다."
+        case .correct:    return "제출한 답이 정답과 일치합니다."
         default:          return "풀이를 다시 확인해 보세요."
         }
     }

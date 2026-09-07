@@ -74,6 +74,14 @@ enum WebContentAccessibility {
             userMotionEnabled: \(userMotion)
           };
           window.MATTHS_APPLY_ACCESSIBILITY = function (next) {
+            // Parent layout/height changes are not appearance changes. Avoid
+            // restarting animations, media scans and resize observers for them.
+            // DOMContentLoaded calls without `next` still apply to the new DOM.
+            var previous = window.MATTHS_ACCESSIBILITY || {};
+            if (next && window.MATTHS_ACCESSIBILITY_APPLIED &&
+                previous.scale === next.scale &&
+                previous.reduceMotion === next.reduceMotion &&
+                previous.userMotionEnabled === next.userMotionEnabled) return;
             if (next) {
               window.MATTHS_ACCESSIBILITY = Object.assign(
                 {}, window.MATTHS_ACCESSIBILITY || {}, next
@@ -81,6 +89,7 @@ enum WebContentAccessibility {
             }
             var root = document.documentElement;
             if (!root) return;
+            window.MATTHS_ACCESSIBILITY_APPLIED = true;
             window.MATTHS_MOTION =
               window.MATTHS_ACCESSIBILITY.userMotionEnabled !== false &&
               !window.MATTHS_ACCESSIBILITY.reduceMotion;
