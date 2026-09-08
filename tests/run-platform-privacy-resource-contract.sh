@@ -43,6 +43,7 @@ for collected_type in \
   NSPrivacyCollectedDataTypePhotosorVideos \
   NSPrivacyCollectedDataTypeUserID \
   NSPrivacyCollectedDataTypePurchaseHistory \
+  NSPrivacyCollectedDataTypePaymentInfo \
   NSPrivacyCollectedDataTypeGameplayContent
 do
   printf '%s' "$privacy_json" | grep -Fq "$collected_type"

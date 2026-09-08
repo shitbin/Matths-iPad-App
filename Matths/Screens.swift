@@ -1643,152 +1643,96 @@ struct TypewriterText: View {
 
 // MARK: - 평가센터
 //
-// 위계 (외부 디자인 리뷰 + 55차 우선순위 재배열) — 같은 무게의 블록 반복이
-// "지금 뭘 해야 하는지" 를 지운다.
-//   ⓪ 지금 할 수 있어요 — 열린 단계 평가 하나. 있을 때만 서는 최상단 카드.
-//   ① 주간 공식 모의고사 — 이번 주의 할 일. 유일한 네이비 히어로.
-//   ② 시험 목록(단계 평가·기출) — 기록/아카이브. 카드 반복 대신 구분선 리스트.
-//   ③ 채점 Pro — 도구 진입. 하단 보조 행.
+// 공식 시험의 입구와 이미 작성한 평가 기록만 둔다. 과목 선택과 단계별 잠금
+// 목록은 선택한 과목 안의 CourseAssessmentSection이 소유한다. 문제 연습과
+// 사진 분석 도구도 학습 허브에 남겨 같은 동선을 이곳에 다시 나열하지 않는다.
 
 struct AssessmentScreen: View {
-    @StateObject private var timer = ExamTimer()
     @EnvironmentObject private var store: AppStore
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    /// 카탈로그 과목 선택 — 웹 정본의 5개 단계 평가 과목을 그대로 지원한다.
-    @State private var courseID = AssessCatalog.data.courses.first?.courseId ?? "algebra"
-    /// 평가 체계 상세(중간 10 → 기말 20 → 종합 40 등) — 본문에 상시 노출하지 않고
-    /// 정보 버튼으로 연다
-    @State private var showSystemInfo = false
-    /// 잠긴 행을 탭하면 남은 개념을 보여주는 시트
-    @State private var lockDetail: ChainExam?
-    /// 유닛 접기 — 기본값(포커스 유닛만 펼침)에서 사용자가 뒤집은 유닛만 기록한다.
-    /// 화면 상태일 뿐 저장하지 않는다. 키는 "과목/유닛" 이라 과목을 오가도 안 섞인다.
-    @State private var toggledGroups: Set<String> = []
-    /// 펼친 유닛 안에서 "나머지 평가 보기" 를 연 유닛 — 기본은 접힘
-    @State private var innerExpanded: Set<String> = []
+    @State private var showsEarlierResults = false
+
+    private var activeAttempts: [AssessmentAttemptV2] {
+        store.attemptsV2.attempts
+            .filter { $0.serverBacked == true && !$0.isServerCancelled && $0.submittedAt == nil }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private var submittedAttempts: [AssessmentAttemptV2] {
+        store.attemptsV2.attempts
+            .filter { $0.serverBacked == true && !$0.isServerCancelled && $0.submittedAt != nil }
+            .sorted { ($0.submittedAt ?? $0.createdAt) > ($1.submittedAt ?? $1.createdAt) }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Space.s7) {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .lastTextBaseline) {
-                        assessmentTitle
-                        Spacer(minLength: Tokens.Space.s4)
-                        timerReadout.fixedSize(horizontal: true, vertical: false)
-                    }
-                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        assessmentTitle
-                        timerReadout
-                    }
-                }
-                ExamRule()
-            }
-            .entrance(0)
-
-            // ── 1. 지금 할 수 있어요 — 응시 가능한 단계 평가가 있으면 그 하나가
-            //       최상단이다. "지금 뭘 해야 하는지" 의 첫 답은 열린 시험이다.
-            if let course = AssessCatalog.course(courseID), let now = nextOpenExam(course) {
-                nowCard(now)
-                    .entrance(1)
-            }
-
-            // ── 2. 주간 공식 모의고사 — 이번 주의 할 일
+        VStack(alignment: .leading, spacing: Tokens.Space.s5) {
+            Text("평가센터").font(.mHeading).accessibilityAddTraits(.isHeader)
             WeeklyMockEntryCard { store.route = .weeklyMock }
-                .entrance(2)
-
-            // ── 3. 단계 평가 — 통과 사슬 전체가 대단원별 구분선 리스트로 선다
-            if let catalogError = AssessCatalog.loadError {
-                Label(catalogError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.mCallout)
-                    .foregroundStyle(Tokens.warningInk)
-                    .padding(Tokens.Space.s5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Tokens.warningSoft, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-                    .entrance(3)
-            } else if let course = AssessCatalog.course(courseID) {
-                chainSection(course)
-                    .entrance(3)
+            FlowDestinationRow("배치고사", detail: "현재 수준을 확인하고 시작할 학습 찾기", icon: "scope") {
+                store.route = .placement
             }
 
-            // ── 4. 빠른 연습·채점 도구 — 정식 시험과 다른 보조 행동은 하단에 둔다.
-            // 기출 아카이브의 긴 연도별 목록은 평가센터에서 제거했다. KICE 리소스와
-            // 기존 응시 route는 내부 검증·기록 복원을 위해 그대로 보존한다.
-            //       퀵 연습은 구현된 네이티브 화면으로 가는 명시적 진입점이다.
-            supportingEntries
-                .entrance(4)
-        }
-        .compactHeightSheet(isPresented: $showSystemInfo) { systemInfoSheet }
-        .compactHeightSheet(item: $lockDetail) { lockDetailSheet($0) }
-    }
-
-    private var assessmentTitle: some View {
-        Text("평가센터").font(.mTitle).foregroundStyle(Tokens.ink)
-    }
-
-    /// 경과 시간 — 시험이 도는 동안에만 그린다. 평시의 '00:00.000' 상시 노출은
-    /// 0 측정값처럼 읽히고, 보이는 레이블이 없어 정체도 알 수 없었다 (감사 0278·1380).
-    /// 밀리초 자리는 화면에서 뺀다 — 동점자 판정 기록은 정지 시점에 계산되고,
-    /// 흐르는 ms 는 사용자가 판단에 쓸 수 없는 숫자다 (감사 1787).
-    @ViewBuilder
-    private var timerReadout: some View {
-        if timer.isRunning {
-            HStack(spacing: Tokens.Space.s2) {
-                Circle().fill(Tokens.danger).frame(width: 6, height: 6)
-                Text("경과 시간").font(.mCaption).foregroundStyle(Tokens.text3)
-                Text(timer.display).font(.mStat).foregroundStyle(Tokens.ink).monospacedDigit()
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("경과 시간 \(timer.display)")
-        }
-    }
-
-    /// 정식 평가보다 가벼운 행동을 한 섹션에 모은다. 퀵 연습은 40초 한 문항,
-    /// 채점 Pro는 촬영 도구라 열린 시험·주간 모의고사와 같은 위계로 올리지 않는다.
-    private var supportingEntries: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionRule(title: "빠른 연습과 도구")
-
-            supportingEntry(
-                title: "퀵 연습",
-                detail: "취약 개념 한 문항을 40초 안에 풀고 변화를 확인합니다.",
-                icon: "bolt.fill"
-            ) {
-                store.route = .quickPractice
-            }
-
-            Divider().foregroundStyle(Tokens.line)
-
-            supportingEntry(
-                title: "채점 Pro",
-                detail: "시험지 사진을 올리면 풀이 과정까지 짚어 채점합니다.",
-                icon: "camera.viewfinder"
-            ) {
-                store.route = .pro
-            }
-        }
-    }
-
-    private func supportingEntry(
-        title: String,
-        detail: String,
-        icon: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(alignment: .center, spacing: Tokens.Space.s3) {
-                Image(systemName: icon)
-                    .font(.mBody).foregroundStyle(Tokens.text2)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.mBodyB).foregroundStyle(Tokens.ink)
-                    Text(detail)
-                        .font(.mCaption).foregroundStyle(Tokens.text3)
-                        .fixedSize(horizontal: false, vertical: true)
+            if !activeAttempts.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionRule(title: "작성하던 평가")
+                    ForEach(activeAttempts) { attempt in
+                        attemptRow(attempt, completed: false)
+                    }
                 }
-                Spacer(minLength: Tokens.Space.s4)
-                Image(systemName: "chevron.right")
-                    .font(.mCaption).foregroundStyle(Tokens.text3)
+            }
+            if !submittedAttempts.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionRule(title: "최근 평가 결과")
+                    ForEach(Array(submittedAttempts.prefix(3))) { attempt in
+                        attemptRow(attempt, completed: true)
+                    }
+                    if submittedAttempts.count > 3 {
+                        DisclosureGroup("이전 결과 \(submittedAttempts.count - 3)개", isExpanded: $showsEarlierResults) {
+                            ForEach(Array(submittedAttempts.dropFirst(3))) { attempt in
+                                attemptRow(attempt, completed: true)
+                            }
+                        }
+                        .font(.mCaption)
+                        .padding(.vertical, Tokens.Space.s3)
+                    }
+                }
+            }
+            if let message = store.assessmentSyncError {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.mCaption).foregroundStyle(Tokens.warningInk)
+                Button("평가 기록 다시 확인") { Task { await store.pullServerAssessments() } }
+                    .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .task { await store.pullServerAssessments() }
+    }
+
+    private func attemptRow(_ attempt: AssessmentAttemptV2, completed: Bool) -> some View {
+        Button {
+            // Only a current, retained receipt can be opened. Abandoned attempts
+            // remain on disk for recovery but are never offered as editable work.
+            guard let current = store.attemptsV2.attempts.first(where: { $0.id == attempt.id }),
+                  current.serverBacked == true, !current.isServerCancelled else { return }
+            store.currentAttemptID = current.id
+            store.assessmentReturnRoute = .assess
+            store.route = .paper
+        } label: {
+            HStack(spacing: Tokens.Space.s3) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(attempt.title).font(.mBodyB).foregroundStyle(Tokens.ink)
+                    if completed {
+                        HStack(spacing: Tokens.Space.s2) {
+                            Text((attempt.submittedAt ?? attempt.createdAt).formatted(date: .abbreviated, time: .omitted))
+                            if let score = attempt.scorePercent { Text("\(score)점").monospacedDigit() }
+                        }.font(.mCaption).foregroundStyle(Tokens.text2)
+                    } else {
+                        Text("작성한 답안과 메모에서 이어집니다.")
+                            .font(.mCaption).foregroundStyle(Tokens.text2)
+                    }
+                }
+                Spacer(minLength: Tokens.Space.s2)
+                Text(completed ? "결과 보기" : "이어서 응시")
+                    .font(.mCaption).foregroundStyle(Tokens.primary)
+                Image(systemName: "chevron.right").font(.mMicro).foregroundStyle(Tokens.text3)
             }
             .padding(.vertical, Tokens.Space.s3)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1796,7 +1740,39 @@ struct AssessmentScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(detail)")
+    }
+}
+
+/// The selected course owns its midterm/final progression. This is embedded in
+/// the course detail, so neither a second course picker nor a second route exists.
+struct CourseAssessmentSection: View {
+    let courseID: String
+    @EnvironmentObject private var store: AppStore
+    @State private var showSystemInfo = false
+    @State private var lockDetail: ChainExam?
+    @State private var toggledGroups: Set<String> = []
+    @State private var innerExpanded: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s4) {
+            if let catalogError = AssessCatalog.loadError {
+                Label(catalogError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.mCallout).foregroundStyle(Tokens.warningInk)
+            } else if let course = AssessCatalog.course(courseID) {
+                if let now = nextOpenExam(course) { nowCard(now) }
+                chainSection(course)
+            }
+            if let message = store.assessmentSyncError {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.mCaption).foregroundStyle(Tokens.warningInk)
+            }
+        }
+        .compactHeightSheet(isPresented: $showSystemInfo) { systemInfoSheet }
+        .compactHeightSheet(item: $lockDetail) { lockDetailSheet($0) }
+        .onChange(of: courseID) { _, _ in
+            showSystemInfo = false; lockDetail = nil
+            toggledGroups = []; innerExpanded = []
+        }
     }
 }
 
@@ -1828,28 +1804,22 @@ private struct WeeklyMockEntryCard: View {
             // 통째로 품고 있어("Matths 주간 공식 모의고사") 카드를 열면 같은 문장이
             // 두 줄 연속으로 읽혔다. 정보가 하나도 늘지 않는 반복이다.
             // 덤으로 네이비 위 시안 포인트도 CTA 하나로 정리된다(이 카드의 규칙).
-            Text("Matths 주간 공식 모의고사")
+            Text("주간 공식 모의고사")
                 .font(.mHeading).foregroundStyle(Tokens.onNavy)
             // 섹션 역할 한 줄 — "지금 뭘 해야 하는지" 의 답이 화면 최상단에 선다
-            Text("이번 주 대표 성적은 이 시험에서 만들어집니다.")
+            Text("이번 주 시험을 이어 풀고, 제출한 결과를 확인하세요.")
                 .font(.mCallout).foregroundStyle(Tokens.onNavy)
                 .fixedSize(horizontal: false, vertical: true)
             // 칩은 시험의 형태(문항·시간) 둘만 — 다섯 덩어리 나열은 히어로를
             // 게시판으로 만든다. 승격 레이어에 얹는 이유는 종전과 같다
             // (네이비 위 회색 글자만으로는 층이 안 생긴다).
-            Text("30문항 · 100분")
+            Text("30문항 · 100분 · 매주 일요일")
                 .font(.mCaption).foregroundStyle(Tokens.onNavy.opacity(0.72))
                 .monospacedDigit()
                 .padding(.horizontal, Tokens.Space.s3)
                 .padding(.vertical, Tokens.Space.s2)
                 .background(Tokens.navyElevated, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-            // 주기는 서브 캡션 한 줄로
-            Text("매주 일요일")
-                .font(.mCaption).foregroundStyle(Tokens.onNavy.opacity(0.72))
-            // 회차·대표 성적 규칙은 상세 톤(마이크로)으로 캡션 하단에 내린다
-            Text("A·B·C 최대 3회까지 응시하고, 대표 성적으로 남길 회차를 직접 고릅니다.")
-                .font(.mMicro).foregroundStyle(Tokens.onNavy.opacity(0.72))
-                .fixedSize(horizontal: false, vertical: true)
+            // 회차 선택·대표 성적 확정 규칙은 실제 시험 목록에서 안내한다.
         }
     }
 
@@ -1860,7 +1830,7 @@ private struct WeeklyMockEntryCard: View {
         // 채움은 여전히 화면에 하나뿐이고, 네이비 위 액센트도 시안 하나뿐이다.
         Button(action: open) {
             HStack(spacing: Tokens.Space.s2) {
-                Text("시험장 입장하기").font(.mBodyB)
+                Text("이번 주 시험 확인").font(.mBodyB)
                 Image(systemName: "chevron.right").font(.mCaption)
             }
             .foregroundStyle(Tokens.brandNavy)
@@ -1929,7 +1899,7 @@ private struct AssessStateChip: View {
     }
 }
 
-extension AssessmentScreen {
+extension CourseAssessmentSection {
 
     // MARK: 상태 계산 — 근거는 전부 기존 조회 (새 서버 호출 없음)
 
@@ -1948,7 +1918,7 @@ extension AssessmentScreen {
                     lockReason: "이 소단원에 연결된 개념을 모두 완료하면 열립니다.",
                     lockProgress: "개념 \(doneCount)/\(sub.conceptIds.count) 완료",
                     remaining: remainingConceptTitles(sub.conceptIds)) {
-                    store.startPaper(scope: .subunit, course: course, unit: unit, subunit: sub)
+                    store.startPaper(scope: .subunit, course: course, unit: unit, subunit: sub, returnRoute: .curriculum)
                 })
             }
             // 기말은 잠금이 2단(개념 완료 → 중간평가 통과)이라 진행 수치도 단계를 따른다
@@ -1972,7 +1942,7 @@ extension AssessmentScreen {
                     ? unit.subunits.filter { !passedSubIDs.contains($0.id) }
                         .map { "\($0.title) 중간평가" }
                     : remainingConceptTitles(unitConceptIds)) {
-                store.startPaper(scope: .unit, course: course, unit: unit)
+                store.startPaper(scope: .unit, course: course, unit: unit, returnRoute: .curriculum)
             })
             out.append(ChainGroup(id: unit.unitId, title: "\(unit.numeral). \(unit.title)", exams: exams))
         }
@@ -1989,7 +1959,7 @@ extension AssessmentScreen {
                 lockProgress: "기말평가 \(passedUnitIDs.count)/\(course.units.count) 통과",
                 remaining: course.units.filter { !passedUnitIDs.contains($0.unitId) }
                     .map { "\($0.title) 기말평가" }) {
-                store.startPaper(scope: .course, course: course)
+                store.startPaper(scope: .course, course: course, returnRoute: .curriculum)
             }
         ]))
         return out
@@ -2075,10 +2045,6 @@ extension AssessmentScreen {
                     .accessibilityLabel("평가 체계 자세히 보기")
                 }
 
-                coursePicker
-                // 커리큘럼 5과목 중 평가 미지원 과목 안내는 상시 문구에서 빼고
-                // 정보 시트의 "지원 과목" 항목으로 옮겼다 (RG-10)
-
                 // 잠금을 푸는 유일한 길은 커리큘럼이다 — 열린 시험이 없으면 그 길을
                 // 그 자리에서 연다 (감사 0263). 버튼이 할 일의 크기(남은 개념 수)를
                 // 직접 말하고, 탭하면 이 과목이 열린 커리큘럼으로 간다 (RG-09).
@@ -2102,23 +2068,6 @@ extension AssessmentScreen {
             Label("시험 중 나가도 진행 상황은 저장됩니다.", systemImage: "info.circle")
                 .font(.mCaption).foregroundStyle(Tokens.text3)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    @ViewBuilder
-    private var coursePicker: some View {
-        if horizontalSizeClass == .compact || dynamicTypeSize.isAccessibilitySize {
-            Picker("평가 과목", selection: $courseID) {
-                ForEach(AssessCatalog.data.courses) { Text($0.title).tag($0.courseId) }
-            }
-            .pickerStyle(.menu)
-            .accessibilityHint("평가할 과목을 선택합니다.")
-        } else {
-            Picker("평가 과목", selection: $courseID) {
-                ForEach(AssessCatalog.data.courses) { Text($0.title).tag($0.courseId) }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 680)
         }
     }
 

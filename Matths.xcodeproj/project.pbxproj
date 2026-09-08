@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        B09090010000000000000001 /* KakaoSDKUser in Frameworks */ = {isa = PBXBuildFile; productRef = B09090020000000000000001 /* KakaoSDKUser */; };
 		2D8827B3329726DE1BAFC766 /* MatthsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DBC521BF699DC71F61EC724 /* MatthsWidget.swift */; };
 		3E944457F2D041A9A74AD881 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A3D8B4C9E51740218F6A33BC /* PrivacyInfo.xcprivacy */; };
 		49330995D333C04D4249EA7A /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6582D17CF5A87BE69D4E4DDA /* Foundation.framework */; };
@@ -139,7 +140,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1000102000000000000001 /* llama.xcframework in Frameworks */,
+                A1000102000000000000001 /* llama.xcframework in Frameworks */,
+                B09090010000000000000001 /* KakaoSDKUser in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -225,7 +227,8 @@
 				A1000011000000000000001 /* Matths */,
 			);
 			name = Matths;
-			productName = Matths;
+            productName = Matths;
+            packageProductDependencies = (B09090020000000000000001 /* KakaoSDKUser */,);
 			productReference = A1000001000000000000001 /* Matths.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -274,13 +277,29 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A1000051000000000000001 /* Products */;
 			projectDirPath = "";
-			projectRoot = "";
+            projectRoot = "";
+            packageReferences = (B09090030000000000000001 /* kakao-ios-sdk */,);
 			targets = (
 				A1000061000000000000001 /* Matths */,
 				BF8E50FB83A9EE72FF2B4654 /* MatthsWidget */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+        B09090030000000000000001 /* kakao-ios-sdk */ = {
+            isa = XCRemoteSwiftPackageReference;
+            repositoryURL = "https://github.com/kakao/kakao-ios-sdk.git";
+            requirement = {kind = exactVersion; version = 2.29.0;};
+        };
+/* End XCRemoteSwiftPackageReference section */
+/* Begin XCSwiftPackageProductDependency section */
+        B09090020000000000000001 /* KakaoSDKUser */ = {
+            isa = XCSwiftPackageProductDependency;
+            package = B09090030000000000000001;
+            productName = KakaoSDKUser;
+        };
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXResourcesBuildPhase section */
 		0F5092CC80186B5679063EE1 /* Resources */ = {
@@ -426,7 +445,7 @@
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_ENTITLEMENTS = MatthsWidget/MatthsWidget.entitlements;
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = 64U874RU4D;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MatthsWidget/Info.plist;
@@ -513,7 +532,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Matths/MatthsApp.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 64U874RU4D;
 				ENABLE_PREVIEWS = YES;
@@ -549,7 +568,7 @@
 				CODE_SIGN_IDENTITY = "Apple Distribution";
 				CODE_SIGN_ENTITLEMENTS = Matths/MatthsApp.entitlements;
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 64U874RU4D;
 				ENABLE_PREVIEWS = YES;
@@ -584,7 +603,7 @@
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_ENTITLEMENTS = MatthsWidget/MatthsWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_TEAM = 64U874RU4D;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MatthsWidget/Info.plist;

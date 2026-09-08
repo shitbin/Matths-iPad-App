@@ -34,7 +34,8 @@ console.log(`curriculum learning tracks: ${data.learningTracks.length} verified`
 NODE
 
 grep -q 'learningTracksSection(course: selectedCourse)' "$ROOT/Matths/CurriculumV2MapScreen.swift"
-grep -q 'Text("추천 학습 코스")' "$ROOT/Matths/CurriculumV2MapScreen.swift"
+grep -q 'Label("추천 학습 경로 보기"' "$ROOT/Matths/CurriculumV2MapScreen.swift"
+grep -Fq 'DisclosureGroup(isExpanded: $showsLearningTracks)' "$ROOT/Matths/CurriculumV2MapScreen.swift"
 grep -q 'Text(track.summary)' "$ROOT/Matths/CurriculumV2MapScreen.swift"
 grep -q 'accessibilityLabel("추천 학습 경로' "$ROOT/Matths/CurriculumV2MapScreen.swift"
 if grep -q '코스 시작")' "$ROOT/Matths/CurriculumV2MapScreen.swift"; then

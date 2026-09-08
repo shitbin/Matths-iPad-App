@@ -355,7 +355,7 @@ struct GoatArenaScreen: View {
                     showsMainMatchMaker = false
                     Task { @MainActor in
                         await Task.yield()
-                        matchLaunch = MatchLaunch(id: matchId)
+                        matchLaunch = MatchLaunch(id: matchId, briefing: .newMatch)
                     }
                 },
                 onInvitationCreated: {
@@ -371,7 +371,7 @@ struct GoatArenaScreen: View {
                     showsFriendlyMatchMaker = false
                     Task { @MainActor in
                         await Task.yield()
-                        matchLaunch = MatchLaunch(id: matchId)
+                        matchLaunch = MatchLaunch(id: matchId, briefing: .newMatch)
                     }
                 },
                 onChanged: { Task { await load() } })
@@ -382,7 +382,7 @@ struct GoatArenaScreen: View {
                     showsRevengeRights = false
                     Task { @MainActor in
                         await Task.yield()
-                        matchLaunch = MatchLaunch(id: matchId)
+                        matchLaunch = MatchLaunch(id: matchId, briefing: .newMatch)
                     }
                 },
                 onChanged: { Task { await load() } })
@@ -496,7 +496,7 @@ struct GoatArenaScreen: View {
         // AnyView 비용은 화면 진입당 한 번이라 이 크기의 섹션에서는 무시할 수준이고,
         // 죽는 화면보다는 낫다.
         VStack(alignment: .leading, spacing: sectionSpacing) {
-            AnyView(header.entrance(0))
+            AnyView(header.tutorialTarget(.arenaOverview).entrance(0))
 
             if let loadedContent {
                 if case .cached = loadedContent.freshness {
@@ -507,35 +507,24 @@ struct GoatArenaScreen: View {
 
                 // 로그인 뒤에는 서버가 준 현재 티어·MMR·Arena Position을 가장 먼저
                 // 보여 준다. 계산이나 상태 판정은 그대로 두고 표시 순서만 고정한다.
-                AnyView(rankingSection(snapshot).entrance(2))
+                AnyView(compactActionStack(snapshot).entrance(1))
+                AnyView(rankingSection(snapshot).tutorialTarget(.arenaProfile).entrance(2))
                 AnyView(hero.entrance(3))
+                AnyView(compactSecondaryActions.entrance(3))
 
                 if snapshot.cycle != nil {
                     if let match = snapshot.activeMatch {
-                        AnyView(activeMatchSection(
-                            match,
-                            showsDefenderRefresh: needsDefenderResponseRefresh(snapshot)
-                        ).entrance(4))
+                        AnyView(activeMatchSection(match).entrance(4))
                     }
 
-                    if let invitation = snapshot.pendingInvitation {
-                        AnyView(pendingInvitationSection(invitation).entrance(4))
-                    }
-
-                    // 좁은 폭과 같은 이유로 넓은 폭에도 복구 묶음을 붙인다 —
-                    // 배치는 종전 그대로고, 없던 회복 경로만 살린다.
-                    if let pendingDefenderCommand {
-                        AnyView(defenderPendingRecovery(pendingDefenderCommand).entrance(4))
-                    }
-
-                    AnyView(accessWindowSection(snapshot).entrance(5))
-                    AnyView(paybackSection(snapshot).entrance(6))
-                    AnyView(assetSection(snapshot).entrance(7))
+                    AnyView(accessWindowSection(snapshot).tutorialTarget(.arenaEligibility).entrance(5))
+                    AnyView(paybackSection(snapshot).tutorialTarget(.arenaProgress).entrance(6))
+                    AnyView(assetSection(snapshot).tutorialTarget(.arenaWallet).entrance(7))
                 }
 
                 AnyView(heldReviewSection.entrance(8))
                 // 정산된 결과는 사이클이 끝나도 남는다 — 사이클 게이트 바깥에 둔다.
-                AnyView(recentResultsSection.entrance(8))
+                AnyView(recentResultsSection.tutorialTarget(.arenaRecords).entrance(8))
                 AnyView(truthNotice(snapshot).entrance(9))
             } else {
                 AnyView(hero.entrance(1))
@@ -568,7 +557,7 @@ struct GoatArenaScreen: View {
         // 여기도 한두 개만 더 붙으면 같은 자리에 도달한다. 미리 끊어 둔다.
         VStack(alignment: .leading,
                spacing: isShortViewport ? Tokens.Space.s3 : Tokens.Space.s6) {
-            AnyView(compactHeader.entrance(0))
+            AnyView(compactHeader.tutorialTarget(.arenaOverview).entrance(0))
 
             if let loadedContent {
                 if case .cached = loadedContent.freshness {
@@ -577,11 +566,12 @@ struct GoatArenaScreen: View {
 
                 let snapshot = loadedContent.snapshot
 
-                AnyView(compactStatusCard(snapshot).entrance(2))
-                AnyView(compactActionStack(snapshot).entrance(3))
+                AnyView(compactActionStack(snapshot).entrance(2))
+                AnyView(compactStatusCard(snapshot).tutorialTarget(.arenaProfile).entrance(3))
+                AnyView(compactSecondaryActions.entrance(4))
                 // 방금 한 행동의 결과가 바로 아래에 온다 — 접힌 상세보다 앞이다.
                 AnyView(heldReviewSection.entrance(4))
-                AnyView(recentResultsSection.entrance(4))
+                AnyView(recentResultsSection.tutorialTarget(.arenaRecords).entrance(4))
                 AnyView(compactDetailFolds(snapshot).entrance(5))
                 AnyView(truthNotice(snapshot).entrance(6))
             } else {
@@ -967,6 +957,9 @@ struct GoatArenaScreen: View {
 
     private func compactActionStack(_ snapshot: Snapshot) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+            // An existing personal timer or a ready defense must not be buried
+            // below invitations to a different game.
+            if snapshot.activeMatch != nil { compactPrimaryAction(snapshot) }
             // 도착한 Ranked 초대(= 수락·거절을 실제로 보낼 수 있는 유일한 상태)를
             // 주 CTA 보다 **먼저** 놓는다. 실제 응답 버튼이 있는 최신 초대가
             // 설명문 아래로 밀리면 사용자가 할 일을 찾지 못한다.
@@ -981,9 +974,8 @@ struct GoatArenaScreen: View {
                 defenderPendingRecovery(pendingDefenderCommand)
             }
 
-            compactPrimaryAction(snapshot)
+            if snapshot.activeMatch == nil { compactPrimaryAction(snapshot) }
 
-            compactSecondaryActions
         }
     }
 
@@ -1042,17 +1034,14 @@ struct GoatArenaScreen: View {
     /// 우선순위로 잡도록 한곳에 모았다. 새 조건을 만들지 않는다.
     @ViewBuilder
     private func compactPrimaryAction(_ snapshot: Snapshot) -> some View {
-        if let match = snapshot.activeMatch, canPlay(match) {
+        if let match = snapshot.activeMatch, canPlay(match) || canInspectMatchedGame(match) {
             Button {
                 guard let matchId = match.id?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !matchId.isEmpty else { return }
                 matchLaunch = MatchLaunch(id: matchId, briefing: matchBriefing(match))
             } label: {
                 Label(
-                    needsEvidenceSubmission(match)
-                        ? "풀이 증거 제출하기"
-                        : (match.attempt?.status == "IN_PROGRESS"
-                            ? "경기 계속하기" : "경기 시작하기"),
+                    matchEntryTitle(match),
                     systemImage: needsEvidenceSubmission(match)
                         ? "photo.badge.arrow.down"
                         : (match.attempt?.status == "IN_PROGRESS"
@@ -1060,6 +1049,7 @@ struct GoatArenaScreen: View {
                     .frame(maxWidth: .infinity, minHeight: 50)
             }
             .buttonStyle(PrimaryButtonStyle())
+            .tutorialTarget(.arenaMatchmaking)
             .accessibilityHint("서버가 확정한 이 경기의 개인 문제 화면을 엽니다")
         } else if snapshot.ranking.skill.status == "PLACEMENT_PENDING" {
             Button {
@@ -1069,27 +1059,29 @@ struct GoatArenaScreen: View {
                     .frame(maxWidth: .infinity, minHeight: 50)
             }
             .buttonStyle(PrimaryButtonStyle())
+            .tutorialTarget(.placementEntry)
             .accessibilityHint("앱 안에서 배치고사 30문항을 시작하거나 저장된 지점부터 이어갑니다")
         } else if let cycle = snapshot.cycle,
                   snapshot.activeMatch == nil,
                   cycle.phase == "PAID_ACCESS",
                   (cycle.cycleDay ?? 0) <= (cycle.challenges.newRequestCutoffDay ?? 28) {
             if !canCommandMatchesNatively {
-                // 실서버에는 경기 명령 라우트가 없다 — 눌러도 404 인 CTA 를 세우는 대신
-                // 신청 페이지 자체로 보낸다(canCommandMatchesNatively 주석 참조).
+                // A legacy or rolled-back server may omit the native command
+                // capability. Preserve its authenticated web action in that case.
                 webArenaFallback(
                     onDark: false,
                     destination: matchmakingWebDestination(cycle),
                     title: cycle.activeRanking == "MAIN"
                         ? "웹에서 Ranked 상대 찾기"
                         : "웹에서 Unranked 상대 찾기")
+                    .tutorialTarget(.arenaMatchmaking)
             } else if cycle.activeRanking == "MAIN" {
                 Button {
                     showsMainMatchMaker = true
                 } label: {
                     HStack(spacing: Tokens.Space.s3) {
                         Image(systemName: "person.2.fill")
-                        Text("Ranked 상대 찾기")
+                        Text("Ranked 공격 상대 찾기")
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
                         Spacer(minLength: Tokens.Space.s3)
@@ -1098,6 +1090,7 @@ struct GoatArenaScreen: View {
                     .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(PrimaryButtonStyle())
+            .tutorialTarget(.arenaMatchmaking)
                 .disabled(isRefreshing)
                 .accessibilityHint("앱 안에서 Ranked 티어와 예치 일수를 선택합니다")
             } else {
@@ -1111,7 +1104,7 @@ struct GoatArenaScreen: View {
                         } else {
                             Image(systemName: "person.2.fill")
                         }
-                        Text(isCreatingSubMatch ? "상대 찾는 중" : "Unranked 상대 찾기")
+                        Text(isCreatingSubMatch ? "공격 상대 찾는 중" : "Unranked 공격 상대 찾기")
                             .lineLimit(1)
                         Spacer(minLength: Tokens.Space.s3)
                         Image(systemName: "arrow.right")
@@ -1119,6 +1112,7 @@ struct GoatArenaScreen: View {
                     .frame(maxWidth: .infinity, minHeight: 50)
                 }
                 .buttonStyle(PrimaryButtonStyle())
+            .tutorialTarget(.arenaMatchmaking)
                 .disabled(isCreatingSubMatch || isRefreshing)
                 .accessibilityHint("현재 자격을 다시 확인하고 공식 Unranked 경기를 만듭니다")
             }
@@ -1130,6 +1124,7 @@ struct GoatArenaScreen: View {
                     .frame(maxWidth: .infinity, minHeight: 50)
             }
             .buttonStyle(PrimaryButtonStyle())
+            .tutorialTarget(.arenaEligibility)
             .accessibilityHint("구독 상태와 결제, Ranked 상점 이용 조건을 확인합니다")
         } else if let match = snapshot.activeMatch {
             // 지금 누를 수 있는 경기 버튼이 없는 구간(응답 대기·채점·정산 등).
@@ -1143,36 +1138,22 @@ struct GoatArenaScreen: View {
                     tint: Tokens.primary,
                     background: Tokens.primarySoft)
 
-                if needsDefenderResponseRefresh(snapshot) {
-                    defenderResponseRefreshButton
-                }
             }
         }
     }
 
-    /// 서버 snapshot에는 방어자 MATCHED 경기가 남아 있지만 응답 가능한 초대가
-    /// 함께 오지 않은 복구 상태. 이때 수락·거절 버튼을 꾸며 내면 안 되고, 사용자가
-    /// 같은 화면에서 최신 상태를 다시 받을 수 있게 해야 한다.
-    private func needsDefenderResponseRefresh(_ snapshot: Snapshot) -> Bool {
-        guard let match = snapshot.activeMatch else { return false }
-        return match.role == "DEFENDER"
-            && match.status == "MATCHED"
-            && snapshot.pendingInvitation == nil
-            && pendingDefenderCommand == nil
+    private func canInspectMatchedGame(_ match: Snapshot.ActiveMatch) -> Bool {
+        let fresh: Bool
+        if let loadedContent, case .fresh = loadedContent.freshness { fresh = true }
+        else { fresh = false }
+        return ArenaMatchEntryPolicy.canInspectReadyMatch(id: match.id, role: match.role,
+            status: match.status, attemptStatus: match.attempt?.status,
+            integrity: match.integrityState, fresh: fresh)
     }
 
-    private var defenderResponseRefreshButton: some View {
-        Button {
-            Task { await load() }
-        } label: {
-            Label(
-                isRefreshing ? "최신 경기 상태 확인 중" : "최신 경기 상태 다시 확인",
-                systemImage: "arrow.clockwise")
-                .frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(SecondaryButtonStyle())
-        .disabled(isRefreshing)
-        .accessibilityHint("수락 또는 거절 가능 여부를 서버에서 다시 확인합니다")
+    private func matchEntryTitle(_ match: Snapshot.ActiveMatch) -> String {
+        ArenaMatchEntryPolicy.title(role: match.role, attemptStatus: match.attempt?.status,
+                                   evidenceRequired: needsEvidenceSubmission(match))
     }
 
     /// 아레나 보조 기능들의 **단일 진입점**. 목록은 시트가 든다.
@@ -1186,6 +1167,7 @@ struct GoatArenaScreen: View {
         }
         .buttonStyle(SecondaryButtonStyle())
         .accessibilityHint("우편함·상점·경기 규정·프로필 등 웹 GOAT Arena 기능을 목록에서 고릅니다")
+        .tutorialTarget(.arenaOperations)
     }
 
     // MARK: 3단 — 접힌 상세
@@ -1224,6 +1206,7 @@ struct GoatArenaScreen: View {
                 ) {
                     compactAccessDetail(snapshot, cycle: cycle)
                 }
+                .tutorialTarget(.arenaEligibility)
 
                 compactFold(
                     id: "payback",
@@ -1234,6 +1217,7 @@ struct GoatArenaScreen: View {
                 ) {
                     compactPaybackDetail(snapshot)
                 }
+                .tutorialTarget(.arenaProgress)
 
                 compactFold(
                     id: "asset",
@@ -1244,6 +1228,7 @@ struct GoatArenaScreen: View {
                 ) {
                     compactAssetDetail(cycle.balances)
                 }
+                .tutorialTarget(.arenaWallet)
             }
         }
     }
@@ -1506,22 +1491,7 @@ struct GoatArenaScreen: View {
 
             ExamRule()
 
-            if dynamicTypeSize.isAccessibilitySize {
-                headerActions
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .center, spacing: Tokens.Space.s4) {
-                        headerDescription
-                        Spacer(minLength: Tokens.Space.s3)
-                        headerActions
-                    }
-
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                        headerDescription
-                        headerActions
-                    }
-                }
-            }
+            headerDescription
         }
     }
 
@@ -1869,7 +1839,6 @@ struct GoatArenaScreen: View {
                 "30일 중 \(cycle.cycleDay ?? 0)일차, 현재 \(ArenaDisplayTerms.mode(cycle.activeRanking))")
 
             cycleRunline(day: cycle.cycleDay ?? 0)
-            heroPrimaryAction(snapshot, cycle: cycle)
         }
     }
 
@@ -1943,114 +1912,9 @@ struct GoatArenaScreen: View {
                 .foregroundStyle(onNavy.opacity(0.66))
                 .fixedSize(horizontal: false, vertical: true)
 
-            heroPrimaryAction(snapshot, cycle: cycle)
         }
     }
 
-    @ViewBuilder
-    private func heroPrimaryAction(_ snapshot: Snapshot, cycle: Snapshot.Cycle) -> some View {
-        if let match = snapshot.activeMatch, canPlay(match) {
-            Button {
-                guard let matchId = match.id?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !matchId.isEmpty else { return }
-                matchLaunch = MatchLaunch(id: matchId, briefing: matchBriefing(match))
-            } label: {
-                Label(
-                    needsEvidenceSubmission(match)
-                        ? "풀이 증거 제출하기"
-                        : (match.attempt?.status == "IN_PROGRESS"
-                            ? "경기 계속하기" : "경기 시작하기"),
-                    systemImage: needsEvidenceSubmission(match)
-                        ? "photo.badge.arrow.down"
-                        : (match.attempt?.status == "IN_PROGRESS"
-                            ? "arrow.right.circle.fill" : "play.fill"))
-                    .frame(maxWidth: .infinity, minHeight: 50)
-            }
-            .buttonStyle(PrimaryButtonStyle())
-        } else if snapshot.ranking.skill.status == "PLACEMENT_PENDING" {
-            Button {
-                store.route = .placement
-            } label: {
-                Label("배치고사 시작 또는 이어하기", systemImage: "list.number")
-                    .frame(maxWidth: .infinity, minHeight: 50)
-            }
-            .buttonStyle(PrimaryButtonStyle())
-        } else if snapshot.activeMatch == nil,
-                  cycle.phase == "PAID_ACCESS",
-                  (cycle.cycleDay ?? 0) <= (cycle.challenges.newRequestCutoffDay ?? 28) {
-            if !canCommandMatchesNatively {
-                // 이 서버는 경기 명령을 받지 않는다(HTTP_404) — 눌러도 다시 404 인 CTA 대신
-                // 신청 페이지 자체로 보낸다(canCommandMatchesNatively 주석 참조).
-                webArenaFallback(
-                    onDark: true,
-                    destination: matchmakingWebDestination(cycle),
-                    title: cycle.activeRanking == "MAIN"
-                        ? "웹에서 Ranked 상대 찾기"
-                        : "웹에서 Unranked 상대 찾기")
-            } else if cycle.activeRanking == "MAIN" {
-                Button {
-                    showsMainMatchMaker = true
-                } label: {
-                    HStack(spacing: Tokens.Space.s3) {
-                        Image(systemName: "person.2.fill")
-                        Text("Ranked 상대 찾기")
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.78)
-                        Spacer(minLength: Tokens.Space.s3)
-                        Image(systemName: "arrow.right")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(isRefreshing)
-                .accessibilityHint("앱 안에서 Ranked 티어와 예치 일수를 선택합니다")
-            } else {
-                Button {
-                    Task { await createUnrankedMatch() }
-                } label: {
-                    HStack(spacing: Tokens.Space.s3) {
-                        if isCreatingSubMatch {
-                            ProgressView()
-                                .tint(Tokens.onPrimary)
-                        } else {
-                            Image(systemName: "person.2.fill")
-                        }
-                        Text(isCreatingSubMatch ? "상대 찾는 중" : "Unranked 상대 찾기")
-                            .lineLimit(1)
-                        Spacer(minLength: Tokens.Space.s3)
-                        Image(systemName: "arrow.right")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(isCreatingSubMatch || isRefreshing)
-                .accessibilityHint("현재 자격을 다시 확인하고 공식 Unranked 경기를 만듭니다")
-            }
-        }
-
-        if cycle.activeRanking == "MAIN" {
-            Button {
-                store.route = .arenaShop
-            } label: {
-                HStack(spacing: Tokens.Space.s3) {
-                    Image(systemName: "bag.fill")
-                    Text("Ranked 상점")
-                    Spacer(minLength: Tokens.Space.s3)
-                    Image(systemName: "chevron.right")
-                }
-                .font(.mBodyB)
-                .foregroundStyle(onNavy)
-                .padding(.horizontal, Tokens.Space.s5)
-                .frame(maxWidth: .infinity, minHeight: 50)
-                .background(onNavy.opacity(0.09), in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Tokens.Radius.md)
-                        .strokeBorder(onNavy.opacity(0.22), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("학습일로 이용하는 Ranked 전용 기능을 엽니다")
-        }
-    }
 
     private func noCycleHero(_ snapshot: Snapshot) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
@@ -2074,6 +1938,7 @@ struct GoatArenaScreen: View {
             heroButton("이용권과 상점 보기") {
                 store.route = .commerce
             }
+            .tutorialTarget(.arenaEligibility)
             .accessibilityHint("구독 상태와 결제, Ranked 상점 이용 조건을 확인합니다")
         }
     }
@@ -3326,8 +3191,7 @@ struct GoatArenaScreen: View {
     }
 
     private func activeMatchSection(
-        _ match: Snapshot.ActiveMatch,
-        showsDefenderRefresh: Bool
+        _ match: Snapshot.ActiveMatch
     ) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
             SectionRule(title: "진행 중인 자리 쟁탈전")
@@ -3395,11 +3259,6 @@ struct GoatArenaScreen: View {
                 background: match.status == "HELD" ? Tokens.warningSoft
                     : (needsEvidenceSubmission(match) ? Tokens.warningSoft
                         : (participantHasSubmitted(match) ? Tokens.successSoft : Tokens.primarySoft)))
-
-            if showsDefenderRefresh {
-                defenderResponseRefreshButton
-                    .frame(maxWidth: actionMaxWidth)
-            }
 
             if match.status == "HELD",
                let matchId = match.id?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -3555,8 +3414,8 @@ struct GoatArenaScreen: View {
             stakeText: match.stake.days.map {
                 "\($0)일, \(stakeAssetLabel(match.stake.assetType))"
             },
-            // 서버 스냅샷의 ActiveMatch 에는 경기 제한 시간이 없다. 로비는 그 사실을 밝힌다.
-            timeLimitSeconds: nil,
+            // Use the server's duration when present, never a client-side guess.
+            timeLimitSeconds: match.timeLimitSeconds.flatMap { $0 > 0 ? $0 : nil },
             startsByText: shortDateTime(match.startsBy),
             // 이미 개인 타이머가 흐르는 경기(재개)와 증거 제출 복귀 앞에 확인 단계를
             // 세우면 그 초는 그대로 학생 손해다 — 그 두 경로는 종전처럼 곧장 연다.
@@ -3856,7 +3715,7 @@ struct GoatArenaScreen: View {
                 )
             }
             subMatchCommandId = UUID().uuidString
-            matchLaunch = MatchLaunch(id: matchId)
+            matchLaunch = MatchLaunch(id: matchId, briefing: .newMatch)
         } catch {
             guard DataScope.slot == ownerSlot,
                   loadedAccountSlot == ownerSlot,
@@ -4466,8 +4325,8 @@ struct GoatArenaScreen: View {
             background = Tokens.primarySoft
         case "MATCHED":
             detail = match.role == "DEFENDER"
-                ? "내가 방어자인 도전입니다. 최신 상태를 확인한 뒤 수락하거나 선택한 사유로 거절할 수 있습니다."
-                : "상대와 두 자리, 맡긴 일수가 고정되었습니다. 방어자의 응답을 기다리고 있습니다."
+                ? "방어할 상대가 확정되었습니다. 방어전을 열어 조건을 확인하고 시작하세요."
+                : "공격할 상대가 확정되었습니다. 공격전을 열어 조건을 확인하고 시작하세요."
             icon = "person.2.fill"
             tint = Tokens.primary
             background = Tokens.primarySoft
@@ -4520,7 +4379,7 @@ struct GoatArenaScreen: View {
             return "상대 제출과 채점 결과를 기다리세요"
         }
         if match.role == "DEFENDER", match.status == "MATCHED" {
-            return "자리 도전에 응답해 주세요"
+            return "방어할 경기가 있습니다"
         }
         switch match.status {
         case "REQUESTED": return "상대 확정을 기다리세요"
@@ -4546,7 +4405,7 @@ struct GoatArenaScreen: View {
         if match.role == "DEFENDER", match.status == "MATCHED" {
             let deadline = shortDateTime(match.startsBy)
                 .map { " 서버 시작 마감은 \($0)입니다." } ?? ""
-            return "수락 또는 거절 버튼이 보이지 않으면 최신 경기 상태를 다시 확인하세요.\(deadline)"
+            return "방어전을 열어 경기 조건을 확인하세요. 로비에서 시작을 눌러야 내 제한 시간이 시작됩니다.\(deadline)"
         }
         switch match.status {
         case "REQUESTED":
@@ -4908,6 +4767,13 @@ struct GoatArenaScreen: View {
             state = fixtureState(GoatArenaFixture.make())
         case "main":
             state = fixtureState(GoatArenaFixture.make(main: true))
+        case "invitation":
+            var snapshot = GoatArenaFixture.make(main: true)
+            snapshot.pendingInvitation = .init(id: "fixture-invitation", status: "OFFERED",
+                activeRanking: "MAIN", targetTier: "GOLD", initiatorTier: "PLATINUM",
+                stakeDays: 2, offeredAt: ISO8601DateFormatter().string(from: Date()),
+                policyVersionCode: nil)
+            state = fixtureState(snapshot)
         case "day30":
             state = fixtureState(GoatArenaFixture.make(day: 30, policyPending: true))
         case "policy":

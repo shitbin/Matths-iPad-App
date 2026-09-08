@@ -34,7 +34,7 @@ enum StudentDestination: String, CaseIterable, Identifiable {
     static func containing(_ route: AppStore.Route) -> Self {
         switch route {
         case .home: .today
-        case .learn, .curriculum, .concept, .assess, .paper, .quickPractice, .kice, .weeklyMock, .placement, .solve, .result: .learn
+        case .learn, .curriculum, .concept, .assess, .paper, .quickPractice, .kice, .weeklyMock, .placement, .pro, .solve, .result: .learn
         case .rank, .arenaShop: .arena
         case .records, .wrongNotes: .records
         default: .me

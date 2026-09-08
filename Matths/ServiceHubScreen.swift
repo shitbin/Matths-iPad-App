@@ -132,13 +132,7 @@ struct HostedPortalDestination: Identifiable, Hashable {
     }
 
     static func isTrustedServerURL(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "https",
-              let incomingHost = url.host?.lowercased(),
-              let serverHost = ServerAPI.baseURL.host?.lowercased() else { return false }
-        func unprefixed(_ host: String) -> String {
-            host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-        }
-        return unprefixed(incomingHost) == unprefixed(serverHost)
+        MatthsServiceURLPolicy.isTrustedNavigationURL(url, base: ServerAPI.baseURL)
     }
 }
 
@@ -163,7 +157,9 @@ struct ServiceHubScreen: View {
 
     var body: some View {
         Group {
-            if verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize {
+            if ProductExperience.enabled {
+                LearningResourcesScreen()
+            } else if verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize {
                 compactLandscapeLayout
             } else {
                 VStack(alignment: .leading, spacing: Tokens.Space.s7) {

@@ -32,6 +32,29 @@ final class AcademyScreenModel: ObservableObject {
     @Published private var actionID: UUID?
     @Published private var weekRequestID: UUID?
 
+    var inviteRequestDisabledReason: String? {
+        if actionInProgress { return "승인 요청을 보내고 있습니다." }
+        let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if code.isEmpty { return "선생님께 받은 초대 코드를 입력해 주세요." }
+        if code.range(of: #"^MTH-[A-Z2-9]{6}$"#, options: .regularExpression) == nil {
+            return "MTH- 뒤의 영문·숫자 6자리를 확인해 주세요."
+        }
+        if !consent { return "학습 현황 공유에 동의한 뒤 요청할 수 있습니다." }
+        return nil
+    }
+
+    var academyRequestDisabledReason: String? {
+        if actionInProgress { return "승인 요청을 보내고 있습니다." }
+        guard let dashboard, !dashboard.academies.isEmpty else {
+            return "선택할 수 있는 학원이 없습니다. 초대 코드를 이용해 주세요."
+        }
+        guard dashboard.academies.contains(where: { $0.id == selectedAcademyID }) else {
+            return "연결할 학원을 선택해 주세요."
+        }
+        if !consent { return "학습 현황 공유에 동의한 뒤 요청할 수 있습니다." }
+        return nil
+    }
+
     func activate() { isActive = true }
 
     func retire() { reset(); isActive = false }
@@ -69,11 +92,11 @@ final class AcademyScreenModel: ObservableObject {
 
     func requestWithInviteCode(owner: AccountRequestOwner, store: AppStore) async {
         guard isActive, owner.isCurrent(in: store) else { return }
-        let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard code.range(of: #"^MTH-[A-Z2-9]{6}$"#, options: .regularExpression) != nil else {
-            errorMessage = "초대 코드는 MTH-XXXXXX 형식으로 입력해 주세요."
+        if let reason = inviteRequestDisabledReason {
+            errorMessage = reason
             return
         }
+        let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         await perform(success: "학원 승인 요청을 보냈습니다.", owner: owner, store: store) {
             try await ServerAPI.requestAcademy(inviteCode: code, authorization: owner.authorization)
         }
@@ -81,8 +104,8 @@ final class AcademyScreenModel: ObservableObject {
 
     func requestSelectedAcademy(owner: AccountRequestOwner, store: AppStore) async {
         guard isActive, owner.isCurrent(in: store) else { return }
-        guard !selectedAcademyID.isEmpty else {
-            errorMessage = "요청할 학원을 선택해 주세요."
+        if let reason = academyRequestDisabledReason {
+            errorMessage = reason
             return
         }
         let academyID = selectedAcademyID
@@ -197,7 +220,11 @@ final class AcademyScreenModel: ObservableObject {
     private func install(_ value: ServerAPI.AcademyDashboard) {
         dashboard = value
         if value.membership?.status != "APPROVED" { closeWeek(); attendanceCode = "" }
-        if selectedAcademyID.isEmpty { selectedAcademyID = value.academies.first?.id ?? "" }
+        // A list refresh must not silently select another academy. In particular,
+        // an already consented student must choose again if their selection vanished.
+        if !value.academies.contains(where: { $0.id == selectedAcademyID }) {
+            selectedAcademyID = ""
+        }
     }
 
     private func readable(_ error: Error) -> String {
@@ -533,6 +560,18 @@ struct AcademyScreen: View {
                         .font(.mBody)
                         .foregroundStyle(Tokens.text2)
                 }
+                Toggle(isOn: $model.consent) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("학습 현황 공유 동의")
+                            .font(.mBodyB)
+                            .foregroundStyle(Tokens.ink)
+                        Text("연결 승인 후 학원 선생님이 진도·시험·오답·출석 현황을 확인할 수 있습니다.")
+                            .font(.mCaption)
+                            .foregroundStyle(Tokens.text2)
+                    }
+                }
+                .tint(Tokens.actionPrimary)
+                .disabled(model.actionInProgress)
                 Group {
                     if compactLandscape {
                         HStack(alignment: .top, spacing: Tokens.Space.s3) {
@@ -546,17 +585,6 @@ struct AcademyScreen: View {
                         }
                     }
                 }
-                Toggle(isOn: $model.consent) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("학습 현황 공유 동의")
-                            .font(.mBodyB)
-                            .foregroundStyle(Tokens.ink)
-                        Text("학원 선생님이 진도·시험·오답·출석 현황을 확인할 수 있습니다.")
-                            .font(.mCaption)
-                            .foregroundStyle(Tokens.text2)
-                    }
-                }
-                .tint(Tokens.actionPrimary)
                 feedbackText
             }
             .frame(maxWidth: 860, alignment: .leading)
@@ -575,12 +603,16 @@ struct AcademyScreen: View {
                 .autocorrectionDisabled()
                 .font(.mBodyB.monospaced())
                 .textFieldStyle(.roundedBorder)
+                .disabled(model.actionInProgress)
                 .onChange(of: model.inviteCode) { _, value in
                     model.inviteCode = String(value.uppercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(10))
                 }
-            Button("코드로 승인 요청") { run { await model.requestWithInviteCode(owner: $0, store: store) } }
+            Button { run { await model.requestWithInviteCode(owner: $0, store: store) } } label: {
+                Text("코드로 승인 요청").frame(maxWidth: .infinity)
+            }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(!model.consent || model.actionInProgress)
+                .disabled(model.inviteRequestDisabledReason != nil)
+            requestRequirement(model.inviteRequestDisabledReason)
         }
         .academyCardSurface()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -597,16 +629,33 @@ struct AcademyScreen: View {
                     .foregroundStyle(Tokens.text2)
             } else {
                 Picker("학원", selection: $model.selectedAcademyID) {
+                    Text("학원을 선택해 주세요").tag("")
                     ForEach(academies) { academy in Text(academy.name).tag(academy.id) }
                 }
                 .pickerStyle(.menu)
-                Button("선택한 학원에 요청") { run { await model.requestSelectedAcademy(owner: $0, store: store) } }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .disabled(model.actionInProgress)
+                Button { run { await model.requestSelectedAcademy(owner: $0, store: store) } } label: {
+                    Text("선택한 학원에 요청").frame(maxWidth: .infinity)
+                }
                     .buttonStyle(SecondaryButtonStyle())
-                    .disabled(!model.consent || model.actionInProgress)
+                    .disabled(model.academyRequestDisabledReason != nil)
+                requestRequirement(model.academyRequestDisabledReason)
             }
         }
         .academyCardSurface()
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func requestRequirement(_ message: String?) -> some View {
+        if let message {
+            Text(message)
+                .font(.mCaption)
+                .foregroundStyle(Tokens.text2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func weekDetail(
@@ -922,6 +971,9 @@ struct AcademyScreen: View {
 private struct AcademyCardSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
+            // Expand before drawing the surface. Expanding after this modifier
+            // only adds empty space around an intrinsic-width picker card.
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Tokens.Space.s4)
             .background(Tokens.surface,
                         in: RoundedRectangle(cornerRadius: Tokens.Radius.lg, style: .continuous))

@@ -25,7 +25,8 @@ const app=fs.readFileSync(root+'/Matths/MatthsApp.swift','utf8');
 const start=app.indexOf('    private func startServerPaper('), end=app.indexOf('    func pullServerAssessments()',start);
 if(!(start>=0&&end>start)) throw Error('Review production start boundaries');
 fs.writeFileSync(out+'/start.swift','import Foundation\nextension AppStore {\n'+app.slice(start,end)+
-  'func exerciseAssessmentStart() async { await startServerPaper(scope: .subunit, course: AssessCourse(courseId: "common-math-1"), unit: AssessUnit(unitId: "u"), subunit: AssessSubunit(id: "s"), generation: assessmentStartGeneration, account: account) }\n}\n');
+  'func exerciseAssessmentStart() async { await startServerPaper(scope: .subunit, course: AssessCourse(courseId: "common-math-1"), unit: AssessUnit(unitId: "u"), subunit: AssessSubunit(id: "s"), generation: assessmentStartGeneration, account: account) }\n'+
+  'func exerciseCourseAssessmentStart() async { await startServerPaper(scope: .subunit, course: AssessCourse(courseId: "common-math-1"), unit: AssessUnit(unitId: "u"), subunit: AssessSubunit(id: "s"), generation: assessmentStartGeneration, account: account, returnRoute: .curriculum) }\n}\n');
 JS
 xcrun swiftc -swift-version 5 \
   "$ROOT/Matths/AssessmentDraftRecovery.swift" "$ROOT/Matths/AssessmentStartJournal.swift" \

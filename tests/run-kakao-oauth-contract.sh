@@ -30,11 +30,22 @@ grep -Fq 'URLQueryItem(name: "code_challenge", value: codeChallenge)' "$coordina
 grep -Fq 'ServerAPI.exchangeSocialAuthCode(' "$coordinator" \
   || fail "서버 교환 경로를 지나지 않습니다."
 
-# ── 카카오 SDK 를 들이지 않는다 ─────────────────────────────────────────────
-# SDK 가 들어오면 토큰을 기기에서 직접 다루게 되고 서버 교환 계약이 깨진다.
-if grep -rn -iE 'import (KakaoSDK|KakaoSDKAuth|KakaoSDKUser)' "$root/Matths"; then
-  fail "카카오 SDK 가 들어왔습니다. 서버 PKCE 왕복 계약이 깨집니다."
-fi
+# Native app switching is now supported, but Matths identity still comes from
+# the server's validated grant and PKCE exchange, never the SDK profile alone.
+grep -Fq 'UserApi.shared.loginWithKakaoTalk' "$root/Matths/KakaoNativeSignIn.swift"
+grep -Fq 'self.requestID == id' "$root/Matths/KakaoNativeSignIn.swift"
+grep -Fq 'ServerAPI.beginNativeKakaoLogin' "$coordinator"
+grep -Fq 'KAKAO_NATIVE_REGISTRATION_REQUIRED' "$coordinator"
+grep -Fq 'KakaoNativeSignIn.handle(url)' "$root/Matths/MatthsApp.swift"
+grep -Fq 'kakao54f59f482b5e69baaf8102c6f1433c1f' "$root/Info.plist"
+python3 - "$root/Info.plist" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], "rb") as source:
+    info = plistlib.load(source)
+assert "kakaokompassauth" in info["LSApplicationQueriesSchemes"]
+assert all("LSApplicationQueriesSchemes" not in row for row in info["CFBundleURLTypes"])
+assert any("kakao54f59f482b5e69baaf8102c6f1433c1f" in row["CFBundleURLSchemes"] for row in info["CFBundleURLTypes"])
+PY
 
 # ── 콜백은 카카오 것만 받는다 ───────────────────────────────────────────────
 grep -Fq 'callbackCode(callbackURL, expectedPath: "/kakao")' "$coordinator" \

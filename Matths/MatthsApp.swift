@@ -181,8 +181,8 @@ struct MatthsApp: App {
                         FirstRunOnboardingOverlay().environmentObject(store)
                     }
                 }
-                .overlay {
-                    NativeTutorialOverlay()
+                .overlayPreferenceValue(TutorialTargetPreferenceKey.self) { targets in
+                    NativeTutorialOverlay(targets: targets)
                         .environmentObject(store)
                 }
                 // 공통 보호 레이어는 루트와 fullScreenCover가 같은 구현을 쓴다.
@@ -200,6 +200,7 @@ struct MatthsApp: App {
                 // 돌려주므로 종전 위젯 처리가 그대로 이어진다(host 가 arena-web 하나뿐이라
                 // 위젯의 matths://arena 는 건드리지 않는다).
                 .onOpenURL { url in
+                    if KakaoNativeSignIn.handle(url) { return }
                     if ArenaWebDeepLink.handle(
                         url,
                         guardModel: screenshotGuard,
@@ -578,6 +579,8 @@ final class AppStore: ObservableObject {
         // didSet 은 뷰 갱신 전에 돌므로 트랜지션이 항상 올바른 방향을 읽는다.
         didSet {
             navDirection = route.navOrder >= oldValue.navOrder ? 1 : -1
+            browseNavigationHistory.transition(owner: browseNavigationOwner,
+                from: oldValue, to: route, isRoot: route.isTab)
             if route == .notifications, oldValue != .notifications { notificationOrigin = oldValue }
             if oldValue == .academy && route != .academy {
                 Task { await refreshAcademyLearningContext() }
@@ -596,6 +599,10 @@ final class AppStore: ObservableObject {
             }
         }
     }
+
+    private var browseNavigationHistory = BrowseNavigationHistory<Route>()
+    private var browseNavigationOwner: String { DataScope.slot + "|" + accountSessionGeneration.uuidString }
+    var previousBrowseRoute: Route? { browseNavigationHistory.previous(owner: browseNavigationOwner) }
 
     @Published private(set) var workspace: AppWorkspace = .student
     private var workspacePreferenceLoaded = false
@@ -1301,6 +1308,7 @@ final class AppStore: ObservableObject {
         examIndex = 0
         lastExamSeed = 0
         currentAttemptID = nil
+        assessmentReturnRoute = .assess
         kiceExamID = nil
         kiceAnswers = [:]
         kiceSubject = [:]
@@ -1556,8 +1564,16 @@ final class AppStore: ObservableObject {
                     return false
                 }
             })
-        if let tokenCommitError { throw tokenCommitError }
-        guard switched else { return false }
+        if let tokenCommitError {
+            AuthFlowDiagnostics.fail(tokenCommitError, attemptID: attemptID)
+            throw tokenCommitError
+        }
+        guard switched else {
+            AuthFlowDiagnostics.record("slot_switch_rejected", attemptID: attemptID)
+            return false
+        }
+        AuthFlowDiagnostics.record("keychain_accepted", attemptID: attemptID)
+        AuthFlowDiagnostics.record("slot_switched", attemptID: attemptID)
         let accountSlot = DataScope.slot
         let transitionGeneration = accountTransitionGeneration
         if let n = user.name, !n.isEmpty { userName = n }
@@ -1570,6 +1586,7 @@ final class AppStore: ObservableObject {
             schoolCode = c
         }
         signIn(provider: "server")
+        AuthFlowDiagnostics.record("session_published", attemptID: attemptID)
         applyServerProfile(user)
         let committedAccount = captureAccountSessionBoundary()
         _ = await loadKiceStudyIfNeeded()
@@ -1652,7 +1669,8 @@ final class AppStore: ObservableObject {
         Task { [weak self] in await self?.pullServerAssessments() }
         if let intent = pendingAssessmentIntent {
             pendingAssessmentIntent = nil
-            startPaper(scope: intent.scope, course: intent.course, unit: intent.unit, subunit: intent.subunit)
+            startPaper(scope: intent.scope, course: intent.course, unit: intent.unit, subunit: intent.subunit,
+                       returnRoute: intent.returnRoute)
         }
         Task { await MatthsIAPStore.shared.reconcileForCurrentAccount() }
         let authenticatedOwner = captureAccountSessionBoundary()
@@ -1660,6 +1678,7 @@ final class AppStore: ObservableObject {
         // tutorial/role/coach metadata after credentials and the account slot agree.
         await refreshServerProfile(force: true)
         guard ownsCurrentAccountSession(authenticatedOwner) else { return false }
+        AuthFlowDiagnostics.record("sign_in_finished", attemptID: attemptID)
         return true
     }
 
@@ -1844,6 +1863,18 @@ final class AppStore: ObservableObject {
         applyServerProfile(user)
     }
 
+    func acceptProfileAvatar(_ avatar: ServerProfileAvatar, owner: AccountRequestOwner) {
+        guard owner.isCurrent(in: self), var user = serverProfile else { return }
+        user.profileAvatar = avatar
+        applyServerProfile(user)
+    }
+
+    func acceptCoachMode(_ level: SpiceLevel, owner: AccountRequestOwner) {
+        guard owner.isCurrent(in: self), var user = serverProfile else { return }
+        user.coachMode = level.rawValue
+        applyServerProfile(user)
+    }
+
     @MainActor
     func refreshServerProfile(force: Bool = false) async {
         guard authProvider == "server", let owner = AccountRequestOwner(store: self) else {
@@ -1974,7 +2005,7 @@ final class AppStore: ObservableObject {
 
     func openConceptV2(_ id: String) {
         guard CurriculumV2.canStudy(id) else {
-            curriculumAccessNotice = "이 과목은 준비 중입니다. 현재 공개된 과목에서 학습을 이어가 주세요."
+            curriculumAccessNotice = "이 과목을 지금 열 수 없습니다. 과목 목록에서 이용 상태를 확인해 주세요."
             route = .curriculum
             return
         }
@@ -2708,6 +2739,9 @@ final class AppStore: ObservableObject {
 
     @Published var attemptsV2: AttemptStoreV2 = .load()
     @Published var currentAttemptID: String?
+    /// Navigation only: a course assessment returns to its course; direct
+    /// history/deep-link entry defaults to the official assessment hub.
+    var assessmentReturnRoute: Route = .assess
     @Published var assessmentSyncError: String?
     @Published private(set) var assessmentSubmissionState: AssessmentSubmissionState = .editable
     var assessmentSubmitting: Bool { assessmentSubmissionState.isSubmitting }
@@ -2718,6 +2752,7 @@ final class AppStore: ObservableObject {
         let course: AssessCourse
         let unit: AssessUnit?
         let subunit: AssessSubunit?
+        let returnRoute: Route
     }
     private var pendingAssessmentIntent: AssessmentStartIntent?
     var hasPendingAssessmentAuthentication: Bool { pendingAssessmentIntent != nil || assessmentStarting }
@@ -2735,17 +2770,21 @@ final class AppStore: ObservableObject {
 
     /// 시험지 시작 — 문항을 확정 저장하고(웹 AssessmentAttempt) 응시 화면으로.
     func startPaper(scope: PaperScope, course: AssessCourse,
-                    unit: AssessUnit? = nil, subunit: AssessSubunit? = nil) {
+                    unit: AssessUnit? = nil, subunit: AssessSubunit? = nil,
+                    returnRoute: Route = .assess) {
         guard isLearningAccountOperationActive(for: DataScope.slot) else { return }
         guard CurriculumPolicy.isAvailable(course.courseId) else {
-            assessmentSyncError = "이 과목은 준비 중입니다."
+            assessmentSyncError = "이 과목의 평가를 지금 시작할 수 없습니다. 과목의 이용 상태를 확인해 주세요."
             return
         }
         guard !assessmentStarting else { return }
+        let destination: Route = returnRoute == .curriculum ? .curriculum : .assess
         if ServerAPI.hasToken {
             let scopeKey = "\(scope.rawValue)/\(course.courseId)/\(unit?.unitId ?? "-")/\(subunit?.id ?? "-")"
             if let open = attemptsV2.openAttempt(scopeKey: scopeKey) {
                 currentAttemptID = open.id
+                assessmentReturnRoute = destination
+                if destination == .curriculum { selectedCourseV2ID = course.courseId }
                 route = .paper
                 return
             }
@@ -2757,11 +2796,12 @@ final class AppStore: ObservableObject {
             Task { [weak self] in
                 await self?.startServerPaper(
                     scope: scope, course: course, unit: unit, subunit: subunit,
-                    generation: generation, account: account)
+                    generation: generation, account: account, returnRoute: destination)
             }
             return
         }
-        pendingAssessmentIntent = AssessmentStartIntent(scope: scope, course: course, unit: unit, subunit: subunit)
+        pendingAssessmentIntent = AssessmentStartIntent(scope: scope, course: course, unit: unit, subunit: subunit,
+                                                       returnRoute: destination)
         authenticationNotice = "로그인하면 공식 평가 기록과 응시 상태를 안전하게 저장할 수 있습니다."
         authProvider = nil
     }
@@ -2770,7 +2810,8 @@ final class AppStore: ObservableObject {
     private func startServerPaper(scope: PaperScope, course: AssessCourse,
                                   unit: AssessUnit?, subunit: AssessSubunit?,
                                   generation: UUID,
-                                  account: AccountSessionBoundary) async {
+                                  account: AccountSessionBoundary,
+                                  returnRoute: Route = .assess) async {
         defer { if generation == assessmentStartGeneration { assessmentStarting = false } }
         guard generation == assessmentStartGeneration, isLearningAccountOperationActive(for: account) else { return }
         guard let authorization = ServerAPI.captureAuthorization() else { return }
@@ -2808,6 +2849,8 @@ final class AppStore: ObservableObject {
             }
             guard isLearningAccountOperationActive(for: account) else { return }
             currentAttemptID = attempt.id
+            assessmentReturnRoute = returnRoute
+            if returnRoute == .curriculum { selectedCourseV2ID = course.courseId }
             route = .paper
         } catch {
             guard generation == assessmentStartGeneration,
@@ -3729,7 +3772,7 @@ final class AppStore: ObservableObject {
                 self.selectedCourseV2ID = CurriculumV2.availableCourses.first?.id
             }
             if let id = self.selectedConceptV2ID, !CurriculumV2.canStudy(id), self.route == .concept {
-                self.curriculumAccessNotice = "이 과목은 현재 준비 중입니다. 다른 공개 과목을 선택해 주세요."
+                self.curriculumAccessNotice = "서버에서 이 과목의 이용을 허용하지 않았습니다. 설정 반영 여부를 확인한 뒤 다시 시도해 주세요."
                 self.route = .curriculum
             }
             WidgetBridge.publish(from: self)

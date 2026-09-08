@@ -50,6 +50,16 @@ struct ServerProfileAvatar: Codable, Equatable {
     var description: String?
     var imageSrc: String?
     var isCustom: Bool
+
+    var bundledImageName: String? {
+        guard !isCustom else { return nil }
+        let names = [
+            "NOVA_GOAT": "nova-goat", "COMET_FOX": "comet-fox",
+            "ORBIT_OWL": "orbit-owl", "NEON_TIGER": "neon-tiger",
+            "COSMIC_BEAR": "cosmic-bear", "PIXEL_RABBIT": "pixel-rabbit",
+        ]
+        return names[code].map { "Avatar-" + $0 }
+    }
 }
 
 struct ServerArenaActivityLevel: Codable, Equatable {
@@ -198,9 +208,18 @@ enum ServerAPI {
         var key: String
         var label: String
         var configured: Bool
+        var nativeConfigured: Bool? = nil
     }
     private struct SocialAuthProvidersResponse: Codable {
         var providers: [SocialAuthProvider]
+    }
+
+    private struct NativeKakaoGrant: Codable { let code: String }
+    static func beginNativeKakaoLogin(accessToken: String, codeChallenge: String) async throws -> String {
+        let result: NativeKakaoGrant = try await request(
+            "POST", "/api/v1/auth/kakao/native",
+            body: ["accessToken": accessToken, "codeChallenge": codeChallenge], authed: false)
+        return result.code
     }
 
     /// 인증 브라우저를 열기 전에 운영 서버가 Google의 ID·secret·callback을
@@ -1565,16 +1584,17 @@ enum ServerAPI {
             ], authed: true, authorization: authorization)
     }
 
-    static func createAcademyInvite(label: String, classID: String?, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
+    static func createAcademyInvite(label: String, classID: String?, expiryDays: Int = 14, maxUses: Int = 30, authorization: AuthorizationSnapshot = authorizationForCurrentRequest())
     async throws -> TeacherAcademyDashboard {
-        try await request(
+        let trimmed = label.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let normalizedLabel = trimmed.isEmpty ? "학생 초대" : trimmed
+        guard normalizedLabel.utf16.count <= 60, [7, 14, 30].contains(expiryDays), (1...200).contains(maxUses) else {
+            throw ServerAPIError(message: "초대 이름, 유효기간과 최대 사용 횟수를 확인해 주세요.", code: "ACADEMY_INVITE_INVALID")
+        }
+        return try await request(
             "POST", "/api/v1/academy/teacher/invites",
-            body: [
-                "label": label,
-                "classId": classID ?? "",
-                "expiryDays": 14,
-                "maxUses": 30,
-            ], authed: true, authorization: authorization)
+            body: ["label": normalizedLabel, "classId": classID ?? "", "expiryDays": expiryDays, "maxUses": maxUses],
+            authed: true, authorization: authorization)
     }
 
     static func revokeAcademyInvite(_ inviteID: String, authorization: AuthorizationSnapshot = authorizationForCurrentRequest()) async throws -> TeacherAcademyDashboard {
@@ -2994,6 +3014,7 @@ enum ServerAPI {
             /// 추정보다 우선하며, 구버전 캐시를 위해 optional로 유지한다.
             var availableActions: [String]? = nil
             var attempt: ParticipantAttempt?
+            var timeLimitSeconds: Int? = nil
         }
 
         /// Ranked 하위 티어 초대는 수락 전에는 ArenaMatch가 아니다. 서버의
@@ -3105,6 +3126,10 @@ enum ServerAPI {
     // 앱은 그중 서버가 내려준 필드만 그대로 표시한다. 점수·정답 수·소요 시간은 이
     // 읽기 모델에 없으므로 앱에서도 만들지 않는다.
     struct GoatArenaParticipantMatch: Codable, Identifiable {
+        struct Capabilities: Codable {
+            var mutations: String?
+            var availableActions: [String]
+        }
         struct PreStartContract: Codable, Equatable {
             var title: String
             var description: String
@@ -3164,6 +3189,7 @@ enum ServerAPI {
         var timeLimitSeconds: Int?
         var timeline: Timeline?
         var attempt: Attempt?
+        var capabilities: Capabilities? = nil
     }
 
     private struct GoatArenaMatchesResponse: Codable {

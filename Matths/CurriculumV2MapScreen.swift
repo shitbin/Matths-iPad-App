@@ -95,6 +95,7 @@ struct CurriculumV2MapScreen: View {
     /// 과목 안내(잠금 규칙, 권장 선수 과목)는 기본 화면에서 접어 둔다.
     /// 매번 읽을 내용이 아니고, 펼치기 전까지는 진도와 평가 상태를 가리지 않는다.
     @State private var showsCourseGuide = false
+    @State private var showsLearningTracks = false
 
     /// 기기 이름이 아니라 size class 로 판단한다. Split View 와 Stage Manager 의
     /// iPad 도 compact 폭으로 들어온다.
@@ -162,10 +163,8 @@ struct CurriculumV2MapScreen: View {
                     && geometry.size.width >= 760
                     && !dynamicTypeSize.isAccessibilitySize
                 let narrow = geometry.size.width <= 360
-                // 세로가 짧은 문맥(아이폰 가로)에서 한 기둥으로 쌓으면, 지금 이어갈 개념을
-                // 읽고 과목 목록을 보려면 계속 내려야 한다. 왼쪽에 현재 개념, 오른쪽에
-                // 목록을 두면 두 가지가 한 화면에 남는다. 기기 이름이 아니라 size class와
-                // 실제 폭으로 판단하고, 접근성 글씨에서는 다시 한 기둥으로 돌아간다.
+                // 가로에서는 선택 과목의 문맥을 왼쪽에 두고 오른쪽에서 개념을 고른다.
+                // 학습 홈의 이어가기/모션 미리보기를 이 화면에 반복하지 않는다.
                 let dashboard = shortHeight
                     && !dynamicTypeSize.isAccessibilitySize
                     && geometry.size.width >= 640
@@ -176,11 +175,11 @@ struct CurriculumV2MapScreen: View {
                     // 과목 하나를 고르는 데도 스크롤이 필요하다.
                     if dashboard {
                         HStack(spacing: 0) {
-                            currentConceptColumn
+                            courseOverviewColumn
                                 .frame(width: leadColumnWidth(for: geometry.size.width))
                             Divider()
                             courseScroll(compact: true, narrow: false,
-                                         ownsCurrentConcept: false)
+                                         ownsCourseSelection: false)
                         }
                     } else if split {
                         HStack(spacing: 0) {
@@ -205,6 +204,10 @@ struct CurriculumV2MapScreen: View {
             if !CurriculumPolicy.isAvailable(store.selectedCourseV2ID ?? "") {
                 store.selectedCourseV2ID = CurriculumV2.availableCourses.first?.id
             }
+        }
+        .onChange(of: selectedCourse.id) { _, _ in
+            showsCourseGuide = false
+            showsLearningTracks = false
         }
         // 반복 모션은 없으며, 시스템/앱 모션 설정이 꺼진 경우 상위에서
         // 전달된 암묵 애니메이션도 이 화면 안에서는 즉시 반영한다.
@@ -263,7 +266,7 @@ struct CurriculumV2MapScreen: View {
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: Tokens.Space.s2)
-                    Text(available ? "\(percent)%" : "준비 중")
+                    Text(available ? "\(percent)%" : "이용 확인 필요")
                         .font(.mCaption.monospacedDigit())
                         .foregroundStyle(selected ? Tokens.actionPrimary : Tokens.text3)
                 }
@@ -280,17 +283,17 @@ struct CurriculumV2MapScreen: View {
         }
         .buttonStyle(.plain)
         .disabled(!available)
-        .accessibilityLabel(available ? "\(course.title), 진도 \(percent)퍼센트" : "\(course.title), 준비 중, 현재 학습할 수 없음")
+        .accessibilityLabel(available ? "\(course.title), 진도 \(percent)퍼센트" : "\(course.title), 현재 이용할 수 없음")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// 좌우로 나뉜 화면의 왼쪽 기둥 — 지금 이어갈 개념 하나와 과목 선택.
-    /// 오른쪽 목록을 아무리 내려도 이 기둥은 자리에 남는다.
-    private var currentConceptColumn: some View {
+    /// Landscape context stays visible while the right-hand unit list scrolls.
+    private var courseOverviewColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-                storyPreviewCard
+                pageHeader
                 compactCoursePicker
+                courseHeader(selectedCourse, showsTitle: false)
             }
             .padding(.horizontal, Tokens.Space.s4)
             .padding(.vertical, Tokens.Space.s4)
@@ -305,31 +308,29 @@ struct CurriculumV2MapScreen: View {
         min(max(width * 0.42, 300), 380)
     }
 
-    /// 지금 이어갈 개념 카드. 좌우로 나뉘면 왼쪽 기둥이, 아니면 스크롤 머리가 갖는다.
-    private var storyPreviewCard: some View {
-        let timelinePreview = topTimelinePreview
-        return CurriculumStoryCompactPreview(model: timelinePreview) {
-            if let conceptID = timelinePreview.conceptID {
-                store.openConceptV2(conceptID)
-            }
-        }
-    }
-
     private func courseScroll(compact: Bool,
                               narrow: Bool,
-                              ownsCurrentConcept: Bool = true) -> some View {
+                              ownsCourseSelection: Bool = true) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: shortHeight ? Tokens.Space.s5 : Tokens.Space.s7) {
-                pageHeader
-                if ownsCurrentConcept {
-                    storyPreviewCard
+                if ownsCourseSelection {
+                    pageHeader
                     if compact { compactCoursePicker }
+                    courseHeader(selectedCourse, showsTitle: !compact)
+                } else {
+                    Text("\(selectedCourse.title) · 단원과 개념")
+                        .font(.mHeading).foregroundStyle(Tokens.ink)
+                        .accessibilityAddTraits(.isHeader)
                 }
-                courseHeader(selectedCourse)
-                learningTracksSection(course: selectedCourse)
                 ForEach(Array(selectedCourse.units.enumerated()), id: \.element.id) { index, unit in
                     unitSection(course: selectedCourse, unit: unit, index: index)
                 }
+                if AssessCatalog.course(selectedCourse.id) != nil {
+                    CourseAssessmentSection(courseID: selectedCourse.id)
+                        .card()
+                        .tutorialTarget(.courseAssessments)
+                }
+                learningTracksSection(course: selectedCourse)
             }
             .frame(maxWidth: Tokens.readableWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
@@ -340,17 +341,18 @@ struct CurriculumV2MapScreen: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .scrollBounceBehavior(.basedOnSize, axes: .vertical)
+        .tutorialViewport()
     }
 
     private var pageHeader: some View {
         VStack(alignment: .leading, spacing: shortHeight ? Tokens.Space.s2 : Tokens.Space.s3) {
-            Text("커리큘럼")
+            Text("과목과 단원")
                 // 가로로 누운 iPhone 에서는 28pt 제목이 남은 높이를 먼저 가져간다.
                 // 큰 아이폰은 가로에서 폭이 regular 로 들어오므로 세로 길이로 판단한다.
                 .font(shortHeight ? .mHeading : .mTitle)
                 .foregroundStyle(Tokens.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("2022 개정 교육과정에서 현재 공개된 과목을 선택해 학습합니다. 준비 중인 과목은 공개 후 이용할 수 있어요.")
+            Text("과목을 고르고, 배울 개념을 선택하세요.")
                 .font(.mCallout)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -371,7 +373,7 @@ struct CurriculumV2MapScreen: View {
                                 if course.id == selectedCourse.id {
                                     Label(course.title, systemImage: "checkmark")
                                 } else {
-                                    Text(CurriculumPolicy.isAvailable(course.id) ? course.title : "\(course.title) · 준비 중")
+                                    Text(CurriculumPolicy.isAvailable(course.id) ? course.title : "\(course.title) · 이용 확인 필요")
                                 }
                             }
                             .disabled(!CurriculumPolicy.isAvailable(course.id))
@@ -421,31 +423,25 @@ struct CurriculumV2MapScreen: View {
         }
     }
 
-    private func courseHeader(_ course: CourseV2) -> some View {
+    private func courseHeader(_ course: CourseV2, showsTitle: Bool) -> some View {
         let percent = store.progressV2.coursePercent(course)
         let completed = course.allConcepts.filter {
             store.progressV2.percent(for: $0) >= 100
         }.count
-        let totalMinutes = course.allConcepts.reduce(0) {
-            $0 + ($1.lesson?.estimatedMinutes ?? 15)
-        }
         let prerequisiteTitles = course.prerequisites.compactMap { prerequisiteID in
             courses.first { $0.id == prerequisiteID }?.title
         }
         return VStack(alignment: .leading, spacing: shortHeight ? Tokens.Space.s3 : Tokens.Space.s4) {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                Text("\(categoryTitle(course.category)) (\(gradeLabel(course.recommendedGrades)))")
-                    .font(.mMicro.weight(.bold))
-                    .foregroundStyle(Tokens.actionPrimary)
-                Text(course.title)
-                    // compact 폭에서 28pt 과목명은 두 줄로 넘어가며 카드 머리를 밀어낸다.
-                    // 세로가 짧은 문맥에서도 같은 이유로 22pt 를 쓴다.
-                    .font(compactWidth || shortHeight ? .mHeading : .mTitle)
-                    .foregroundStyle(Tokens.ink)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("\(course.units.count)개 단원, \(course.allConcepts.count)개 개념, \(estimatedTimeLabel(totalMinutes))")
+                if showsTitle {
+                    Text(course.title)
+                        .font(compactWidth || shortHeight ? .mHeading : .mTitle)
+                        .foregroundStyle(Tokens.ink)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("\(course.units.count)개 단원 · \(course.allConcepts.count)개 개념")
                     .font(.mCallout)
                     .foregroundStyle(Tokens.text2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -470,10 +466,6 @@ struct CurriculumV2MapScreen: View {
                 }
             }
 
-            Divider()
-
-            assessmentGatePanel(for: course)
-
             courseGuide(course, hasPrerequisites: !prerequisiteTitles.isEmpty)
         }
         .padding(cardPadding)
@@ -490,6 +482,8 @@ struct CurriculumV2MapScreen: View {
     private func courseGuide(_ course: CourseV2, hasPrerequisites: Bool) -> some View {
         DisclosureGroup(isExpanded: $showsCourseGuide) {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                Text("\(categoryTitle(course.category)) · \(gradeLabel(course.recommendedGrades))")
+                    .font(.mCaption).foregroundStyle(Tokens.text2)
                 Label("모든 개념은 바로 학습할 수 있습니다", systemImage: "lock.open.fill")
                     .font(.mCaption)
                     .foregroundStyle(Tokens.ink)
@@ -510,6 +504,7 @@ struct CurriculumV2MapScreen: View {
                         .foregroundStyle(Tokens.text3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                assessmentGatePanel(for: course)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, Tokens.Space.s3)
@@ -598,7 +593,7 @@ struct CurriculumV2MapScreen: View {
                 return CurriculumAssessmentProjection(
                     state: .inProgress,
                     title: "평가 진행 중: \(title)",
-                    detail: "작성 중인 답안이 저장되어 있습니다. 평가센터에서 이어서 응시할 수 있습니다."
+                    detail: "작성 중인 답안이 저장되어 있습니다. 이 과목의 단계 평가에서 이어서 응시할 수 있습니다."
                 )
             }
             if unlocked {
@@ -693,23 +688,23 @@ struct CurriculumV2MapScreen: View {
             .filter { $0.courseId == course.id }
             .sorted { $0.order < $1.order }
         if !tracks.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                    Text("추천 학습 코스")
-                        .font(.mHeading)
-                        .foregroundStyle(Tokens.ink)
-                    // 개념마다 "코스 출발 개념 / 권장 선수 개념: ○○" 을 붙이던 줄을
-                    // 여기 한 문장으로 합쳤다. 순서는 나열 순서가 이미 말해 주므로
-                    // 같은 뜻을 개념 수만큼 되풀이할 이유가 없다.
-                    Text("관련 개념을 배우기 좋은 순서로 묶었습니다. 앞에 적힌 개념이 뒤 개념의 권장 선수 개념입니다.")
-                        .font(.mCallout)
-                        .foregroundStyle(Tokens.text2)
-                        .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup(isExpanded: $showsLearningTracks) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        Text("관련 개념을 배우기 좋은 순서로 묶었습니다. 앞에 적힌 개념이 뒤 개념의 권장 선수 개념입니다.")
+                            .font(.mCallout)
+                            .foregroundStyle(Tokens.text2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(tracks) { track in
+                        learningTrackCard(track)
+                    }
                 }
-
-                ForEach(tracks) { track in
-                    learningTrackCard(track)
-                }
+                .padding(.top, Tokens.Space.s3)
+            } label: {
+                Label("추천 학습 경로 보기", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                    .font(.mBodyB).foregroundStyle(Tokens.ink)
+                    .frame(minHeight: 44)
             }
         }
     }
@@ -858,6 +853,7 @@ struct CurriculumV2MapScreen: View {
                 }
             }
             .padding(cardPadding)
+            .tutorialTarget(.courseConcepts, when: unit.id == course.units.first?.id)
 
             Divider()
 
@@ -912,7 +908,7 @@ struct CurriculumV2MapScreen: View {
         .disabled(!CurriculumV2.canStudy(concept.id))
         .accessibilityLabel(CurriculumV2.canStudy(concept.id)
             ? "\(concept.title), \(state.label), 예상 \(concept.lesson?.estimatedMinutes ?? 15)분"
-            : "\(concept.title), 준비 중, 현재 학습할 수 없음")
+            : "\(concept.title), 현재 학습할 수 없음")
         .accessibilityHint("개념 강의 화면을 엽니다")
     }
 
@@ -969,66 +965,6 @@ struct CurriculumV2MapScreen: View {
         } ?? course.allConcepts.first {
             store.progressV2.percent(for: $0) < 100
         }
-    }
-
-    /// 웹과 같은 ProgressV2 이어학습 우선순위에서 target 한 개만 고르고,
-    /// 그 한 개의 story만 resolve한다. 과목/개념 목록을 story 뷰로 확장하지 않는다.
-    private var topTimelinePreview: CurriculumStoryCompactPreviewModel {
-        guard let (course, unit, concept) = store.nextLearningConcept else {
-            let hasConcepts = courses.contains { !$0.allConcepts.isEmpty }
-            return CurriculumStoryCompactPreviewModel(
-                state: hasConcepts ? .completed : .empty,
-                openingQuestion: nil,
-                storyAvailable: false,
-                courseTitle: nil,
-                unitTitle: nil,
-                conceptID: nil,
-                conceptTitle: nil,
-                estimatedMinutes: nil,
-                progress: nil,
-                // 가리키는 곳이 실제로 있어야 한다. "아래" 는 이 카드 밑의 과목 지도이고,
-                // 거기 개념 행은 눌러서 바로 열린다. 없는 버튼을 가리키지 않는다.
-                message: hasConcepts
-                    ? "지금 배울 개념을 모두 마쳤습니다. 아래 과목 지도에서 개념을 골라 다시 볼 수 있습니다."
-                    : "아직 시작할 개념이 없습니다."
-            )
-        }
-
-        let resolution = CurriculumStoryCatalog.resolve(
-            courseID: course.id,
-            unitID: unit.id,
-            conceptID: concept.id
-        )
-        let progress = store.progressV2.percent(for: concept)
-        let state: CurriculumStoryCompactState
-        let message: String
-
-        if resolution.story != nil {
-            state = progress > 0 ? .current : .next
-            message = "이 버튼을 누르면 5분 해설과 연습 문제가 이어서 나옵니다."
-        } else {
-            switch resolution.availability {
-            case .draft, .invalid:
-                state = .locked
-                message = "5분 해설을 검수하고 있습니다. 개념 학습은 바로 시작할 수 있습니다."
-            case .missing, .unavailable, .published:
-                state = .empty
-                message = "5분 해설 미리보기가 아직 없습니다. 개념 학습은 바로 시작할 수 있습니다."
-            }
-        }
-
-        return CurriculumStoryCompactPreviewModel(
-            state: state,
-            openingQuestion: resolution.story?.openingQuestion,
-            storyAvailable: resolution.story != nil,
-            courseTitle: course.title,
-            unitTitle: unit.title,
-            conceptID: concept.id,
-            conceptTitle: concept.title,
-            estimatedMinutes: concept.lesson?.estimatedMinutes ?? 15,
-            progress: progress,
-            message: message
-        )
     }
 
     private func categoryTitle(_ id: String) -> String {

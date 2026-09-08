@@ -20,12 +20,12 @@ extension ServerAPI {
         var account: GoatArenaPaybackAccount
     }
 
-    static func getGoatArenaPaybackAccount() async throws -> GoatArenaPaybackAccountStatus {
+    static func getGoatArenaPaybackAccount(authorization: AuthorizationSnapshot) async throws -> GoatArenaPaybackAccountStatus {
         let response: GoatArenaPaybackAccountStatus = try await request(
             "GET",
             "/api/v1/goat-arena/profile/payback-account",
             body: nil,
-            authed: true)
+            authed: true, authorization: authorization)
         guard response.schemaVersion == "GOAT_ARENA_PAYBACK_ACCOUNT_V1" else {
             throw ServerAPIError(
                 message: "현재 앱에서 읽을 수 없는 계좌 연결 정보입니다. 앱을 업데이트해주세요.",
@@ -38,7 +38,8 @@ extension ServerAPI {
         bankName: String,
         accountHolderName: String,
         accountNumber: String,
-        commandId: String
+        commandId: String,
+        authorization: AuthorizationSnapshot
     ) async throws -> GoatArenaPaybackAccount {
         let response: GoatArenaPaybackAccountConfirmation = try await request(
             "POST",
@@ -53,7 +54,7 @@ extension ServerAPI {
             headers: [
                 "Idempotency-Key": commandId,
                 "X-Matths-Client-Version": clientBuildVersion,
-            ])
+            ], authorization: authorization)
         guard response.schemaVersion == "GOAT_ARENA_PAYBACK_ACCOUNT_V1" else {
             throw ServerAPIError(
                 message: "계좌 저장 결과를 확인할 수 없습니다. 새로고침 후 확인해주세요.",
@@ -63,11 +64,22 @@ extension ServerAPI {
     }
 }
 
+/// The confirmation dialog and its eventual request use the same immutable
+/// values and mounted account, even if fields or authentication change meanwhile.
+struct GoatArenaPaybackAccountSubmission {
+    let owner: AccountRequestOwner
+    let bankName: String
+    let accountHolderName: String
+    let accountNumber: String
+    let commandID: String
+}
+
 /// 페이백 지급 계좌를 앱 안에서 확인·교체한다.
 ///
 /// 계좌 원문과 예금주는 이 화면의 메모리에만 두며 UserDefaults·Keychain·진단 로그에
 /// 저장하지 않는다. 서버도 저장 뒤에는 은행명과 끝 4자리만 돌려준다.
 struct GoatArenaPaybackAccountSheet: View {
+    @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -83,6 +95,10 @@ struct GoatArenaPaybackAccountSheet: View {
     @State private var showsFinalConfirmation = false
     @State private var accountSlot = DataScope.slot
     @State private var lifecycleID = UUID()
+    @State private var isActive = true
+    @State private var mountedOwner: AccountRequestOwner?
+    @State private var confirmation: GoatArenaPaybackAccountSubmission?
+    @State private var loadRequestID: UUID?
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable { case bank, holder, number }
@@ -119,6 +135,7 @@ struct GoatArenaPaybackAccountSheet: View {
                     }
                 } trailing: {
                     form
+                        .disabled(isSaving)
                 }
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -138,7 +155,8 @@ struct GoatArenaPaybackAccountSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        Task { await load() }
+                        guard let owner = mountedOwner, accepts(owner) else { return }
+                        Task { await load(owner: owner) }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -146,12 +164,29 @@ struct GoatArenaPaybackAccountSheet: View {
                     .accessibilityLabel("페이백 계좌 상태 새로고침")
                 }
             }
-            .task { await load() }
+            .task {
+                guard accountSlot == DataScope.slot, isActive else { return }
+                if mountedOwner == nil { mountedOwner = AccountRequestOwner(store: store) }
+                guard let owner = mountedOwner, accepts(owner) else {
+                    isLoading = false
+                    errorMessage = "로그인 상태를 확인한 뒤 계좌 화면을 다시 열어주세요."
+                    return
+                }
+                await load(owner: owner)
+            }
             .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) {
                 guard let nextSlot = $0.object as? String, nextSlot != accountSlot else { return }
                 lifecycleID = UUID()
+                isActive = false; mountedOwner = nil; confirmation = nil
+                loadRequestID = nil; status = nil
                 clearSensitiveDraft()
                 dismiss()
+            }
+            .onChange(of: mountedOwner?.isCurrent(in: store) ?? true) { _, current in
+                guard !current else { return }
+                lifecycleID = UUID(); isActive = false; mountedOwner = nil
+                confirmation = nil; loadRequestID = nil; status = nil
+                clearSensitiveDraft(); dismiss()
             }
             .confirmationDialog(
                 "입력한 계좌로 페이백을 받을까요?",
@@ -159,14 +194,19 @@ struct GoatArenaPaybackAccountSheet: View {
                 titleVisibility: .visible
             ) {
                 Button("확인하고 암호화 저장") {
-                    Task { await save() }
+                    guard let submission = confirmation, accepts(submission.owner) else { return }
+                    Task { await save(submission) }
                 }
                 Button("다시 확인", role: .cancel) {}
             } message: {
-                Text("\(cleanBankName) · \(cleanHolderName) · \(cleanAccountNumber)\n예금주와 계좌번호가 정확한지 마지막으로 확인해주세요.")
+                if let submission = confirmation {
+                    Text("\(submission.bankName) · \(submission.accountHolderName) · \(submission.accountNumber)\n예금주와 계좌번호가 정확한지 마지막으로 확인해주세요.")
+                }
             }
             .onDisappear {
                 lifecycleID = UUID()
+                isActive = false; mountedOwner = nil; confirmation = nil
+                loadRequestID = nil; status = nil
                 clearSensitiveDraft()
             }
         }
@@ -359,42 +399,42 @@ struct GoatArenaPaybackAccountSheet: View {
     }
 
     @MainActor
-    private func load() async {
-        let owner = lifecycleID
+    private func load(owner: AccountRequestOwner) async {
+        guard accepts(owner), !isSaving else { return }
+        let lifecycle = lifecycleID
+        let request = UUID(); loadRequestID = request
         isLoading = true
         errorMessage = nil
-        defer { if owner == lifecycleID { isLoading = false } }
+        defer { if lifecycle == lifecycleID, loadRequestID == request { isLoading = false; loadRequestID = nil } }
         do {
-            let value = try await ServerAPI.getGoatArenaPaybackAccount()
-            guard owner == lifecycleID else { return }
+            let value = try await ServerAPI.getGoatArenaPaybackAccount(authorization: owner.authorization)
+            guard accepts(owner), lifecycle == lifecycleID, loadRequestID == request else { return }
             status = value
         } catch {
-            guard owner == lifecycleID else { return }
+            guard accepts(owner), lifecycle == lifecycleID, loadRequestID == request else { return }
             errorMessage = displayMessage(error)
         }
     }
 
     @MainActor
-    private func save() async {
-        guard hasValidDraft else {
-            reviewDraft()
-            return
-        }
-        let owner = lifecycleID
-        let submittedBank = cleanBankName
-        let submittedHolder = cleanHolderName
-        let submittedNumber = cleanAccountNumber
+    private func save(_ submission: GoatArenaPaybackAccountSubmission) async {
+        guard accepts(submission.owner), !isSaving else { return }
+        let lifecycle = lifecycleID
+        let submittedBank = submission.bankName
+        let submittedHolder = submission.accountHolderName
+        let submittedNumber = submission.accountNumber
         isSaving = true
+        loadRequestID = nil; isLoading = false
         errorMessage = nil
         successMessage = nil
-        defer { if owner == lifecycleID { isSaving = false } }
+        defer { if lifecycle == lifecycleID { isSaving = false } }
         do {
             let account = try await ServerAPI.confirmGoatArenaPaybackAccount(
                 bankName: submittedBank,
                 accountHolderName: submittedHolder,
                 accountNumber: submittedNumber,
-                commandId: UUID().uuidString)
-            guard owner == lifecycleID else { return }
+                commandId: submission.commandID, authorization: submission.owner.authorization)
+            guard accepts(submission.owner), lifecycle == lifecycleID else { return }
             if var current = status {
                 current.account = account
                 status = current
@@ -406,9 +446,10 @@ struct GoatArenaPaybackAccountSheet: View {
                     bankSuggestions: [])
             }
             clearSensitiveDraft()
+            confirmation = nil
             successMessage = "계좌 확인이 완료되었습니다. 이후 화면에는 끝 4자리만 표시됩니다."
         } catch {
-            guard owner == lifecycleID else { return }
+            guard accepts(submission.owner), lifecycle == lifecycleID else { return }
             errorMessage = displayMessage(error)
         }
     }
@@ -422,6 +463,10 @@ struct GoatArenaPaybackAccountSheet: View {
     }
 
     private func reviewDraft() {
+        guard let owner = mountedOwner, accepts(owner), !isSaving else {
+            errorMessage = "로그인 상태가 바뀌었습니다. 계좌 화면을 다시 열어주세요."
+            return
+        }
         successMessage = nil
         if cleanBankName.isEmpty {
             errorMessage = "은행을 입력하거나 목록에서 선택해주세요."
@@ -440,6 +485,14 @@ struct GoatArenaPaybackAccountSheet: View {
         }
         errorMessage = nil
         focusedField = nil
+        // A failed response may be retried with exactly the same command, but
+        // editing any field creates a new explicit confirmation.
+        if confirmation?.owner.id != owner.id || confirmation?.bankName != cleanBankName
+            || confirmation?.accountHolderName != cleanHolderName || confirmation?.accountNumber != cleanAccountNumber {
+            confirmation = GoatArenaPaybackAccountSubmission(
+                owner: owner, bankName: cleanBankName, accountHolderName: cleanHolderName,
+                accountNumber: cleanAccountNumber, commandID: UUID().uuidString)
+        }
         showsFinalConfirmation = true
     }
 
@@ -448,5 +501,9 @@ struct GoatArenaPaybackAccountSheet: View {
             return api.errorDescription ?? "계좌 연결 요청을 확인해주세요."
         }
         return "네트워크 연결을 확인한 뒤 다시 시도해주세요."
+    }
+
+    private func accepts(_ owner: AccountRequestOwner) -> Bool {
+        isActive && mountedOwner?.id == owner.id && owner.isCurrent(in: store)
     }
 }

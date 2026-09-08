@@ -6,7 +6,7 @@ import Foundation
     static var directory: URL { URL(fileURLWithPath: "/unused-tutorial-test/" + slot) }
 }
 enum NativeTutorialRun { case dashboard, arena(String) }
-struct NativeTutorialStep { var route: AppStore.Route }
+struct NativeTutorialStep { var route: AppStore.Route; var target:TutorialTargetID }
 struct TutorialStatus { var status = "PENDING"; var shouldAutoStart: Bool { status == "PENDING" } }
 struct ArenaStatus {
     var suspended = false
@@ -29,7 +29,22 @@ enum SpiceLevel {case mild, spicy
 }
 struct Coach {var level:SpiceLevel = .mild}
 struct Animation {static func easeOut(duration:Double)->Self{.init()}}
-func withAnimation(_ animation:Animation?,_ body:()->Void){body()}
+enum AnimationCompletionCriteria {case logicallyComplete}
+@MainActor enum AnimationHarness {
+    static var afterBody:(()->Void)?
+    static var droppedCompletions=0
+    static func reset(){afterBody=nil;droppedCompletions=0}
+}
+@MainActor func withAnimation(_ animation:Animation?,_ body:()->Void){
+    body();AnimationHarness.afterBody?()
+}
+@MainActor func withAnimation(_ animation:Animation?,completionCriteria:AnimationCompletionCriteria,
+                             _ body:()->Void,completion:@escaping ()->Void){
+    body();AnimationHarness.afterBody?()
+    // Reproduce SwiftUI retiring a route animation without delivering completion.
+    // A reintroduced callback-based correctness barrier must fail this harness.
+    AnimationHarness.droppedCompletions += 1
+}
 @MainActor final class AppStore: TutorialLeaseStore {
     struct AccountSessionBoundary: Equatable { var slot: String; var generation: Int }
     enum Route { case home, rank, arenaShop, academy, curriculum, wrongNotes, assess }
@@ -102,8 +117,92 @@ func withAnimation(_ animation:Animation?,_ body:()->Void){body()}
     }
     @MainActor static func main()async {
         var count=0
-        func fixture()->(AppStore,TutorialHarness){ServerAPI.reset();let store=AppStore();return(store,TutorialHarness(store))}
+        func fixture()->(AppStore,TutorialHarness){
+            ServerAPI.reset();AnimationHarness.reset()
+            if let current=TutorialFocusRequestCenter.current {TutorialFocusRequestCenter.cancel(ownerID:current.ownerID)}
+            let store=AppStore();return(store,TutorialHarness(store))
+        }
         func assertB(_ store:AppStore){precondition(store.accepted==0);precondition(store.isTutorialPresentationActive);precondition(store.requestedDashboardTutorial);precondition(store.requestedArenaTutorialChapter=="ranked_shop")}
+        for motion in [false,true] {
+            let(store,flow)=fixture();flow.begin(.arena("unranked"));flow.reduceMotion = !motion;store.motionOn=motion
+            await flow.settleCurrent(on:.rank)
+            guard flow.spotlightVisible else {print("FAIL: missing animation completion left actual settle inactive");exit(1)}
+            precondition(store.route == .rank && flow.visible)
+            precondition(TutorialFocusRequestCenter.current?.ownerID == flow.ownerID)
+            precondition(TutorialFocusRequestCenter.current?.target == .arenaMatchmaking)
+            precondition(TutorialFocusRequestCenter.current?.animated == motion)
+            count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.arena("unranked"));store.route = .rank
+            await flow.settleCurrent(on:.rank)
+            precondition(flow.spotlightVisible && TutorialFocusRequestCenter.current?.target == .arenaMatchmaking)
+            count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.arena("unranked"));let replacement=UUID()
+            AnimationHarness.afterBody={store.claimNativeTutorialPresentation(replacement)}
+            await flow.settleCurrent(on:.rank)
+            precondition(!flow.spotlightVisible && TutorialFocusRequestCenter.current == nil)
+            precondition(store.nativeTutorialPresentationOwner == replacement && store.isTutorialPresentationActive)
+            count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.arena("unranked"))
+            AnimationHarness.afterBody={store.switchToB()}
+            await flow.settleCurrent(on:.rank)
+            precondition(!flow.spotlightVisible && TutorialFocusRequestCenter.current == nil)
+            assertB(store);count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.arena("unranked"))
+            AnimationHarness.afterBody={store.route = .home}
+            await flow.settleCurrent(on:.rank)
+            precondition(!flow.spotlightVisible && TutorialFocusRequestCenter.current == nil)
+            precondition(store.route == .home);count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.arena("unranked"))
+            AnimationHarness.afterBody={store.serverProfile?.role="admin"}
+            await flow.settleCurrent(on:.rank)
+            precondition(!flow.spotlightVisible && TutorialFocusRequestCenter.current == nil);count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.arena("unranked"));let id=flow.ownerID
+            let cancelledRender = Task { @MainActor in
+                precondition(Task.isCancelled)
+                guard flow.visible else { print("FAIL: cancelled SwiftUI task hid a valid native tutorial lease"); exit(1) }
+                await flow.start()
+                precondition(flow.visible && flow.ownerID == id)
+            }
+            cancelledRender.cancel();await cancelledRender.value
+            precondition(store.nativeTutorialPresentationOwner == id && store.isTutorialPresentationActive)
+            precondition(ServerAPI.calls.isEmpty);count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.dashboard);let replacement=UUID()
+            store.claimNativeTutorialPresentation(replacement)
+            let cancelledRender = Task { @MainActor in
+                precondition(Task.isCancelled && !flow.visible);await flow.start()
+            }
+            cancelledRender.cancel();await cancelledRender.value
+            await flow.start()
+            precondition(!flow.visible && flow.run == nil)
+            precondition(store.nativeTutorialPresentationOwner == replacement && store.isTutorialPresentationActive)
+            count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.dashboard);let mutation=flow.save()
+            mutation?.cancel();await mutation?.value
+            precondition(ServerAPI.calls.isEmpty && store.accepted == 0);count += 1
+        }
+        do {
+            let(store,flow)=fixture();flow.begin(.dashboard);ServerAPI.holdAt="dashboard:COMPLETE"
+            let mutation=flow.save();await until{ServerAPI.continuation != nil}
+            mutation?.cancel();ServerAPI.release();await mutation?.value
+            precondition(ServerAPI.calls.map(\.operation) == ["dashboard:COMPLETE"] && store.accepted == 0)
+            count += 1
+        }
         do {
             let(store,flow)=fixture();flow.begin(.dashboard);let task=flow.save();store.switchToB()
             precondition(!flow.visible);await task?.value

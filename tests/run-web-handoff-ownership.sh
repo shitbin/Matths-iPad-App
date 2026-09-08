@@ -3,7 +3,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/matths-web-owner.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT
-xcrun swiftc -swift-version 6 "$ROOT/Matths/WebHandoffOwnership.swift" \
+xcrun swiftc -swift-version 6 "$ROOT/Matths/MatthsServiceURLPolicy.swift" "$ROOT/Matths/WebHandoffOwnership.swift" \
   "$ROOT/tests/WebHandoffOwnershipCases.swift" -o "$TEST_DIR/cases"
 "$TEST_DIR/cases"
 for model in "$ROOT/Matths/CommunityScreen.swift" "$ROOT/Matths/ArenaWeb/ArenaWebModel.swift"; do

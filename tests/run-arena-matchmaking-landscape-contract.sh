@@ -21,12 +21,15 @@ node "$root/tests/verify-adaptive-presentation.mjs"
 grep -Fq 'heroButton("로그인하기")' "$arena"
 grep -Fq 'heroButton("다시 시도")' "$arena"
 
-# 방어자 MATCHED 기록만 남고 응답 가능한 초대가 함께 오지 않은 상태도 내부 구현
-# 문구로 막지 않는다. 좁은 가로와 iPad 상세 양쪽에서 같은 화면의 재확인 동선을 둔다.
-grep -Fq 'needsDefenderResponseRefresh(snapshot)' "$arena"
-grep -Fq 'defenderResponseRefreshButton' "$arena"
-grep -Fq '"최신 경기 상태 다시 확인"' "$arena"
-grep -Fq '수락 또는 거절 버튼이 보이지 않으면 최신 경기 상태를 다시 확인하세요.' "$arena"
+# Matched games and unanswered invitations are different server resources.
+# A ready defender opens their lobby; refresh remains the small header control.
+grep -Fq 'canPlay(match) || canInspectMatchedGame(match)' "$arena"
+grep -Fq 'ArenaMatchEntryPolicy.canInspectReadyMatch' "$arena"
+grep -Fq '방어전을 열어 경기 조건을 확인하세요.' "$arena"
+if grep -Fq 'defenderResponseRefreshButton' "$arena"; then
+  echo 'Refresh must not replace the main battle action.' >&2
+  exit 1
+fi
 if grep -Fq '저장된 과거 화면에서는 응답 버튼이 열리지 않습니다.' "$arena"; then
   echo 'GOAT Arena 방어자 복구 상태에 내부 저장 구현 문구가 남아 있습니다.' >&2
   exit 1

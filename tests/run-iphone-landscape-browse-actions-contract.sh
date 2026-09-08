@@ -66,7 +66,9 @@ grep -q 'private var compactTutorSetupCopy' "$CHAT"
 
 # 오래된 딥링크나 동기화 경합으로 응시가 사라져도 막다른 빈 상태에 가두지 않는다.
 grep -q '다른 기기에서 종료됐거나 저장된 응시 정보가 갱신됐을 수 있습니다' "$PAPER"
-grep -q 'Button("평가센터로 돌아가기")' "$PAPER"
+grep -q 'Button(returnLabel, action: closePaper)' "$PAPER"
+grep -q '"과목 학습으로 돌아가기" : "평가센터로 돌아가기"' "$PAPER"
+grep -q 'store.ownsCurrentAccountSession(account)' "$PAPER"
 grep -q '.onChange(of: hasActiveAttempt)' "$PAPER"
 grep -q 'else if store.currentAttempt?.submittedAt != nil' "$PAPER"
 grep -q '.alert("아직 답하지 않은 문항이 있습니다. 제출할까요?"' "$PAPER"

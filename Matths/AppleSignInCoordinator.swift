@@ -44,12 +44,14 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
     /// 진행 중인 요청. 화면을 벗어나면 끊는다.
     private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
     private var controller: ASAuthorizationController?
-    /// 이번 요청에 쓴 원본 nonce. 서버가 identityToken 안의 해시와 대조한다.
-    private var currentNonce: String?
+    private var credentialRequestID: UUID?
+    private var credentialDiagnosticAttemptID: UUID?
 
     // MARK: 진입점
 
     func signIn() async throws -> AuthResponse {
+        try Task.checkCancellation()
+        let diagnosticAttemptID = AuthFlowDiagnostics.currentAttemptID
         #if DEBUG
         // 데모 모드는 서버도 애플 시트도 없이 UI 만 본다. 실제 시트를 띄우면
         // 계정 없는 시뮬레이터에서 그냥 실패한다.
@@ -65,6 +67,7 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
         // 서버가 애플 로그인을 켜 뒀는지 먼저 묻는다. Google 과 같은 사전 게이트다 —
         // 서버 준비가 안 된 상태에서 애플 시트를 띄우면 학생이 인증을 마친 **뒤에**
         // 교환에서 실패한다. 그 순서는 "애플 계정에 뭔가 문제가 있다" 로 오해된다.
+        AuthFlowDiagnostics.record("provider_lookup", attemptID: diagnosticAttemptID)
         let providers = try await ServerAPI.socialAuthProviders()
         guard providers.contains(where: { $0.key == "apple" && $0.configured }) else {
             throw ServerAPIError(
@@ -76,11 +79,11 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
         try Task.checkCancellation()
 
         let rawNonce = Self.makeNonce()
-        currentNonce = rawNonce
 
         let credential = try await requestCredential(
             nonceHash: Self.sha256(rawNonce),
-            requestedScopes: [.fullName, .email])
+            requestedScopes: [.fullName, .email], diagnosticAttemptID: diagnosticAttemptID)
+        try Task.checkCancellation()
 
         guard let tokenData = credential.identityToken,
               let identityToken = String(data: tokenData, encoding: .utf8),
@@ -94,12 +97,15 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
         let authorizationCode = credential.authorizationCode
             .flatMap { String(data: $0, encoding: .utf8) }
 
-        return try await ServerAPI.exchangeAppleIdentity(
+        AuthFlowDiagnostics.record("exchange_started", attemptID: diagnosticAttemptID)
+        let response = try await ServerAPI.exchangeAppleIdentity(
             identityToken: identityToken,
             authorizationCode: authorizationCode,
             nonce: rawNonce,
             fullName: Self.displayName(from: credential.fullName),
             email: credential.email)
+        AuthFlowDiagnostics.record("exchange_succeeded", attemptID: diagnosticAttemptID)
+        return response
     }
 
     /// 탈퇴 직전 본인 확인. 새 Apple 시스템 시트가 발급한 토큰만 서버에 보내며,
@@ -107,10 +113,10 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
     func reauthenticateForAccountDeletion()
     async throws -> ServerAPI.AppleWithdrawalReauthentication {
         let rawNonce = Self.makeNonce()
-        currentNonce = rawNonce
         let credential = try await requestCredential(
             nonceHash: Self.sha256(rawNonce),
             requestedScopes: [])
+        try Task.checkCancellation()
         guard let tokenData = credential.identityToken,
               let identityToken = String(data: tokenData, encoding: .utf8),
               !identityToken.isEmpty else {
@@ -125,44 +131,68 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
 
     /// 화면 이탈·재시도. 진행 중이던 시트를 끊고 대기를 풀어 준다.
     func cancel() {
-        controller = nil
-        currentNonce = nil
-        guard let continuation else { return }
-        self.continuation = nil
-        continuation.resume(throwing: ASAuthorizationError(.canceled))
+        guard let requestID = credentialRequestID else { return }
+        cancelCredential(requestID)
     }
 
     // MARK: 애플 시트
 
     private func requestCredential(
         nonceHash: String,
-        requestedScopes: [ASAuthorization.Scope]
+        requestedScopes: [ASAuthorization.Scope],
+        diagnosticAttemptID: UUID? = nil
     ) async throws -> ASAuthorizationAppleIDCredential {
+        try Task.checkCancellation()
         // 앞 요청이 살아 있으면 먼저 끊는다. 두 시트가 겹치면 어느 쪽 결과인지
         // 알 수 없고, 늦게 온 쪽이 새 로그인을 덮는다.
         cancel()
-
-        let request = ASAuthorizationAppleIDProvider().createRequest()
-        // 이름·이메일은 최초 1회만 온다(파일 머리 참조). 그래도 매번 요청해야
-        // 첫 승인 때 사용자에게 선택지가 뜬다.
-        request.requestedScopes = requestedScopes
-        request.nonce = nonceHash
-
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            let controller = ASAuthorizationController(authorizationRequests: [request])
-            controller.delegate = self
-            controller.presentationContextProvider = self
-            self.controller = controller
-            controller.performRequests()
+        let requestID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                let request = ASAuthorizationAppleIDProvider().createRequest()
+                request.requestedScopes = requestedScopes
+                request.nonce = nonceHash
+                self.credentialRequestID = requestID
+                self.credentialDiagnosticAttemptID = diagnosticAttemptID
+                self.continuation = continuation
+                let controller = ASAuthorizationController(authorizationRequests: [request])
+                controller.delegate = self
+                controller.presentationContextProvider = self
+                self.controller = controller
+                AuthFlowDiagnostics.record("credential_requested", attemptID: diagnosticAttemptID)
+                controller.performRequests()
+            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in self?.cancelCredential(requestID) }
         }
     }
 
-    private func finish(_ result: Result<ASAuthorizationAppleIDCredential, Error>) {
-        controller = nil
-        guard let continuation else { return }
+    private func finish(_ result: Result<ASAuthorizationAppleIDCredential, Error>, for completedController: ASAuthorizationController) {
+        guard controller === completedController, let continuation else { return }
+        if case .success = result { AuthFlowDiagnostics.record("callback_received", attemptID: credentialDiagnosticAttemptID) }
+        credentialDiagnosticAttemptID = nil
         self.continuation = nil
+        credentialRequestID = nil
+        controller = nil
         continuation.resume(with: result)
+    }
+
+    private func cancelCredential(_ requestID: UUID) {
+        guard credentialRequestID == requestID else { return }
+        let previousController = controller
+        let continuation = self.continuation
+        // ASAuthorizationController is retained by the system until completion;
+        // dropping our reference alone does not cancel its native UI or request.
+        credentialRequestID = nil
+        self.continuation = nil
+        controller = nil
+        credentialDiagnosticAttemptID = nil
+        previousController?.cancel() // iOS 16+, below the app's iOS 17 minimum.
+        continuation?.resume(throwing: ASAuthorizationError(.canceled))
     }
 
     // MARK: nonce
@@ -209,10 +239,10 @@ extension AppleSignInCoordinator: ASAuthorizationControllerDelegate {
             guard let credential else {
                 finish(.failure(ServerAPIError(
                     message: "Apple 로그인 정보를 받지 못했습니다.",
-                    code: "APPLE_AUTH_CREDENTIAL_INVALID")))
+                    code: "APPLE_AUTH_CREDENTIAL_INVALID")), for: controller)
                 return
             }
-            finish(.success(credential))
+            finish(.success(credential), for: controller)
         }
     }
 
@@ -220,7 +250,7 @@ extension AppleSignInCoordinator: ASAuthorizationControllerDelegate {
         controller: ASAuthorizationController,
         didCompleteWithError error: Error
     ) {
-        Task { @MainActor in finish(.failure(error)) }
+        Task { @MainActor in finish(.failure(error), for: controller) }
     }
 }
 

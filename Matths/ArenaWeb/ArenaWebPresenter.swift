@@ -131,13 +131,8 @@ enum ArenaWebDeepLink {
             return ArenaWebDestination.parse(path.isEmpty ? "home" : path)
         }
         // https://<서버>/goat-arena/... — 서버가 준 아레나 주소만 받는다.
-        guard let scheme = url.scheme?.lowercased(), scheme == "https",
-              let host = url.host?.lowercased(),
-              let base = ServerAPI.baseURL.host?.lowercased() else { return nil }
-        func strip(_ value: String) -> String {
-            value.hasPrefix("www.") ? String(value.dropFirst(4)) : value
-        }
-        guard strip(host) == strip(base), ArenaWebDestination.owns(path: url.path) else { return nil }
+        guard MatthsServiceURLPolicy.isTrustedNavigationURL(url, base: ServerAPI.baseURL),
+              ArenaWebDestination.owns(path: url.path) else { return nil }
         let full = url.query.map { "\(url.path)?\($0)" } ?? url.path
         // 경기 주소는 보호 대상이라 목적지 종류를 정확히 알아야 한다.
         let parts = url.path.split(separator: "/").map(String.init)

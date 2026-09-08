@@ -56,20 +56,20 @@ enum HostedWebCookieReset {
         await beginReset(host: host).value
     }
     static func beginReset(host: String) -> Task<Void, Never> {
-        if let running = flights[host] { return running.task }
+        let key = MatthsServiceURLPolicy.cookieResetKey(for: host)
+        if let running = flights[key] { return running.task }
         let id = UUID()
         let task = Task { @MainActor in
             let store = WKWebsiteDataStore.default().httpCookieStore
             let cookies = await store.allCookies()
             for cookie in cookies {
-                let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-                if host == domain || host.hasSuffix("." + domain) || domain.hasSuffix("." + host) {
+                if MatthsServiceURLPolicy.ownsCookie(domain: cookie.domain, baseHost: host) {
                     await store.deleteCookie(cookie)
                 }
             }
-            if flights[host]?.id == id { flights[host] = nil }
+            if flights[key]?.id == id { flights[key] = nil }
         }
-        flights[host] = (id, task)
+        flights[key] = (id, task)
         return task
     }
 }

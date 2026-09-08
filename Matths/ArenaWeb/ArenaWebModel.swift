@@ -546,13 +546,7 @@ final class ArenaWebModel: NSObject, ObservableObject {
     }
 
     private func isServerHost(_ url: URL) -> Bool {
-        guard let host = url.host?.lowercased(), let base = serverBase.host?.lowercased() else {
-            return false
-        }
-        func strip(_ value: String) -> String {
-            value.hasPrefix("www.") ? String(value.dropFirst(4)) : value
-        }
-        return strip(host) == strip(base)
+        MatthsServiceURLPolicy.isTrustedNavigationURL(url, base: serverBase)
     }
 
     /// 웹뷰가 아레나를 벗어나 앱이 이미 갖고 있는 화면(학습 홈·대시보드)으로 가려는 링크.
@@ -608,8 +602,7 @@ final class ArenaWebModel: NSObject, ObservableObject {
 
     private func isServerCookie(_ cookie: HTTPCookie) -> Bool {
         guard let base = serverBase.host?.lowercased() else { return false }
-        let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        return base == domain || base.hasSuffix("." + domain) || domain.hasSuffix("." + base)
+        return MatthsServiceURLPolicy.ownsCookie(domain: cookie.domain, baseHost: base)
     }
 
     fileprivate func readableMessage(for error: Error) -> String {
@@ -649,6 +642,12 @@ extension ArenaWebModel: WKNavigationDelegate {
             return
         }
 
+        if MatthsServiceURLPolicy.isUnsafeServiceURL(url, base: serverBase) {
+            decisionHandler(.cancel)
+            loadFailure = LoadFailure(message: "안전하지 않은 서비스 주소로 이동하지 않았습니다.", url: nil)
+            return
+        }
+
         // 1) 핸드오프 뒤 서버가 보내는 /pricing — 여기서 딱 한 번 방향을 튼다.
         //    쿠키는 303 응답과 함께 이미 심겼다. 결제 페이지는 보여 주지 않는다.
         if handingOff, isServerHost(url), url.path == "/pricing" {
@@ -663,7 +662,8 @@ extension ArenaWebModel: WKNavigationDelegate {
 
         // 서버가 발급한 일회용 핸드오프 URL은 쿠키를 심기 위해 딱 이 구간에만 허용한다.
         // 평상시 같은 경로로 이동하면 아래 결제 경계가 네이티브 구매 화면으로 보낸다.
-        if handingOff, isServerHost(url), url.path.hasPrefix("/app/commerce/") {
+        if handingOff, isServerHost(url), url.path.hasPrefix("/app/commerce/"),
+           validatedHandoffURL(url.absoluteString) != nil {
             decisionHandler(.allow)
             return
         }
@@ -673,6 +673,14 @@ extension ArenaWebModel: WKNavigationDelegate {
         if isServerHost(url), ServerAPI.isWebPurchaseSurface(url) {
             decisionHandler(.cancel)
             wantsNativeCommerce = true
+            return
+        }
+
+        // Parent accounts are a separate browser login. Never exchange the
+        // student's Bearer session into the parent portal when following a link.
+        if isServerHost(url), MatthsServiceURLPolicy.isParentAccountPath(url.path) {
+            decisionHandler(.cancel)
+            externalDestination = ExternalDestination(url: url)
             return
         }
 

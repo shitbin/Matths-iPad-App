@@ -90,6 +90,17 @@
       <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
     </dict>
     <dict>
+      <!-- 사용자가 앱의 페이백 계좌 화면에서 입력한 은행·예금주·계좌번호를
+           서버에 전송해 지급 계좌를 연결한다. App Store 결제수단 정보와는
+           별도 수집이며, Apple 분류에서 은행 계좌번호는 PaymentInfo다. -->
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePaymentInfo</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
+    <dict>
       <!-- 학교·학년(AuthScreen.swift:455 schoolGrade, 학교코드)과
            생년월일(AuthScreen.swift:319 birthDate → :571 birthDateString).
            애플의 표준 분류에 '학적'도 '생년월일'도 없어 기타로 함께 선언한다.

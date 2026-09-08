@@ -43,7 +43,7 @@ for (const contract of [
   "현재 학습",
   "학습 완료",
   "학습 가능",
-  "준비 중",
+  "이용 확인 필요",
   "권장 선수 과목",
   "권장 선수 개념",
   "평가 잠김",
@@ -53,6 +53,15 @@ for (const contract of [
 ]) {
   assert.ok(map.includes(contract), `커리큘럼 상태 projection 계약 누락: ${contract}`);
 }
+assert.match(map, /AssessCatalog\.course\(selectedCourse\.id\) != nil[\s\S]*CourseAssessmentSection\(courseID: selectedCourse\.id\)/,
+  "존재하는 단계 평가만 선택한 과목 상세에서 제공해야 합니다.");
+assert.ok(map.includes(".tutorialTarget(.courseConcepts, when: unit.id == course.units.first?.id)") && map.includes(".tutorialTarget(.courseAssessments)") && map.includes(".tutorialViewport()"),
+  "과목 개념/단계평가 튜토리얼은 실제 화면 앵커와 viewport를 사용해야 합니다.");
+const unitStart = map.indexOf("private func unitSection(");
+const unitRows = map.indexOf("ForEach(Array(unit.concepts.enumerated())", unitStart);
+assert.ok(unitStart >= 0 && unitRows > unitStart);
+assert.ok(map.slice(unitStart, unitRows).includes(".tutorialTarget(.courseConcepts, when:"),
+  "개념 튜토리얼은 거대한 목록 전체가 아닌 첫 실제 단원 헤더를 강조해야 합니다.");
 
 assert.ok(
   (map.match(/\.lineLimit\(nil\)/g) || []).length >= 6,

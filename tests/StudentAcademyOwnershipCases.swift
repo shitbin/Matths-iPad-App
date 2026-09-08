@@ -90,6 +90,32 @@ struct ServerAPIError: LocalizedError {
         let model = AcademyScreenModel()
         var owner = AccountRequestOwner(store: store)!
         await model.load(owner: owner, store: store)
+        precondition(model.selectedAcademyID.isEmpty, "loading a list must not silently choose an academy")
+        precondition(model.inviteRequestDisabledReason?.contains("초대 코드") == true)
+        precondition(model.academyRequestDisabledReason?.contains("선택") == true)
+        model.inviteCode = "MTH-ABC01D"
+        precondition(model.inviteRequestDisabledReason?.contains("6자리") == true, "ambiguous 0/1 cannot bypass invitation validation")
+        model.inviteCode = " mth-a2b3c4 "
+        precondition(model.inviteRequestDisabledReason?.contains("공유") == true, "valid code still requires consent")
+        model.selectedAcademyID = "academy"
+        precondition(model.academyRequestDisabledReason?.contains("공유") == true)
+        let beforeConsent = ServerAPI.sent.count
+        await model.requestSelectedAcademy(owner: owner, store: store)
+        await model.requestWithInviteCode(owner: owner, store: store)
+        precondition(ServerAPI.sent.count == beforeConsent, "disabled consent must also be enforced by the actual model")
+        model.consent = true
+        precondition(model.inviteRequestDisabledReason == nil && model.academyRequestDisabledReason == nil)
+        await model.requestWithInviteCode(owner: owner, store: store)
+        precondition(model.dashboard?.marker == "MTH-A2B3C4", "invite request uses the normalized code")
+        await model.requestSelectedAcademy(owner: owner, store: store)
+        precondition(model.dashboard?.marker == "academy")
+        model.selectedAcademyID = "removed-academy"
+        let beforeStaleSelection = ServerAPI.sent.count
+        await model.requestSelectedAcademy(owner: owner, store: store)
+        precondition(ServerAPI.sent.count == beforeStaleSelection, "unknown selection cannot be sent")
+        await model.load(owner: owner, store: store)
+        precondition(model.selectedAcademyID.isEmpty, "removed selection is cleared, not replaced by first academy")
+        model.inviteCode = ""; model.consent = false
         let baselineSends = ServerAPI.sent.count
         let obsolete = owner
         let queued = (0..<20).map { _ in Task { @MainActor in await model.leave(owner: obsolete, store: store) } }
@@ -166,6 +192,6 @@ struct ServerAPIError: LocalizedError {
         ServerAPI.pending.removeFirst().finish(.success(ServerAPI.AcademyWeekResponse(id: "retired")))
         await retired.value
         precondition(model.selectedWeek == nil && model.dashboard == nil)
-        print("Student academy actual model: 20 queued cross-account leaves, A→B→A, 403 purge vs 503 preservation, reversed reads, stale GET after mutation, late detail/download after close, 20 duplicate leaves and retired-screen callbacks passed")
+        print("Student academy actual model: explicit selection, invitation/consent reasons and request guards, removed selection, 20 queued cross-account leaves, A→B→A, 403 purge vs 503 preservation, reversed reads, stale GET after mutation, late detail/download after close, 20 duplicate leaves and retired-screen callbacks passed")
     }
 }

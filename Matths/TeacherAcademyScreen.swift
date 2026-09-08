@@ -45,6 +45,13 @@ final class TeacherAcademyScreenModel: ObservableObject {
     @Published var showsInviteComposer = false
     @Published var inviteLabel = "학생 초대"
     @Published var inviteClassID = ""
+    @Published var inviteExpiryDays = 14
+    @Published private(set) var inviteCreationSequence: UInt = 0
+    @Published var inviteMaxUsesText = "30"
+    var inviteMaxUses: Int {
+        get { Int(inviteMaxUsesText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 }
+        set { inviteMaxUsesText = String(newValue) }
+    }
     @Published var attendance: ServerAPI.TeacherAttendanceRoster?
     @Published var attendanceDateKey = TeacherAcademyScreenModel.kstDateKey(Date())
     @Published var attendanceClassID = ""
@@ -113,6 +120,8 @@ final class TeacherAcademyScreenModel: ObservableObject {
         showsInviteComposer = false
         inviteLabel = "학생 초대"
         inviteClassID = ""
+        inviteExpiryDays = 14
+        inviteMaxUses = 30
         errorMessage = nil
         noticeMessage = nil
         await load()
@@ -218,22 +227,41 @@ final class TeacherAcademyScreenModel: ObservableObject {
         }
     }
 
+    var inviteDraft: AcademyInviteDraft {
+        .init(label: inviteLabel, classID: inviteClassID, expiryDays: inviteExpiryDays, maxUses: inviteMaxUses)
+    }
+    var hasInviteDraftChanges: Bool { inviteDraft != AcademyInviteDraft() }
+    var canUseInvites: Bool { isMountedOwnerCurrent && dashboard != nil }
+
+    func openInviteComposer() {
+        guard isMountedOwnerCurrent, actionID == nil else { return }
+        errorMessage = nil
+        showsInviteComposer = true
+    }
+
+    func discardInviteDraft() {
+        guard actionID == nil else { return }
+        inviteLabel = "학생 초대"; inviteClassID = ""; inviteExpiryDays = 14; inviteMaxUses = 30
+        showsInviteComposer = false
+    }
+
     func createInvite() async {
-        let label = inviteLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty else {
-            errorMessage = "초대 이름을 입력해 주세요."
-            return
-        }
+        let draft = inviteDraft
+        if let message = draft.validationMessage { errorMessage = message; return }
         let saved = await perform(id: "new-invite", notice: "새 초대 코드를 만들었습니다.") { authorization in
             try await ServerAPI.createAcademyInvite(
-                label: label,
-                classID: inviteClassID.isEmpty ? nil : inviteClassID, authorization: authorization)
+                label: draft.normalizedLabel,
+                classID: draft.classID.isEmpty ? nil : draft.classID,
+                expiryDays: draft.expiryDays, maxUses: draft.maxUses, authorization: authorization)
         }
         if saved {
             inviteLabel = "학생 초대"
             inviteClassID = ""
+            inviteExpiryDays = 14
+            inviteMaxUses = 30
             showsInviteComposer = false
             section = .invites
+            inviteCreationSequence &+= 1
         }
     }
 
@@ -609,6 +637,9 @@ private struct AccountScopedTeacherAcademyScreen: View {
     @State private var removingStudent: ServerAPI.TeacherAcademyMembership?
     @State private var focusedStudentID: String?
     @State private var showsAcademyPhotoPicker = false
+    @State private var inviteFilter: AcademyInviteHistoryFilter = .all
+    @State private var revokingInvite: ServerAPI.TeacherAcademyInvite?
+    @State private var confirmsInviteDiscard = false
     @State private var visitedSections: Set<TeacherAcademyScreenModel.Section> = []
     @State private var lastSections: [TeacherWorkspaceArea: TeacherAcademyScreenModel.Section] = [:]
 
@@ -662,6 +693,7 @@ private struct AccountScopedTeacherAcademyScreen: View {
         .background(Tokens.paper)
         .onAppear { visitedSections.insert(model.section) }
         .onChange(of: model.section) { _, next in visitedSections.insert(next) }
+        .onChange(of: model.inviteCreationSequence) { _, _ in inviteFilter = .all }
         .onChange(of: model.dashboard?.isOwner) { _, isOwner in
             if isOwner == false { visitedSections.remove(.settings); lastSections.removeValue(forKey: .more) }
         }
@@ -675,11 +707,25 @@ private struct AccountScopedTeacherAcademyScreen: View {
             removingStudent = nil
             focusedStudentID = nil
             showsAcademyPhotoPicker = false
+            revokingInvite = nil
+            confirmsInviteDiscard = false
+            inviteFilter = .all
             Task { await model.resetAndLoad() }
         }
         .compactHeightSheet(isPresented: $model.showsInviteComposer) {
             inviteComposer
         }
+        .confirmationDialog("이 초대를 회수할까요?", isPresented: Binding(
+            get: { revokingInvite != nil }, set: { if !$0 { revokingInvite = nil } }),
+            titleVisibility: .visible, presenting: revokingInvite) { invite in
+                Button("초대 회수", role: .destructive) {
+                    revokingInvite = nil
+                    Task { await model.revoke(invite) }
+                }
+                Button("유지", role: .cancel) { revokingInvite = nil }
+            } message: { invite in
+                Text("\(invite.label)의 코드와 링크를 더 이상 사용할 수 없게 됩니다. 이미 연결된 학생은 해제되지 않습니다.")
+            }
         .compactHeightSheet(isPresented: $showsAcademyPhotoPicker) {
             ProfilePhotoCropPicker(
                 onCancel: { showsAcademyPhotoPicker = false },
@@ -1163,41 +1209,74 @@ private struct AccountScopedTeacherAcademyScreen: View {
 
     private func inviteList(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Button { model.showsInviteComposer = true } label: {
-                Label("새 초대 코드", systemImage: "plus")
+            Button { model.openInviteComposer() } label: {
+                Label("새 초대 만들기", systemImage: "plus")
             }
             .buttonStyle(PrimaryButtonStyle())
+            .disabled(model.actionID != nil || !model.canUseInvites)
+            HStack {
+                Text("최근 초대 \(dashboard.invites.count)개").font(.mCaption).foregroundStyle(Tokens.text2)
+                Spacer()
+                Picker("초대 이력", selection: $inviteFilter) {
+                    ForEach(AcademyInviteHistoryFilter.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.menu)
+            }
             listContainer {
-                let activeInvites = dashboard.invites.filter { $0.displayState == "ACTIVE" }
-                if activeInvites.isEmpty {
-                    emptyState("사용 가능한 초대가 없습니다", "새 코드를 만들어 학생에게 전달하세요.")
+                let invites = dashboard.invites.filter { inviteFilter.includes($0.displayState) }
+                if invites.isEmpty {
+                    emptyState("표시할 초대가 없습니다", inviteFilter == .all ? "새 초대를 만들어 학생에게 전달하세요." : "다른 이력 필터를 선택해 보세요.")
                 } else {
-                    ForEach(activeInvites) { invite in
-                        HStack(spacing: Tokens.Space.s3) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(invite.label).font(.mBodyB).foregroundStyle(Tokens.ink)
-                                Text(invite.code).font(.mCaption.monospaced()).foregroundStyle(Tokens.primary)
-                                Text("\(invite.useCount)/\(invite.maxUses)명 · \(invite.academyClass?.name ?? "반 미지정")")
-                                    .font(.mMicro).foregroundStyle(Tokens.text3)
-                            }
-                            Spacer(minLength: 0)
-                            ShareLink(item: "Matths 학원 초대 코드: \(invite.code)") {
-                                Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
-                            }
-                            .accessibilityLabel("\(invite.code) 공유")
-                            Button(role: .destructive) { Task { await model.revoke(invite) } } label: {
-                                Image(systemName: "trash").frame(width: 44, height: 44)
-                            }
-                            .accessibilityLabel("\(invite.label) 초대 회수")
-                            .disabled(model.actionID != nil)
-                        }
-                        .padding(Tokens.Space.s3)
-                        .background(Tokens.surface,
-                                    in: RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous))
-                    }
+                    ForEach(invites) { invite in inviteRow(invite) }
                 }
             }
+            .id("invite-history-\(model.inviteCreationSequence)")
         }
+    }
+
+    private func inviteRow(_ invite: ServerAPI.TeacherAcademyInvite) -> some View {
+        let url = AcademyInvitePresentation.link(token: invite.token, base: ServerAPI.baseURL)
+        let shareText = ["Matths 학원 초대: \(invite.label)", url?.absoluteString, "초대 코드: \(invite.code)"]
+            .compactMap { $0 }.joined(separator: "\n")
+        return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            HStack(alignment: .top) {
+                Text(invite.label).font(.mBodyB).foregroundStyle(Tokens.ink)
+                Spacer(minLength: Tokens.Space.s2)
+                Text(AcademyInvitePresentation.stateLabel(invite.displayState))
+                    .font(.mMicro).foregroundStyle(invite.displayState == "ACTIVE" ? Tokens.successInk : Tokens.text2)
+            }
+            Text(invite.code).font(.mBodyB.monospaced()).foregroundStyle(Tokens.primary).textSelection(.enabled)
+            Text("\(invite.useCount)/\(invite.maxUses)회 사용 · \(invite.academyClass?.name ?? "반 미지정")")
+                .font(.mCaption).foregroundStyle(Tokens.text2)
+            Text(AcademyInvitePresentation.expirationLabel(invite.expiresAt))
+                .font(.mMicro).foregroundStyle(Tokens.text3)
+            if url == nil {
+                Text("링크 정보가 없어 코드로 초대할 수 있습니다.").font(.mMicro).foregroundStyle(Tokens.text2)
+            }
+            HStack(spacing: Tokens.Space.s2) {
+                Menu {
+                    Button("코드 복사") {
+                        guard model.canUseInvites else { return }
+                        UIPasteboard.general.string = invite.code
+                        model.noticeMessage = "초대 코드를 복사했습니다."
+                    }
+                    if let url {
+                        Button("링크 복사") {
+                            guard model.canUseInvites else { return }
+                            UIPasteboard.general.string = url.absoluteString
+                            model.noticeMessage = "초대 링크를 복사했습니다."
+                        }
+                    }
+                } label: { Label("복사", systemImage: "doc.on.doc").frame(minHeight: 44) }
+                ShareLink(item: shareText) { Label("공유", systemImage: "square.and.arrow.up").frame(minHeight: 44) }
+                Spacer(minLength: 0)
+                if invite.displayState == "ACTIVE" {
+                    Button("회수", role: .destructive) { revokingInvite = invite }
+                        .frame(minHeight: 44).disabled(model.actionID != nil)
+                }
+            }.disabled(!model.canUseInvites)
+        }
+        .padding(Tokens.Space.s3)
+        .background(Tokens.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous))
     }
 
     private func staffList(_ dashboard: ServerAPI.TeacherAcademyDashboard) -> some View {
@@ -1327,21 +1406,41 @@ private struct AccountScopedTeacherAcademyScreen: View {
                             Text(academyClass.name).tag(academyClass.id)
                         }
                     }
+                    Picker("유효기간", selection: $model.inviteExpiryDays) {
+                        ForEach(AcademyInviteDraft.expiryOptions, id: \.self) { Text("\($0)일").tag($0) }
+                    }
+                    TextField("최대 사용 횟수 (1~200)", text: $model.inviteMaxUsesText)
+                        .keyboardType(.numberPad)
                 }
                 Section {
-                    Text("코드는 14일 동안 최대 30명이 사용할 수 있습니다.")
+                    Text("링크와 코드는 \(model.inviteExpiryDays)일 동안 최대 \(model.inviteMaxUses)회 사용할 수 있습니다.")
                         .font(.mCaption).foregroundStyle(Tokens.text2)
                 }
+                if let message = model.inviteDraft.validationMessage {
+                    Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Tokens.warningInk) }
+                }
+                if let message = model.errorMessage {
+                    Section { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(Tokens.dangerInk) }
+                }
             }
-            .navigationTitle("새 초대 코드")
+            .disabled(model.actionID != nil)
+            .navigationTitle("새 초대 만들기")
+            .interactiveDismissDisabled(model.actionID != nil || model.hasInviteDraftChanges)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { model.showsInviteComposer = false }
+                    Button("취소") {
+                        if model.hasInviteDraftChanges { confirmsInviteDiscard = true }
+                        else { model.discardInviteDraft() }
+                    }.disabled(model.actionID != nil)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("만들기") { Task { await model.createInvite() } }
-                        .disabled(model.actionID != nil)
+                    Button(model.actionID == "new-invite" ? "만드는 중…" : "만들기") { Task { await model.createInvite() } }
+                        .disabled(model.actionID != nil || model.inviteDraft.validationMessage != nil)
                 }
+            }
+            .confirmationDialog("작성한 초대를 버릴까요?", isPresented: $confirmsInviteDiscard, titleVisibility: .visible) {
+                Button("작성 취소", role: .destructive) { model.discardInviteDraft() }
+                Button("계속 작성", role: .cancel) {}
             }
         }
     }

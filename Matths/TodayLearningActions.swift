@@ -44,8 +44,8 @@ extension AppStore {
                                 destination: .concept(concept.id), source: .canonicalLearning))
         }
         if authProvider == "server" {
-            values.append(.init(id: "assessment-options", kind: .assessment, title: "공식 평가로 실력 확인",
-                                reason: "응시 가능한 범위와 기존 평가 기록을 확인하세요.", action: "평가 범위 확인", minutes: nil,
+            values.append(.init(id: "assessment-options", kind: .assessment, title: "공식 모의고사로 실력 확인",
+                                reason: "이번 시험 일정과 응시 조건, 지난 결과를 확인하세요.", action: "시험 일정 확인", minutes: nil,
                                 destination: .assessments, source: .navigation))
         }
         values.append(.init(id: "explore", kind: .explore, title: "어떤 수학을 공부할까요?",

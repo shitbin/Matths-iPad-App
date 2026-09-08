@@ -14,7 +14,6 @@ import SwiftUI
 struct AuthScreen: View {
     @EnvironmentObject private var store: AppStore
     @State private var showEmailAuth = false
-    @State private var showsSampleLesson = false
     @StateObject private var googleSignIn = GoogleSignInCoordinator()
     @State private var googleBusy = false
     @State private var googleError: String?
@@ -63,26 +62,13 @@ struct AuthScreen: View {
     }
 
     var body: some View {
-        // 예전에는 Spacer 두 개짜리 고정 VStack 이었다. 세로가 짧아지면 스크롤이
-        // 없어서 게스트 버튼과 안내문이 화면 밖으로 잘렸고, Dynamic Type 을 올리면
-        // Google 버튼까지 사라졌다. 남으면 가운데, 모자라면 스크롤로 바꾼다.
         GeometryReader { geo in
             ScrollView {
-                VStack(spacing: 0) {
-                    // 위아래 Spacer 를 그냥 두면 남는 공간을 **반씩** 나눠 가져서
-                    // 로고와 버튼이 화면 가운데로 몰린다. 위쪽에 상한을 걸어
-                    // 로고를 먼저 자리 잡게 하고, 남는 높이는 아래 Spacer 가 전부
-                    // 가져가게 한다 — 그래야 버튼 묶음이 손이 닿는 아래쪽에 선다.
-                    // (게스트 버튼이 빠지면서 생긴 빈자리를 여백으로 되돌리는 것이
-                    //  아니라, 버튼을 내리는 데 쓴다.)
-                    Spacer(minLength: compactHeight ? Tokens.Space.s2 : Tokens.Space.s8)
-                        .frame(maxHeight: compactHeight ? Tokens.Space.s2 : Tokens.Space.s14)
+                AuthLandingLayout(viewportHeight: geo.size.height, compact: compactHeight) {
                     brandLockup
-                    Spacer(minLength: compactHeight ? Tokens.Space.s2 : Tokens.Space.s10)
                     signInActions
                 }
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: geo.size.height)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
@@ -106,7 +92,6 @@ struct AuthScreen: View {
         // 버튼을 그릴지 말지는 서버가 정한다. .task 는 진입에서 한 번 돌고
         // 화면을 벗어나면 스스로 취소된다.
         .task { await refreshSocialAvailability() }
-        .fullScreenCover(isPresented: $showsSampleLesson) { SampleLessonScreen() }
     }
 
     // 인증 면은 CI Primary Identity 전체 락업을 원본 그대로 쓴다.
@@ -118,11 +103,10 @@ struct AuthScreen: View {
             PrimaryBrandIdentity()
                 .frame(width: compactHeight ? 116 : 180,
                        height: compactHeight ? 36 : 56)
+                .accessibilityIdentifier("auth.brand.identity")
             Text("풀이 과정까지 채점하는 수학").font(.mCallout)
                 .foregroundStyle(Tokens.text3)
                 .multilineTextAlignment(.center)
-            Button("로그인 전에 30초 체험하기") { showsSampleLesson = true }
-                .font(.mCallout).frame(minHeight: 44)
         }
         .padding(.horizontal, Tokens.Space.s6)
     }
@@ -334,6 +318,7 @@ struct AuthScreen: View {
         cancelKakaoSignIn()
         cancelAppleSignIn()
         let attemptID = ServerAPI.beginAuthenticationAttempt()
+        AuthFlowDiagnostics.begin(provider: "apple", attemptID: attemptID)
         appleAttemptID = attemptID
         appleBusy = true
         appleError = nil
@@ -365,6 +350,7 @@ struct AuthScreen: View {
                 appleBusy = false
                 appleTask = nil
             } catch {
+                AuthFlowDiagnostics.fail(error, attemptID: attemptID)
                 ServerAPI.cancelAuthenticationAttempt(attemptID)
                 guard appleAttemptID == attemptID else { return }
                 appleAttemptID = nil
@@ -377,6 +363,7 @@ struct AuthScreen: View {
     }
 
     private func cancelAppleSignIn() {
+        AuthFlowDiagnostics.record("cancel_requested", attemptID: appleAttemptID)
         appleTask?.cancel()
         appleTask = nil
         ServerAPI.cancelAuthenticationAttempt(appleAttemptID)
@@ -391,6 +378,7 @@ struct AuthScreen: View {
         cancelAppleSignIn()
         cancelKakaoSignIn()
         let attemptID = ServerAPI.beginAuthenticationAttempt()
+        AuthFlowDiagnostics.begin(provider: "kakao", attemptID: attemptID)
         kakaoAttemptID = attemptID
         kakaoBusy = true
         kakaoError = nil
@@ -421,6 +409,7 @@ struct AuthScreen: View {
                 kakaoBusy = false
                 kakaoTask = nil
             } catch {
+                AuthFlowDiagnostics.fail(error, attemptID: attemptID)
                 ServerAPI.cancelAuthenticationAttempt(attemptID)
                 guard kakaoAttemptID == attemptID else { return }
                 kakaoAttemptID = nil
@@ -433,6 +422,7 @@ struct AuthScreen: View {
     }
 
     private func cancelKakaoSignIn() {
+        AuthFlowDiagnostics.record("cancel_requested", attemptID: kakaoAttemptID)
         kakaoTask?.cancel()
         kakaoTask = nil
         ServerAPI.cancelAuthenticationAttempt(kakaoAttemptID)
@@ -446,6 +436,7 @@ struct AuthScreen: View {
         cancelKakaoSignIn()
         cancelGoogleSignIn()
         let attemptID = ServerAPI.beginAuthenticationAttempt()
+        AuthFlowDiagnostics.begin(provider: "google", attemptID: attemptID)
         googleAttemptID = attemptID
         googleBusy = true
         googleError = nil
@@ -474,6 +465,7 @@ struct AuthScreen: View {
                 googleBusy = false
                 googleTask = nil
             } catch {
+                AuthFlowDiagnostics.fail(error, attemptID: attemptID)
                 ServerAPI.cancelAuthenticationAttempt(attemptID)
                 guard googleAttemptID == attemptID else { return }
                 googleAttemptID = nil
@@ -486,12 +478,40 @@ struct AuthScreen: View {
     }
 
     private func cancelGoogleSignIn() {
+        AuthFlowDiagnostics.record("cancel_requested", attemptID: googleAttemptID)
         googleTask?.cancel()
         googleTask = nil
         ServerAPI.cancelAuthenticationAttempt(googleAttemptID)
         googleSignIn.cancel()
         googleAttemptID = nil
         googleBusy = false
+    }
+}
+
+private struct AuthLandingLayout: Layout {
+    let viewportHeight: CGFloat
+    let compact: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let width = max(0, proposal.width ?? 420)
+        let measurement = ProposedViewSize(width: width, height: nil)
+        let placement = AuthLandingGeometry.resolve(viewportHeight: viewportHeight,
+            brandHeight: subviews[0].sizeThatFits(measurement).height,
+            actionsHeight: subviews[1].sizeThatFits(measurement).height, compact: compact)
+        return CGSize(width: width, height: placement.contentHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let measurement = ProposedViewSize(width: bounds.width, height: nil)
+        let placement = AuthLandingGeometry.resolve(viewportHeight: viewportHeight,
+            brandHeight: subviews[0].sizeThatFits(measurement).height,
+            actionsHeight: subviews[1].sizeThatFits(measurement).height, compact: compact)
+        subviews[0].place(at: CGPoint(x: bounds.midX, y: bounds.minY + placement.brandCenterY),
+                          anchor: .center, proposal: measurement)
+        subviews[1].place(at: CGPoint(x: bounds.midX, y: bounds.minY + placement.actionsTop),
+                          anchor: .top, proposal: measurement)
     }
 }
 

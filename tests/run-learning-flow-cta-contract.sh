@@ -13,6 +13,8 @@ app = (root / "Matths/MatthsApp.swift").read_text()
 assessment = (root / "Matths/AssessmentV2.swift").read_text()
 screens = (root / "Matths/Screens.swift").read_text()
 root_view = (root / "Matths/RootView.swift").read_text()
+learning = (root / "Matths/LearningFlowScreens.swift").read_text()
+curriculum = (root / "Matths/CurriculumV2MapScreen.swift").read_text()
 
 
 def section(source: str, start: str, end: str) -> str:
@@ -71,13 +73,25 @@ assert "seed: lastExamSeed" not in web_practice
 prebuilt = section(app, "func startExam(problems:", "func startReview(ids:")
 assert "solveStartedAt = examStartedAt" in prebuilt
 
-# 구현된 퀵 연습 route가 숨은 딥링크로만 남지 않도록 평가센터에 명시적 네이티브
-# 진입점이 있어야 한다. 채점 Pro 진입은 함께 유지한다.
-assessment_screen = section(screens, "struct AssessmentScreen: View", "private struct WeeklyMockEntryCard")
-assert 'title: "퀵 연습"' in assessment_screen
-assert "store.route = .quickPractice" in assessment_screen
-assert 'title: "채점 Pro"' in assessment_screen
-assert "store.route = .pro" in assessment_screen
+# 과목별 단계 평가는 해당 과목 안에서, 연습과 풀이 도구는 학습 허브에서 연다.
+# 평가센터에 같은 과목 선택/단원 목록/도구를 다시 나열하지 않되 실제 진입은 보존한다.
+assessment_screen = section(screens, "struct AssessmentScreen: View", "struct CourseAssessmentSection: View")
+course_assessment = section(screens, "struct CourseAssessmentSection: View", "private struct WeeklyMockEntryCard")
+learning_hub = section(learning, "struct LearningHubScreen: View", "struct LearningRecordsScreen: View")
+assert "store.route = .quickPractice" in learning_hub
+assert "store.route = .pro" in learning_hub
+assert "store.route = .assess" in learning_hub
+assert "store.route = .quickPractice" not in assessment_screen
+assert "store.route = .pro" not in assessment_screen
+assert "chainSection(" not in assessment_screen
+assert "coursePicker" not in assessment_screen
+assert "WeeklyMockEntryCard" in assessment_screen
+assert "store.route = .weeklyMock" in assessment_screen
+assert "chainSection(course)" in course_assessment
+assert "extension CourseAssessmentSection" in screens
+assert "CourseAssessmentSection(courseID:" in curriculum
+for scope in ("subunit", "unit", "course"):
+    assert f"store.startPaper(scope: .{scope}" in screens
 
 # Route enum의 모든 학습 경로가 실제 RootView 화면에 명시적으로 매핑되어야 한다.
 # default HomeScreen에 조용히 떨어지는 새 route는 빈/오동작 CTA와 같다.

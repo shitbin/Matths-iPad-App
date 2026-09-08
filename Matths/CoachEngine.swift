@@ -227,6 +227,7 @@ struct CoachEngine {
         let facts = history(for: problem.typeKey)
 
         guard level != .silent else { return nil }
+        let usesSpicyTone = level == .spicy && !softened
 
         let plan = diagnosticPlan(problem, studentInput: studentInput)
         let shape = submissionShape(problem, studentInput: studentInput)
@@ -242,8 +243,12 @@ struct CoachEngine {
                     correct ? "정답 조건을 만족했습니다." : "선택한 보기를 다시 확인해 주세요."]),
                 reason: "선택한 보기의 내용을 문제의 조건과 차례로 대조하세요. 판단의 근거는 아래 해설에서 확인할 수 있습니다.",
                 nextAction: correct
-                    ? "보기와 조건의 연결을 확인했다면 다음 문제로 이어가세요."
-                    : "\(answerText)을 정답이라고 두고, 문제의 조건과 맞지 않는 부분이 있는지 확인해 보세요.")
+                    ? (usesSpicyTone
+                        ? "맞혔다고 끝내지 마. 고른 보기가 조건을 만족하는 이유까지 확인하고 다음 문제로 가."
+                        : "보기와 조건의 연결을 확인했다면 다음 문제로 이어가세요.")
+                    : (usesSpicyTone
+                        ? "번호만 바꿔 찍지 마. \(answerText)의 내용이 문제 조건과 어긋나는 곳부터 찾아."
+                        : "\(answerText)을 정답이라고 두고, 문제의 조건과 맞지 않는 부분이 있는지 확인해 보세요."))
         }
 
         if correct {
@@ -279,7 +284,9 @@ struct CoachEngine {
                     corrected,
                 ]),
                 reason: "① \(anchor) ② \(plan.second)",
-                nextAction: "그 한 줄에서 사용한 핵심 조건 하나만 문제 옆에 옮겨 적고 다음 문제로 넘어가세요."
+                nextAction: usesSpicyTone
+                    ? "정답만 쓰고 도망가지 마. 그 한 줄에 쓴 핵심 조건 하나까지 문제 옆에 적고 다음으로 가."
+                    : "그 한 줄에서 사용한 핵심 조건 하나만 문제 옆에 옮겨 적고 다음 문제로 넘어가세요."
             )
         }
 

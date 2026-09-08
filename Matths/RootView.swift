@@ -467,6 +467,7 @@ struct RootView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .coordinateSpace(.named(Self.browseScrollSpace))
+            .tutorialViewport()
         }
     }
 
@@ -798,7 +799,9 @@ struct AppTopBar: View {
             Button { store.route = .profile } label: {
                 ZStack {
                     Circle().fill(isArena ? Tokens.arenaAccent : Tokens.actionPrimary)
-                    if let profileAvatarURL {
+                    if let name = store.serverProfile?.profileAvatar?.bundledImageName {
+                        Image(name).resizable().scaledToFill()
+                    } else if let profileAvatarURL {
                         AsyncImage(url: profileAvatarURL) { phase in
                             if let image = phase.image {
                                 image.resizable().scaledToFill()
@@ -861,24 +864,12 @@ struct AppTopBar: View {
 // MARK: - 서버 동기화 튜토리얼
 
 private struct NativeTutorialStep: Identifiable {
-    /// 웹의 CSS selector를 iPad 화면에 그대로 복사할 수는 없다.
-    /// 대신 앱의 정보 구조(상·중·하 작업 영역, 실제 탭, 프로필)를
-    /// 안정적인 의미 타겟으로 삼는다. 회전·Split View에서도 다시 계산된다.
-    enum Spotlight {
-        case header
-        case contentTop
-        case contentMiddle
-        case contentBottom
-        case tab(AppStore.Route)
-        case topAction(AppStore.Route)
-        case profile
-    }
     let id: String
     let section: String
     let route: AppStore.Route
     let title: String
     let message: String
-    let spotlight: Spotlight
+    let target: TutorialTargetID
 }
 
 private enum NativeTutorialRun {
@@ -903,9 +894,16 @@ private struct TutorialDimShape: Shape {
     }
 }
 
+private struct TutorialCoachBoundsPreference: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
 /// 웹과 같은 계정 상태를 쓰는 네이티브 튜토리얼.
 /// 다음 버튼 전에는 자동 진행하지 않고, 라우트 변경 뒤 layout이 안정된 다음 spotlight를 연다.
 struct NativeTutorialOverlay: View {
+    let targets: TutorialTargetAnchors
+    init(targets: TutorialTargetAnchors = [:]) { self.targets = targets }
     @EnvironmentObject private var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -915,6 +913,7 @@ struct NativeTutorialOverlay: View {
     @State private var mutationInFlight = false
     @State private var mutationError: String?
     @State private var coachFrame = 1
+    @State private var coachBounds: CGRect = .zero
     private struct RunOwner {
         let id: UUID
         let request: AccountRequestOwner
@@ -944,18 +943,29 @@ struct NativeTutorialOverlay: View {
 
     private var normalizedRole: String { store.serverProfile?.role?.lowercased() ?? "student" }
     private func owns(_ owner: RunOwner) -> Bool {
-        runOwner?.id == owner.id && owner.request.isCurrent(in: store)
+        // SwiftUI may evaluate a still-live view from the cancelled task whose
+        // id changed when this same tour claimed its lease or changed route.
+        // UI lifetime is account/credential/role/lease identity, not that task.
+        runOwner?.id == owner.id
+            && store.ownsCurrentAccountSession(owner.request.account)
+            && ServerAPI.isCurrentAuthorization(owner.request.authorization)
             && owner.role == normalizedRole && store.authProvider == "server"
             && store.nativeTutorialPresentationOwner == owner.id
     }
+    private func ownsMutation(_ owner: RunOwner) -> Bool {
+        !Task.isCancelled && owns(owner)
+    }
     @MainActor private func claimRun() -> RunOwner? {
+        recordFocusDiagnostic("claim_entered")
         guard store.authProvider == "server", let request = AccountRequestOwner(store: store) else { return nil }
         let owner = RunOwner(id: UUID(), request: request, role: normalizedRole)
         runOwner = owner
         store.claimNativeTutorialPresentation(owner.id)
+        recordFocusDiagnostic("claimed", owner: owner)
         return owner
     }
     @MainActor private func clearRun(ifOwnedBy expectedID: UUID? = nil) {
+        recordFocusDiagnostic("clear_requested")
         guard expectedID == nil || runOwner?.id == expectedID else { return }
         let previous = runOwner
         let sameAccount = previous?.request.isCurrent(in: store) == true
@@ -963,7 +973,10 @@ struct NativeTutorialOverlay: View {
         mutationTask?.cancel(); mutationTask = nil
         run = nil; runOwner = nil; spotlightVisible = false
         mutationInFlight = false; mutationError = nil
-        if let previous { store.releaseNativeTutorialPresentation(previous.id) }
+        if let previous {
+            TutorialFocusRequestCenter.cancel(ownerID: previous.id)
+            store.releaseNativeTutorialPresentation(previous.id)
+        }
         if sameAccount {
             store.requestedDashboardTutorial = false
             store.requestedArenaTutorialChapter = nil
@@ -980,190 +993,151 @@ struct NativeTutorialOverlay: View {
         }
     }
 
-    /// 최신 웹 `onboarding-tutorial.js`의 42개 selector 단계를 앱의 실제 IA에
-    /// 맞게 합친 31단계. 앱에 없는 웹 전용 페이지를 가짜로 설명하지 않고,
-    /// 학습 홈→커리큘럼→퀵 연습→평가→오답→게시판→Arena와
-    /// 상단 AI 튜터·시험지 채점 PRO·프로필의 실제 진입점을 빠짐없이 따른다.
+    private func recordFocusDiagnostic(_ stage: String, owner: RunOwner? = nil) {
+        #if DEBUG
+        let owner = owner ?? runOwner
+        var flags = ["hasRun": run != nil, "hasOwner": owner != nil,
+                     "taskCancelled": Task.isCancelled, "authServer": store.authProvider == "server"]
+        if let owner {
+            flags["leaseMatches"] = store.nativeTutorialPresentationOwner == owner.id
+            flags["runOwnerMatches"] = runOwner?.id == owner.id
+            flags["accountCurrent"] = store.ownsCurrentAccountSession(owner.request.account)
+            flags["authorizationCurrent"] = ServerAPI.isCurrentAuthorization(owner.request.authorization)
+            flags["roleMatches"] = normalizedRole == owner.role
+        }
+        TutorialFocusDiagnostics.record(stage, flags: flags)
+        #endif
+    }
+
+    /// Current native navigation, not a count-preserving copy of web selectors.
+    /// Every spotlight names a real view. Conditional/missing controls fail closed.
     private static let dashboardSteps: [NativeTutorialStep] = [
-        .init(id: "home-welcome", section: "학습 홈", route: .home,
-              title: "학습 홈에서 오늘 상태를 확인합니다.",
-              message: "연속 학습일, 새 알림과 오늘 이어 할 공부가 첫 화면에 모입니다.", spotlight: .header),
-        .init(id: "home-coach", section: "학습 홈", route: .home,
-              title: "오늘의 코치가 시작을 돕습니다.",
-              message: "프로필의 순한맛·매운맛 설정에 맞춰 다음 행동을 짧게 알려줍니다.", spotlight: .contentTop),
-        .init(id: "home-plan", section: "학습 홈", route: .home,
-              title: "이용 중인 학습권과 오늘 할 일을 보세요.",
-              message: "남은 학습일수와 이용 기간, 지금 시작할 수 있는 학습이 함께 표시됩니다.", spotlight: .contentMiddle),
-        .init(id: "home-record", section: "학습 홈", route: .home,
-              title: "학습 기록은 자동으로 쌓입니다.",
-              message: "최근 활동, 풀이 수와 정답률을 보고 공부 흐름이 끊긴 지점을 찾습니다.", spotlight: .contentBottom),
-        .init(id: "to-curriculum", section: "내 학습", route: .home,
-              title: "이제 커리큘럼으로 이동합니다.",
-              message: "과목과 개념을 직접 골라 공부하는 곳입니다.", spotlight: .tab(.curriculum)),
-        .init(id: "curriculum-overview", section: "내 학습", route: .curriculum,
-              title: "교육과정 전체와 내 완성도를 확인합니다.",
-              message: "2022 개정 교육과정의 과목, 완료 개념과 남은 개념을 한 눈에 봅니다.", spotlight: .contentTop),
-        .init(id: "curriculum-course", section: "내 학습", route: .curriculum,
-              title: "과목과 대단원을 선택합니다.",
-              message: "왼쪽에서 과목을 고르고, 대단원을 펼쳐 성취기준과 학습 주제를 확인합니다.", spotlight: .contentMiddle),
-        .init(id: "curriculum-concept", section: "내 학습", route: .curriculum,
-              title: "개념 카드에서 학습을 시작합니다.",
-              message: "이어 보기와 새로 시작하기 모두 여기서 열리고, 완료 기록은 진도에 반영됩니다.", spotlight: .contentBottom),
-        .init(id: "to-quick", section: "40초 눈풀이", route: .curriculum,
-              title: "다음은 40초 퀵 연습입니다.",
-              message: "기본 유형을 짧게 반복해 계산 속도와 정확도를 훈련합니다.", spotlight: .contentBottom),
-        .init(id: "quick-overview", section: "40초 눈풀이", route: .quickPractice,
-              title: "먼저 반복 기록을 확인합니다.",
-              message: "누적 풀이 수, 정답률과 평균 풀이 시간을 보고 지난 기록과 비교합니다.", spotlight: .contentTop),
-        .init(id: "quick-controls", section: "40초 눈풀이", route: .quickPractice,
-              title: "배점과 세트 크기를 고르고 시작합니다.",
-              message: "문제가 열리면 40초 타이머가 흐릅니다. 답을 낸 뒤 풀이와 코치 피드백을 확인합니다.", spotlight: .contentMiddle),
-        .init(id: "quick-note", section: "40초 눈풀이", route: .quickPractice,
-              title: "문제와 풀이 메모를 함께 쓸 수 있습니다.",
-              message: "지원되는 기기에서는 Apple Pencil로, iPhone에서는 손가락으로 메모를 남길 수 있습니다.", spotlight: .contentBottom),
-        .init(id: "to-assessment", section: "평가센터", route: .quickPractice,
-              title: "이제 평가 구조를 확인합니다.",
-              message: "배운 범위안에서만 평가가 열리고, 통과 기준을 넘어야 완료됩니다.", spotlight: .tab(.assess)),
-        .init(id: "assessment-overview", section: "평가센터", route: .assess,
-              title: "평가는 배운 범위 안에서만 열립니다.",
-              message: "아직 조건을 충족하지 못한 평가는 필요한 학습 조건과 함께 잠겨 있습니다.", spotlight: .contentTop),
-        .init(id: "assessment-rules", section: "평가센터", route: .assess,
-              title: "통과 기준을 충족해야 최종 완료됩니다.",
-              message: "소단원·대단원·과목 평가가 순서대로 열리며, 미통과 평가는 새 회차로 다시 응시합니다.", spotlight: .contentMiddle),
-        .init(id: "assessment-weekly", section: "평가센터", route: .assess,
-              title: "주간 공식 모의고사도 여기서 입장합니다.",
-              message: "운영 일정과 응시 가능 여부를 확인한 뒤 시험장으로 들어갑니다.", spotlight: .contentBottom),
-        .init(id: "to-wrong", section: "오답 복습", route: .assess,
-              title: "틀린 문제는 오답노트에서 다시 봅니다.",
-              message: "학습과 평가에서 생긴 오답이 자동으로 모여 복습 순서를 만듭니다.", spotlight: .tab(.wrongNotes)),
-        .init(id: "wrong-overview", section: "오답 복습", route: .wrongNotes,
-              title: "오답과 오늘 복습량을 확인합니다.",
-              message: "오늘 풀어야 할 문제, 대기 중인 문제와 완료한 문제가 나뉘어 표시됩니다.", spotlight: .contentTop),
-        .init(id: "wrong-filter", section: "오답 복습", route: .wrongNotes,
-              title: "과목·이유·검색어로 필요한 오답만 찾습니다.",
-              message: "복습 상태와 틀린 이유를 바꿔 보면 지금 우선해야 할 문제가 남습니다.", spotlight: .contentMiddle),
-        .init(id: "wrong-results", section: "오답 복습", route: .wrongNotes,
-              title: "문제별 기록과 복습 버튼을 확인합니다.",
-              message: "출처, 난이도, 이전 답안과 필기 기록을 보고 같은 문제를 다시 풀어 복습합니다.", spotlight: .contentBottom),
-        .init(id: "to-community", section: "게시판", route: .wrongNotes,
-              title: "질문과 학습 이야기는 게시판에서 나눕니다.",
-              message: "다른 학생의 글을 읽거나 내 질문을 남길 수 있는 공간으로 이동합니다.", spotlight: .tab(.community)),
-        .init(id: "community-read", section: "게시판", route: .community,
-              title: "앱 안에서 글을 읽고 탐색합니다.",
-              message: "게시판·정렬·검색을 바꾸고 아래로 당겨 새로고침합니다. 로그인 전에도 공개 글을 볼 수 있습니다.", spotlight: .contentTop),
-        .init(id: "community-write", section: "게시판", route: .community,
-              title: "로그인하면 바로 글을 작성합니다.",
-              message: "상단의 글쓰기에서 질문이나 학습 경험과 첨부파일을 남기고, 알림에서 답글 소식을 확인합니다.", spotlight: .contentMiddle),
-        .init(id: "to-arena", section: "GOAT Arena", route: .community,
-              title: "다음은 GOAT Arena입니다.",
-              message: "배치고사, 1대1 경기, 공식 모의고사와 랭킹을 서버 기준으로 확인합니다.", spotlight: .tab(.rank)),
+        .init(id: "home-start", section: "오늘", route: .home,
+              title: "오늘 시작할 학습이 첫 화면에 있습니다.",
+              message: "추천된 학습 버튼을 누르면 지금 이어 할 공부로 바로 이동합니다.", target: .todayPrimaryAction),
+        .init(id: "home-progress", section: "오늘", route: .home,
+              title: "오늘 쌓은 기록을 확인합니다.",
+              message: "실제 학습 기록과 진행 상태를 보고 다음 공부를 정합니다.", target: .todayProgress),
+        .init(id: "learn-tab", section: "학습", route: .home,
+              title: "학습 탭에서 원하는 공부를 고릅니다.",
+              message: "과목 학습과 단계 평가, 공식 모의고사, 짧은 연습의 진입점을 모았습니다.", target: .tabLearning),
+        .init(id: "course-entry", section: "과목과 단원", route: .learn,
+              title: "개념 수업과 단계 평가는 같은 과목 안에 있습니다.",
+              message: "과목과 단원에서 과목을 선택하면 개념 목록과 소단원·대단원·과목 평가를 함께 확인할 수 있습니다.", target: .learningCourses),
+        .init(id: "weekly-entry", section: "평가센터", route: .learn,
+              title: "공식 모의고사는 평가센터에서 응시합니다.",
+              message: "응시 일정과 이용 조건, 작성 중인 답안과 제출 결과를 확인합니다.", target: .weeklyMockEntry),
+        .init(id: "quick-entry", section: "짧게 연습", route: .learn,
+              title: "반복할 유형을 골라 짧게 연습합니다.",
+              message: "공식 시험과 구분된 연습 공간에서 문제를 풀고 풀이를 확인합니다.", target: .quickPracticeStart),
+        .init(id: "pro-entry", section: "시험지 풀이 분석", route: .learn,
+              title: "종이에 푼 시험지도 가져올 수 있습니다.",
+              message: "시험지 풀이 분석에서 사진과 답안을 불러와 문항별 분석을 진행합니다.", target: .proEntry),
         .init(id: "arena-status", section: "GOAT Arena", route: .rank,
-              title: "내 현재 Arena 상태를 확인합니다.",
-              message: "티어, 티어 안 순위, GP와 현재 활동 중인 전장이 표시됩니다.", spotlight: .contentTop),
-        .init(id: "arena-actions", section: "GOAT Arena", route: .rank,
-              title: "시작할 경기와 이어 할 경기를 고릅니다.",
-              message: "역할·예치·마감을 확인한 뒤 배치고사나 1대1 경기로 들어갑니다.", spotlight: .contentMiddle),
-        .init(id: "arena-record", section: "GOAT Arena", route: .rank,
-              title: "정산이 끝난 경기는 기록으로 남습니다.",
-              message: "승패와 자리·GP 변동은 서버가 확정한 결과만 표시합니다.", spotlight: .contentBottom),
-        .init(id: "ai-tutor", section: "AI 튜터", route: .rank,
-              title: "막힌 문제는 상단 AI 튜터에서 이어갑니다.",
-              message: "별 모양 버튼을 누르면 풀이 맥락을 정리해 질문하고, 온디바이스 모델 상태도 확인할 수 있습니다.", spotlight: .topAction(.chat)),
-        .init(id: "pro-entry", section: "시험지 채점 PRO", route: .assess,
-              title: "종이 시험지는 평가센터에서 채점합니다.",
-              message: "시험지 채점 PRO 진입 카드에서 촬영한 시험지를 불러와 문항별 결과를 만듭니다.", spotlight: .contentBottom),
-        .init(id: "pro-report", section: "시험지 채점 PRO", route: .pro,
-              title: "문항별 답과 교정 결과를 한곳에서 봅니다.",
-              message: "페이지·문항별 정오답과 자기 교정 상태를 펼쳐 보고, 다시 공부할 항목을 찾습니다.", spotlight: .contentTop),
-        .init(id: "profile", section: "프로필", route: .pro,
-              title: "개인 설정과 튜토리얼은 프로필에서 관리합니다.",
-              message: "프로필 사진, 닉네임, 코치 모드를 바꾸고 원하는 튜토리얼 편을 다시 시작할 수 있습니다.", spotlight: .profile),
+              title: "Arena 상태와 참가 조건을 확인합니다.",
+              message: "현재 티어·순위와 이용 상태를 보고 참가할 수 있는 경기를 선택합니다. 경기 버튼은 참가 조건에 따라 달라집니다.", target: .arenaProfile),
+        .init(id: "records-tab", section: "기록", route: .rank,
+              title: "공부한 내용은 기록 탭에 모입니다.",
+              message: "오답 복습과 개념 학습 기록, 공식 모의고사 결과를 다시 확인할 수 있습니다.", target: .tabRecords),
+        .init(id: "wrong-entry", section: "오답 복습", route: .records,
+              title: "틀린 문제를 다시 풀어 봅니다.",
+              message: "전체 오답에서 필요한 문제와 복습 예정일을 확인하고 복습합니다.", target: .wrongNotes),
+        .init(id: "me-tab", section: "내 정보", route: .records,
+              title: "계정과 부가 서비스는 내 정보에 있습니다.",
+              message: "계정과 학원, 이용권을 관리하고 학습 도구와 자료로 이동합니다.", target: .tabMe),
+        .init(id: "ai-coach", section: "AI 코치", route: .services,
+              title: "질문과 대화는 AI 코치에서 이어갑니다.",
+              message: "대화 기록과 온디바이스 모델 상태를 확인할 수 있습니다.", target: .topChat),
+        .init(id: "community-entry", section: "커뮤니티", route: .services,
+              title: "질문과 학습 이야기를 나눕니다.",
+              message: "커뮤니티에서 글을 읽고 질문이나 답글을 작성합니다.", target: .communityBrowse),
+        .init(id: "profile-entry", section: "설정과 도움말", route: .me,
+              title: "튜토리얼은 프로필과 설정에서 다시 볼 수 있습니다.",
+              message: "프로필과 계정 보안을 관리하고 필요한 튜토리얼 편을 다시 선택할 수 있습니다.", target: .profileSettings),
     ]
 
-    /// 최신 웹 `arena-tutorial.js`의 6개 편·23개 단계를 같은 순서와
-    /// 문구로 유지한다. 웹 전용 작전 페이지는 앱의 Arena 화면 영역에
-    /// 연결하고, Ranked 상점만 실제 네이티브 상점 route를 쓴다.
+    /// Server chapter IDs/status remain canonical; native targets follow real controls.
     private static let arenaSteps: [String: [NativeTutorialStep]] = [
         "common": [
             .init(id: "common-navigation", section: "기본 안내", route: .rank,
-                  title: "현재 내 전장에서 플레이를 시작합니다.",
-                  message: "Unranked와 Ranked는 서로 다른 전장입니다. 현재 전장에서 실제로 이용할 수 있는 경기 기능만 보입니다.", spotlight: .header),
+                  title: "현재 전장에서 가능한 경기를 고릅니다.",
+                  message: "Unranked와 Ranked는 서로 다른 전장입니다. 참가 조건을 충족했을 때만 경기 시작 버튼이 나타납니다.", target: .arenaOverview),
             .init(id: "common-match", section: "기본 안내", route: .rank,
                   title: "공식 1대1은 같은 다섯 문제로 겨룹니다.",
-                  message: "양쪽이 같은 문제를 풀고, 서버 정산 결과에 따라 공개 티어·티어 안 순위·GP가 움직입니다.", spotlight: .contentTop),
+                  message: "경기 신청 또는 이어하기 버튼이 표시되면 그곳에서 진행합니다. 티어·순위·GP는 서버 정산 결과로 확정됩니다.", target: .arenaMatchmaking),
             .init(id: "common-status", section: "기본 안내", route: .rank,
                   title: "내 현재 Arena 상태를 확인합니다.",
-                  message: "티어, 티어 안 순위, GP와 현재 전장을 보고 다음 행동을 고릅니다.", spotlight: .contentMiddle),
+                  message: "현재 티어·순위·GP와 이용 중인 전장을 보고 다음 행동을 정합니다.", target: .arenaProfile),
         ],
         "unranked": [
             .init(id: "unranked-hero", section: "UNRANKED 전장", route: .rank,
                   title: "Unranked는 자동 배정 방식입니다.",
-                  message: "같은 티어의 내 위 순위를 먼저 찾고, 후보가 없을 때만 바로 위 티어까지 탐색합니다.", spotlight: .header),
+                  message: "같은 티어의 상위 순위를 먼저 찾고, 후보가 없을 때 바로 위 티어까지 탐색합니다.", target: .arenaOverview),
             .init(id: "unranked-status", section: "UNRANKED 전장", route: .rank,
                   title: "신청 전에 내 이용 상태를 확인합니다.",
-                  message: "현재 이용 가능 여부, 티어 안 순위와 남은 학습 가능 일수를 보고 잠긴 이유를 확인합니다.", spotlight: .contentTop),
+                  message: "오늘 이용 상태에서 참가 제한과 남은 학습 가능 기간을 확인합니다. 이용 중인 주기가 없으면 이용권 안내가 표시됩니다.", target: .arenaEligibility),
             .init(id: "unranked-battle", section: "UNRANKED 전장", route: .rank,
-                  title: "여기서 일반 쟁탈전을 시작합니다.",
-                  message: "자동 매치를 신청하고, 이미 잡힌 공격·방어 경기는 진행 중 경기에서 이어 풉니다.", spotlight: .contentMiddle),
+                  title: "참가 가능할 때 일반 쟁탈전을 신청합니다.",
+                  message: "Unranked 상대 찾기 버튼으로 자동 매치를 신청합니다. 이미 열린 경기는 경기 시작·계속하기에서 이어 풉니다. 이용 조건을 충족하지 못하면 이 버튼은 표시되지 않습니다.", target: .arenaMatchmaking),
             .init(id: "unranked-record", section: "UNRANKED 전장", route: .rank,
                   title: "끝난 경기는 기록으로 남습니다.",
-                  message: "상대와 승패, 경기 뒤 티어·순위·GP 변동은 정산이 확정된 기록만 보여줍니다.", spotlight: .contentBottom),
+                  message: "상대와 승패, 경기 뒤 티어·순위·GP 변동은 정산이 확정된 기록에서 확인합니다.", target: .arenaRecords),
             .init(id: "unranked-progress", section: "UNRANKED 전장", route: .rank,
-                  title: "페이백 점수와 공격 출석을 따로 확인합니다.",
-                  message: "경기에서 움직이는 페이백 점수와 이용 주기의 공격 출석일은 서로 다른 조건입니다.", spotlight: .contentBottom),
+                  title: "페이백 점수와 공격 출석은 다른 조건입니다.",
+                  message: "페이백 조건을 펼쳐 경기 점수와 이용 주기의 공격 출석일을 각각 확인합니다.", target: .arenaProgress),
         ],
         "unranked_match": [
             .init(id: "unranked-match-candidate", section: "UNRANKED 1대1", route: .rank,
                   title: "서버가 가장 가까운 상위 후보를 찾습니다.",
-                  message: "같은 티어의 상위 순위를 우선하고, 없으면 바로 위 티어로 넓힌 뒤 최근 방어 부담도 함께 봅니다.", spotlight: .contentTop),
+                  message: "같은 티어의 상위 순위를 우선하고 없으면 바로 위 티어로 넓힙니다. 실제 신청은 상대 찾기 버튼에서 진행합니다.", target: .arenaMatchmaking),
             .init(id: "unranked-match-stake", section: "UNRANKED 1대1", route: .rank,
-                  title: "신청 전에 예치와 오늘의 참가 범위를 봅니다.",
-                  message: "내 Arena 상태, 이번 경기의 페이백 점수와 탐색 가능 티어를 확인합니다.", spotlight: .contentMiddle),
+                  title: "신청 전에 자산과 참가 조건을 봅니다.",
+                  message: "Arena 자산에서 사용 가능한 페이백 점수와 학습일수를 확인합니다. 경기 신청 시 실제 예치 조건을 다시 확인합니다.", target: .arenaWallet),
             .init(id: "unranked-match-action", section: "UNRANKED 1대1", route: .rank,
-                  title: "가능한 행동 하나만 선택하면 됩니다.",
-                  message: "신청 가능할 때는 자동 매치를 시작하고, 진행 중 경기가 있으면 같은 자리에서 복귀합니다.", spotlight: .contentBottom),
+                  title: "지금 가능한 경기 행동을 선택합니다.",
+                  message: "신청할 수 있으면 상대 찾기가, 이미 참가한 경기가 있으면 시작·계속하기가 표시됩니다. 튜토리얼은 경기를 자동 신청하지 않습니다.", target: .arenaMatchmaking),
         ],
         "ranked": [
             .init(id: "ranked-hero", section: "RANKED 전장", route: .rank,
-                  title: "Ranked에서는 학습일수를 직접 운용합니다.",
-                  message: "상향 쟁탈전과 하위 티어 초대전에서 목표 티어와 학습일수를 정합니다.", spotlight: .header),
+                  title: "Ranked에서는 학습일수를 운용합니다.",
+                  message: "현재 전장과 경기 참가 가능 상태를 먼저 확인합니다.", target: .arenaOverview),
             .init(id: "ranked-wallet", section: "RANKED 전장", route: .rank,
-                  title: "사용 가능한 학습일수부터 확인합니다.",
-                  message: "초대 예약이나 진행 중 경기에 예치된 일수는 새 경기와 상점에 쓸 수 없습니다.", spotlight: .contentTop),
-            .init(id: "ranked-battle", section: "RANKED 전장", route: .rank,
-                  title: "경기 지휘에서 플레이 방식을 고릅니다.",
-                  message: "상향 쟁탈전·하위 티어 초대전·복수전·친선 경기 중 필요한 행동을 선택합니다.", spotlight: .contentMiddle),
+                  title: "사용 가능한 일수와 예치 중인 일수는 다릅니다.",
+                  message: "Arena 자산을 펼쳐 경기나 초대에 묶인 일수와 지금 사용할 수 있는 일수를 구분합니다.", target: .arenaWallet),
+            .init(id: "ranked-match", section: "RANKED 전장", route: .rank,
+                  title: "Ranked 상대 찾기에서 공식 경기를 준비합니다.",
+                  message: "목표 티어와 예치 조건을 확인한 뒤 직접 신청합니다. 진행 중인 경기가 있으면 해당 경기로 복귀합니다.", target: .arenaMatchmaking),
             .init(id: "ranked-operations", section: "RANKED 전장", route: .rank,
-                  title: "초대와 학습일수 이동을 관리합니다.",
-                  message: "받은 초대와 보낸 예약, 사용 가능·예약·경기 예치 일수와 이동 기록을 따로 확인합니다.", spotlight: .contentBottom),
+                  title: "추가 기능은 아레나 더 보기에서 찾습니다.",
+                  message: "초대·친선전·상점 등 현재 계정에 열려 있는 기능을 목록에서 고릅니다.", target: .arenaOperations),
             .init(id: "ranked-shop", section: "RANKED 전장", route: .rank,
-                  title: "확보한 학습일수는 상점에서도 사용합니다.",
-                  message: "경기 분석, 일정 보호와 프로필 효과가 필요하면 Ranked 상점으로 들어갑니다.", spotlight: .contentBottom),
+                  title: "Ranked 상점에서 효과의 가격과 조건을 봅니다.",
+                  message: "아레나 더 보기의 상점에서 경기 분석, 일정 보호와 프로필 효과를 확인할 수 있습니다. 학습일수를 쓰기 전 확인창이 표시됩니다.", target: .arenaOperations),
         ],
         "ranked_battle": [
             .init(id: "ranked-battle-status", section: "RANKED 경기", route: .rank,
-                  title: "새 경기 전에 현재 이용 가능 상태를 봅니다.",
-                  message: "진행 중 공식 경기, 부족한 학습일수나 이용 제한이 있으면 작전이 잠기고 이유가 표시됩니다.", spotlight: .contentTop),
+                  title: "새 경기 전에 오늘 이용 상태를 봅니다.",
+                  message: "진행 중 경기, 부족한 학습일수나 이용 제한이 있으면 신청이 잠기고 사유가 표시됩니다.", target: .arenaEligibility),
             .init(id: "ranked-battle-upward", section: "RANKED 경기", route: .rank,
                   title: "상향 쟁탈전은 목표 티어를 정해 도전합니다.",
-                  message: "최대 세 티어 위까지 목표와 예치량을 고르면 서버가 적격 상대를 무작위 배정합니다.", spotlight: .contentMiddle),
+                  message: "Ranked 상대 찾기에서 목표와 예치량을 확인합니다. 서버가 적격 상대를 배정하며 이 안내만으로 경기를 신청하지 않습니다.", target: .arenaMatchmaking),
             .init(id: "ranked-battle-invite", section: "RANKED 경기", route: .rank,
-                  title: "하위 티어 초대전은 먼저 예약을 만듭니다.",
-                  message: "목표 하위 티어에 일괄 초대하고, 먼저 수락한 한 명과만 같은 학습일수를 예치합니다.", spotlight: .contentMiddle),
+                  title: "하위 티어 초대전은 예약부터 만듭니다.",
+                  message: "아레나 더 보기에서 초대 기능을 선택해 조건을 확인합니다. 먼저 수락한 한 명과 같은 학습일수를 예치합니다.", target: .arenaOperations),
             .init(id: "ranked-battle-friendly", section: "RANKED 경기", route: .rank,
                   title: "친선전은 랭크 부담 없이 연습합니다.",
-                  message: "Ranked 사용자를 닉네임으로 초대하지만 티어·GP·학습일수는 움직이지 않습니다.", spotlight: .contentBottom),
+                  message: "아레나 더 보기의 친선전에서 Ranked 사용자를 닉네임으로 초대합니다. 티어·GP·학습일수는 움직이지 않습니다.", target: .arenaOperations),
             .init(id: "ranked-battle-invitations", section: "RANKED 경기", route: .rank,
-                  title: "받은 초대와 보낸 예약을 여기서 처리합니다.",
-                  message: "받은 초대는 조건을 보고 수락·거절하며, 보낸 예약은 상태와 취소 가능 여부를 확인합니다.", spotlight: .contentBottom),
+                  title: "초대와 예약은 조건을 보고 처리합니다.",
+                  message: "아레나 더 보기에서 받은 초대와 보낸 예약을 확인합니다. 수락·거절·취소는 직접 확인한 뒤 진행합니다.", target: .arenaOperations),
         ],
         "ranked_shop": [
             .init(id: "ranked-shop-wallet", section: "RANKED 상점", route: .arenaShop,
                   title: "상점은 사용 가능한 학습일수로 이용합니다.",
-                  message: "초대 예약이나 경기 예치 중인 일수는 쓸 수 없으므로 먼저 현재 잔액을 확인합니다.", spotlight: .contentTop),
+                  message: "초대 예약이나 경기 예치 중인 일수는 쓸 수 없으므로 먼저 현재 잔액을 확인합니다.", target: .arenaShopWallet),
             .init(id: "ranked-shop-grid", section: "RANKED 상점", route: .arenaShop,
-                  title: "필요한 효과의 카드를 선택합니다.",
-                  message: "경기 분석·일정 보호·프로필 효과의 가격과 적용 범위를 확인한 뒤 사용합니다.", spotlight: .contentMiddle),
+                  title: "효과의 가격과 적용 범위를 먼저 확인합니다.",
+                  message: "상품 카드에서 경기 분석·일정 보호·프로필 효과의 조건을 읽고 필요한 경우에만 직접 구매합니다.", target: .arenaShopCatalog),
         ],
     ]
 
@@ -1171,12 +1145,15 @@ struct NativeTutorialOverlay: View {
         Group {
             if let owner = runOwner, owns(owner), run != nil, steps.indices.contains(stepIndex) {
                 GeometryReader { proxy in
-                    let target = spotlightRect(for: steps[stepIndex].spotlight, in: proxy)
+                    let step = steps[stepIndex]
+                    let resolution = focusResolution(for: step.target, proxy: proxy)
+                    let candidates = targets[step.target] ?? []
+                    let rawTarget = candidates.count == 1 ? proxy[candidates[0].bounds] : nil
                     ZStack {
-                        if spotlightVisible {
+                        if spotlightVisible, let target = resolution.frame,
+                           TutorialFocusGeometry.isFinite(coachBounds) {
                             TutorialDimShape(spotlight: target)
                                 .fill(Color.black.opacity(0.72), style: FillStyle(eoFill: true))
-                                .ignoresSafeArea()
                                 .allowsHitTesting(false)
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .stroke(Tokens.brandCyan, lineWidth: 3)
@@ -1185,28 +1162,37 @@ struct NativeTutorialOverlay: View {
                                 .shadow(color: Tokens.brandCyan.opacity(0.45), radius: 10)
                                 .allowsHitTesting(false)
                         } else {
-                            Color.black.opacity(0.72).ignoresSafeArea()
+                            Color.black.opacity(0.72)
                         }
 
                         tutorialCard(
-                            step: steps[stepIndex],
+                            step: step,
                             proxy: proxy,
-                            sitsAboveTarget: target.midY > proxy.size.height * 0.52)
+                            resolution: resolution,
+                            placement: TutorialFocusGeometry.coachPlacement(
+                                target: rawTarget, viewport: CGRect(origin: .zero, size: proxy.size)))
                     }
+                    .coordinateSpace(name: "NativeTutorialOverlay")
+                    .onPreferenceChange(TutorialCoachBoundsPreference.self) { coachBounds = $0 }
+                    .onChange(of: proxy.size) { _, _ in requestCurrentFocus() }
                     .animation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.2),
                                value: spotlightVisible)
                 }
+                .ignoresSafeArea()
                 .transition(.opacity)
                 .zIndex(20_000)
                 .accessibilityElement(children: .contain)
                 .accessibilityAddTraits(.isModal)
+                .onAppear { recordFocusDiagnostic("run_appeared", owner: owner) }
+                .onDisappear { recordFocusDiagnostic("run_disappeared", owner: owner) }
             }
         }
         .task(id: triggerKey) { await startIfNeeded() }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { _ in
             if let owner = runOwner, !owns(owner) { clearRun(ifOwnedBy: owner.id) }
         }
-        .onDisappear { clearRun() }
+        .onAppear { recordFocusDiagnostic("overlay_appeared") }
+        .onDisappear { recordFocusDiagnostic("overlay_disappeared"); clearRun() }
         .task(id: runDescription) {
             coachFrame = 1
             guard run != nil, !reduceMotion, store.motionOn else { return }
@@ -1230,39 +1216,58 @@ struct NativeTutorialOverlay: View {
     private func tutorialCard(
         step: NativeTutorialStep,
         proxy: GeometryProxy,
-        sitsAboveTarget: Bool
+        resolution: TutorialFocusGeometry.Resolution,
+        placement: TutorialFocusGeometry.CoachPlacement
     ) -> some View {
-        let compact = proxy.size.width < 600
+        let sideBySide = placement == .left || placement == .right
+        let compact = sideBySide || proxy.size.width < 600
             || proxy.size.height < 500
             || dynamicTypeSize.isAccessibilitySize
-        let maximumPanelHeight = max(
-            220,
+        let shortHeight = proxy.size.height < 500
+        let availableHeight = max(
+            160,
             proxy.size.height - max(48, proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom + 36)
         )
-        VStack {
-            if !sitsAboveTarget { Spacer(minLength: 0) }
+        let maximumPanelHeight = shortHeight ? min(260, availableHeight) : availableHeight
+        let panelWidth = shortHeight || sideBySide ? 320.0 : 620.0
+        let alignment: Alignment = switch placement {
+        case .top: .top
+        case .bottom: .bottom
+        case .left: .leading
+        case .right: .trailing
+        }
             Group {
                 if compact {
                     tutorialPanel(
                         step: step,
                         compact: true,
+                        resolution: resolution,
+                        boundedCopy: shortHeight || dynamicTypeSize.isAccessibilitySize,
                         maximumHeight: maximumPanelHeight)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: panelWidth)
                 } else {
                     HStack(alignment: .bottom, spacing: Tokens.Space.s3) {
                         coachImage.frame(width: 88, height: 100)
                         tutorialPanel(
                             step: step,
                             compact: false,
+                            resolution: resolution,
+                            boundedCopy: dynamicTypeSize.isAccessibilitySize,
                             maximumHeight: maximumPanelHeight)
                             .frame(maxWidth: 620)
                     }
                 }
             }
+            .background {
+                GeometryReader { card in
+                    Color.clear.preference(key: TutorialCoachBoundsPreference.self,
+                                           value: card.frame(in: .named("NativeTutorialOverlay")))
+                }
+            }
             .padding(.horizontal, max(18, proxy.safeAreaInsets.leading + 18))
-            .padding(.vertical, max(24, proxy.safeAreaInsets.bottom + 24))
-            if sitsAboveTarget { Spacer(minLength: 0) }
-        }
+            .padding(.top, max(16, proxy.safeAreaInsets.top + 12))
+            .padding(.bottom, max(16, proxy.safeAreaInsets.bottom + 12))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
     }
 
     private var coachImage: some View {
@@ -1278,18 +1283,20 @@ struct NativeTutorialOverlay: View {
     private func tutorialPanel(
         step: NativeTutorialStep,
         compact: Bool,
+        resolution: TutorialFocusGeometry.Resolution,
+        boundedCopy: Bool,
         maximumHeight: CGFloat
     ) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             HStack(alignment: .top) {
                 Group {
-                    if dynamicTypeSize.isAccessibilitySize {
+                    if boundedCopy {
                         ScrollView(.vertical) {
                             tutorialCopy(step)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .scrollIndicators(.visible)
-                        .frame(maxHeight: max(96, maximumHeight - 132))
+                        .frame(height: max(64, min(160, maximumHeight - 164)))
                     } else {
                         tutorialCopy(step)
                     }
@@ -1308,6 +1315,16 @@ struct NativeTutorialOverlay: View {
                 value: Double(stepIndex + 1),
                 total: Double(max(1, steps.count)))
                 .tint(Tokens.primary)
+                Text(resolution == .missing
+                     ? "현재 이용 상태에서는 이 기능이 표시되지 않습니다. 다음 안내로 넘어가세요."
+                     : "화면에서 대상을 찾기 어렵다면 다음 안내로 넘어가도 됩니다.")
+                    .font(.mCaption)
+                    .foregroundStyle(Tokens.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    // Reserve the same coach area when focus appears. Otherwise
+                    // the panel can repeatedly grow over a target and shrink.
+                    .opacity(resolution.frame == nil ? 1 : 0)
+                    .accessibilityHidden(resolution.frame != nil)
             if let mutationError {
                 Text(mutationError)
                     .font(.mCaption)
@@ -1318,6 +1335,11 @@ struct NativeTutorialOverlay: View {
                 Text("\(stepIndex + 1) / \(steps.count)")
                     .font(.mCaption).foregroundStyle(Tokens.text3)
                 Spacer()
+                if resolution == .offscreen || resolution == .obscured {
+                    Button("대상 다시 찾기") { requestCurrentFocus() }
+                        .font(.mCaption)
+                        .disabled(mutationInFlight)
+                }
                 Button(stepIndex + 1 == steps.count ? "완료" : "다음") {
                     advance()
                 }
@@ -1326,14 +1348,9 @@ struct NativeTutorialOverlay: View {
             }
         }
         .padding(compact ? Tokens.Space.s4 : Tokens.Space.s5)
-        // 일반 글자 크기에서는 카드가 본문 높이만 감싸야 한다. 이전에는 아래
-        // maxHeight 프레임이 iPad의 큰 세로 제안을 그대로 받아 카드가 화면 대부분을
-        // 차지했고, HStack의 bottom 정렬을 타는 코치가 본문에서 수백 pt 떨어졌다.
-        // 접근성 글자 크기에서는 반대로 카드가 화면을 넘지 않아야 하므로 고정을
-        // 풀고 위 copy ScrollView + maximumHeight 제한을 그대로 사용한다.
-        .fixedSize(horizontal: false,
-                   vertical: !dynamicTypeSize.isAccessibilitySize)
-        .frame(maxHeight: dynamicTypeSize.isAccessibilitySize ? maximumHeight : nil)
+        // Only copy has a bounded scroll area. The coach must wrap its actual
+        // content instead of expanding to the entire landscape viewport.
+        .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
     }
 
@@ -1355,75 +1372,29 @@ struct NativeTutorialOverlay: View {
         }
     }
 
-    /// MainTabBar.items와 같은 순서다. 탭 개수나 순서가 바뀌어도 숫자 인덱스를
-    /// 튜토리얼 문장에 박아 두지 않도록 route로 타겟을 찾는다.
-    private static let tutorialTabRoutes: [AppStore.Route] = [
-        .home, .curriculum, .assess, .wrongNotes, .community, .rank,
-    ]
+    private func focusResolution(for target: TutorialTargetID, proxy: GeometryProxy) -> TutorialFocusGeometry.Resolution {
+        let entries = targets[target] ?? []
+        return TutorialFocusGeometry.resolve(
+            targets: entries.map { proxy[$0.bounds] },
+            clippingRects: entries.flatMap { $0.clippingBounds.map { proxy[$0] } },
+            viewport: CGRect(origin: .zero, size: proxy.size),
+            coach: TutorialFocusGeometry.isFinite(coachBounds) ? coachBounds : nil)
+    }
 
-    private func spotlightRect(
-        for spotlight: NativeTutorialStep.Spotlight,
-        in proxy: GeometryProxy
-    ) -> CGRect {
-        let size = proxy.size
-        let safeTop = proxy.safeAreaInsets.top
-        let safeBottom = proxy.safeAreaInsets.bottom
-        let contentTop = safeTop + 68
-        let contentBottom = max(contentTop + 120, size.height - safeBottom - 94)
-        let contentHeight = max(120, contentBottom - contentTop)
-        switch spotlight {
-        case .header:
-            return CGRect(x: 16, y: safeTop + 4,
-                          width: max(1, size.width - 32), height: 64)
-        case .contentTop:
-            return CGRect(x: 16, y: contentTop,
-                          width: max(1, size.width - 32),
-                          height: min(245, contentHeight * 0.34))
-        case .contentMiddle:
-            let height = min(260, contentHeight * 0.36)
-            return CGRect(x: 16,
-                          y: max(contentTop, (contentTop + contentBottom - height) / 2),
-                          width: max(1, size.width - 32), height: height)
-        case .contentBottom:
-            let height = min(245, contentHeight * 0.34)
-            return CGRect(x: 16, y: max(contentTop, contentBottom - height),
-                          width: max(1, size.width - 32), height: height)
-        case .tab(let route):
-            guard let index = Self.tutorialTabRoutes.firstIndex(of: route) else {
-                return CGRect(x: 16, y: contentTop,
-                              width: max(1, size.width - 32), height: 120)
-            }
-            let barWidth = min(560, size.width)
-            let originX = (size.width - barWidth) / 2
-            let width = barWidth / CGFloat(Self.tutorialTabRoutes.count)
-            return CGRect(x: originX + width * CGFloat(index),
-                          y: size.height - safeBottom - 74,
-                          width: width, height: 62).insetBy(dx: 4, dy: -3)
-        case .topAction(let route):
-            // 상단바 trailing 순서는 AI 튜터→알림→프로필이다. 오버레이의
-            // GeometryReader는 가로 safe area 안쪽 폭을 받으므로 profile과 같은
-            // 기준점에서 56pt(44pt 표적 + 12pt 간격)씩 왼쪽으로 이동한다.
-            let slotsFromProfile: CGFloat
-            switch route {
-            case .chat: slotsFromProfile = 2
-            case .notifications: slotsFromProfile = 1
-            default: slotsFromProfile = 0
-            }
-            return CGRect(
-                x: size.width - proxy.safeAreaInsets.trailing - 24 - slotsFromProfile * 56,
-                y: safeTop + 4, width: 56, height: 62)
-        case .profile:
-            // 오버레이 GeometryReader의 폭은 가로 safe area 안쪽에서 제안된다.
-            // 따라서 여기서 trailing inset을 다시 크게 빼면 한 칸 왼쪽의 알림 버튼을
-            // 두른다. 우측으로 열어 둔 24pt가 safe area 밖 아바타 중심까지 포함한다.
-            return CGRect(x: size.width - proxy.safeAreaInsets.trailing - 24,
-                          y: safeTop + 4, width: 56, height: 62)
-        }
+    private func requestCurrentFocus() {
+        recordFocusDiagnostic("focus_requested")
+        guard let owner = runOwner, owns(owner), steps.indices.contains(stepIndex) else { return }
+        TutorialFocusRequestCenter.request(steps[stepIndex].target, ownerID: owner.id,
+                                           animated: !reduceMotion && store.motionOn)
     }
 
     @MainActor
     private func startIfNeeded() async {
+        recordFocusDiagnostic("start_entered")
+        // A superseded .task(id:) is not a request to dismiss the live tour.
+        guard !Task.isCancelled else { return }
         if let owner = runOwner, !owns(owner) {
+            recordFocusDiagnostic("owner_invalid", owner: owner)
             clearRun(ifOwnedBy: owner.id)
             return
         }
@@ -1521,8 +1492,7 @@ struct NativeTutorialOverlay: View {
     }
 
     /// 사람에게 보이는 단계 번호(1부터)를 받아 유효 범위로 고정한다.
-    /// `-tutorialFixture dashboard -tutorialStep 31`로 마지막 profile spotlight를
-    /// 다른 화면을 30번 넘기지 않고 반복 검사할 수 있다.
+    /// `-tutorialFixture dashboard -tutorialStep 4`처럼 실제 단계를 바로 검사한다.
     private static func fixtureStepIndex(count: Int) -> Int {
         guard count > 0,
               let raw = argumentValue(after: "-tutorialStep"),
@@ -1533,15 +1503,22 @@ struct NativeTutorialOverlay: View {
 
     @MainActor
     private func settle(on route: AppStore.Route, owner: RunOwner) async {
+        recordFocusDiagnostic("settle_entered", owner: owner)
         guard owns(owner) else { return }
         spotlightVisible = false
-        withAnimation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.2),
-                      completionCriteria: .logicallyComplete) {
+        withAnimation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.2)) {
             store.route = route
-        } completion: {
-            guard owns(owner), run != nil, store.route == route else { return }
-            spotlightVisible = true
         }
+        // SwiftUI may retire the route animation before its completion is
+        // delivered. Actual target anchors and didMoveToWindow, not a visual
+        // animation callback or fixed delay, decide when focus is available.
+        guard owns(owner), run != nil, store.route == route else {
+            recordFocusDiagnostic("settle_rejected", owner: owner)
+            return
+        }
+        spotlightVisible = true
+        recordFocusDiagnostic("settle_completed", owner: owner)
+        requestCurrentFocus()
     }
 
     private func advance() {
@@ -1568,7 +1545,7 @@ struct NativeTutorialOverlay: View {
         mutationInFlight = true
         mutationError = nil
         mutationTask = Task {
-            guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
+            guard ownsMutation(owner) else { clearRun(ifOwnedBy: owner.id); return }
             do {
                 switch activeRun {
                 case .dashboard:
@@ -1577,12 +1554,12 @@ struct NativeTutorialOverlay: View {
                     _ = try await ServerAPI.updateArenaTutorial(
                         chapter: chapter, action: skipped ? "SKIP" : "COMPLETE", authorization: owner.request.authorization)
                 }
-                guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
+                guard ownsMutation(owner) else { clearRun(ifOwnedBy: owner.id); return }
                 let profile = try await ServerAPI.me(authorization: owner.request.authorization)
-                guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
+                guard ownsMutation(owner) else { clearRun(ifOwnedBy: owner.id); return }
                 store.acceptServerProfile(profile, owner: owner.request)
             } catch {
-                guard owns(owner) else { clearRun(ifOwnedBy: owner.id); return }
+                guard ownsMutation(owner) else { clearRun(ifOwnedBy: owner.id); return }
                 // 완료 상태가 서버에 저장되지 않으면 닫지 않는다. 재시도 가능한 같은
                 // 버튼을 남겨 기기만 완료된 거짓 상태를 만들지 않는다.
                 mutationInFlight = false
@@ -1789,6 +1766,7 @@ struct MainTabBar: View {
         .keyboardShortcut(KeyEquivalent(Character("\(ordinal)")), modifiers: .command)
         .accessibilityLabel(accessibilityLabel(for: item))
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .modifier(TutorialNavigationAnchor(route: item.route))
     }
 
     private func accessibilityLabel(for item: Item) -> String {
@@ -2343,7 +2321,7 @@ struct HomeScreen: View {
 /// 공용 iPad 에서 다른 학생의 숫자가 섞이지 않고, 7일이 지난 값은 이번 주 기록으로
 /// 오해될 위험이 커 쓰지 않는다(그때는 종전대로 로컬 집계로 시작한다).
 /// 서버가 정본이고 이 파일은 표시 전용 사본이다 — 여기서 집계하거나 병합하지 않는다.
-private enum DashboardActivityCache {
+enum DashboardActivityCache {
     private struct Envelope: Codable {
         var savedAt: Date
         var dashboard: ServerAPI.DashboardActivity
@@ -2543,7 +2521,7 @@ private enum DashboardActivitySource: Equatable {
     // 상태색을 다시 붙이려면 그게 왜 통계보다 중요한지부터 답해야 한다.
 }
 
-private enum LocalDashboardSnapshot {
+enum LocalDashboardSnapshot {
     static func make(now: Date = Date()) -> ServerAPI.DashboardActivity {
         // JSONL을 한 번만 읽고 서버와 같은 KST 경계·반올림 규칙으로 집계한다.
         let local = EventLog.dashboardSnapshot(now: now)

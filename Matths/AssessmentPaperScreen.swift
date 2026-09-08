@@ -62,7 +62,7 @@ struct AssessmentPaperScreen: View {
                         .font(.mCallout)
                         .foregroundStyle(Tokens.text2)
                         .multilineTextAlignment(.center)
-                    Button("평가센터로 돌아가기") { store.route = .assess }
+                    Button(returnLabel, action: closePaper)
                         .buttonStyle(PrimaryButtonStyle())
                         .frame(maxWidth: 280)
                 }
@@ -147,7 +147,7 @@ struct AssessmentPaperScreen: View {
                             if attempt.submittedAt == nil {
                                 submitRow(attempt)
                             } else {
-                                Button("평가센터로 돌아가기") { store.route = .assess }
+                                Button(returnLabel, action: closePaper)
                                     .buttonStyle(PrimaryButtonStyle())
                                     .frame(maxWidth: 280)
                             }
@@ -180,18 +180,11 @@ struct AssessmentPaperScreen: View {
 
     private var header: some View {
         HStack(spacing: Tokens.Space.s4) {
-            Button {
-                // 나가도 답안은 저장 — 웹 AssessmentAttempt 처럼 이어서 풀 수 있다
-                Task {
-                    guard await scratchpad.flush() else { return }
-                    await store.flushAssessmentDraft()
-                    store.route = .assess
-                }
-            } label: {
+            Button(action: closePaper) {
                 Image(systemName: "xmark").font(.mBodyB).foregroundStyle(Tokens.text3)
                     .frame(width: 44, height: 44)
             }
-            .accessibilityLabel("나가기")
+            .accessibilityLabel(returnLabel)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(store.currentAttempt?.title ?? "평가").font(.mBodyB).foregroundStyle(Tokens.ink)
@@ -248,6 +241,29 @@ struct AssessmentPaperScreen: View {
         .padding(.vertical, Tokens.Space.s2)
         .background(Tokens.surface)
         .overlay(alignment: .bottom) { Divider().overlay(Tokens.line) }
+    }
+
+    private var returnLabel: String {
+        store.assessmentReturnRoute == .curriculum ? "과목 학습으로 돌아가기" : "평가센터로 돌아가기"
+    }
+
+    private func closePaper() {
+        let account = store.captureAccountSessionBoundary()
+        let attemptID = store.currentAttemptID
+        let destination = store.assessmentReturnRoute
+        Task {
+            // Save before leaving, and never let a late close from the previous
+            // student or previous paper navigate the current screen away.
+            if attemptID != nil {
+                guard await scratchpad.flush() else { return }
+                guard store.ownsCurrentAccountSession(account), store.currentAttemptID == attemptID,
+                      store.route == .paper else { return }
+                await store.flushAssessmentDraft()
+            }
+            guard store.ownsCurrentAccountSession(account), store.currentAttemptID == attemptID,
+                  store.route == .paper else { return }
+            store.route = destination
+        }
     }
 
     private func answeredCount(_ a: AssessmentAttemptV2) -> Int {

@@ -13,6 +13,9 @@ const native=source.slice(source.indexOf('struct NativeTutorialOverlay: View {')
 function between(text,a,b) { const i=text.indexOf(a),j=text.indexOf(b,i); if(i<0||j<i)throw Error('Production boundary changed: '+a); return text.slice(i,j); }
 const owner=between(native,'    private struct RunOwner {','    @State private var runOwner:');
 const ownership=between(native,'    private var normalizedRole:','    private var steps:');
+const steps=between(native,'    private var steps:','    private func recordFocusDiagnostic(');
+const focus=between(native,'    private func requestCurrentFocus() {','    @MainActor\n    private func startIfNeeded() async {');
+const settle=between(native,'    @MainActor\n    private func settle(on route: AppStore.Route, owner: RunOwner) async {','    private func advance() {');
 const start=between(native,'    @MainActor\n    private func startIfNeeded() async {','    #if DEBUG\n    private static func argumentValue');
 const finish=between(native,'    private func finish(skipped: Bool) {','\n}\n');
 const app=fs.readFileSync(root+'/Matths/MatthsApp.swift','utf8');
@@ -23,15 +26,17 @@ fs.writeFileSync(out+'/flow.swift',`import Foundation
 let store: AppStore
 init(_ store:AppStore){self.store=store}
 var run: NativeTutorialRun?
-var stepIndex=0, spotlightVisible=false, mutationInFlight=false
+var stepIndex=0, spotlightVisible=false, mutationInFlight=false, reduceMotion=true
 var mutationError:String?
 private var runOwner:RunOwner?
 private var mutationTask:Task<Void,Never>?
-static let dashboardSteps=[NativeTutorialStep(route:.home)]
-static let arenaSteps=["unranked":[NativeTutorialStep(route:.rank)],"ranked":[NativeTutorialStep(route:.rank)],"ranked_shop":[NativeTutorialStep(route:.arenaShop)]]
-private func settle(on route:AppStore.Route,owner:RunOwner)async {guard owns(owner)else{return};store.route=route;spotlightVisible=true}
-${owner}${ownership}${start}${finish}
+// View diagnostic output is not part of the authorization model.
+private func recordFocusDiagnostic(_ stage:String, owner:RunOwner? = nil) {}
+static let dashboardSteps=[NativeTutorialStep(route:.home,target:.todayPrimaryAction)]
+static let arenaSteps=["unranked":[NativeTutorialStep(route:.rank,target:.arenaMatchmaking)],"ranked":[NativeTutorialStep(route:.rank,target:.arenaMatchmaking)],"ranked_shop":[NativeTutorialStep(route:.arenaShop,target:.arenaShopWallet)]]
+${owner}${ownership}${steps}${focus}${settle}${start}${finish}
 func start()async {await startIfNeeded()}
+func settleCurrent(on route:AppStore.Route)async {guard let owner=runOwner else{return};await settle(on:route,owner:owner)}
 func begin(_ value:NativeTutorialRun){precondition(claimRun() != nil);run=value}
 func stop(){clearRun()}
 func save(skipped:Bool=false)->Task<Void,Never>?{finish(skipped:skipped);return mutationTask}
@@ -70,12 +75,12 @@ var ownerID:UUID?{presentationOwner?.id}
 }
 `);
 if(!native.includes('if let owner = runOwner, owns(owner), run != nil, steps.indices.contains(stepIndex)'))throw Error('Stale run still visible');
-if(!native.includes('.onDisappear { clearRun() }')||!native.includes('DataScope.didSwitchNotification'))throw Error('Missing lifecycle cleanup');
+if(!native.includes('.onDisappear { recordFocusDiagnostic("overlay_disappeared"); clearRun() }')||!native.includes('DataScope.didSwitchNotification'))throw Error('Missing lifecycle cleanup');
 if(!native.includes('String(describing: store.captureAccountSessionBoundary())')||!native.includes('DataScope.slot, normalizedRole'))throw Error('Missing identity or role trigger');
-if(!native.includes('guard owns(owner), run != nil, store.route == route else { return }'))throw Error('Stale animation completion can reopen');
+if(!native.includes('guard owns(owner), run != nil, store.route == route else {'))throw Error('Stale route settlement can activate a tutorial');
 if(!legacy.includes('if let owner = presentationOwner, owns(owner), isPresented'))throw Error('Stale legacy view remains visible');
 if(!legacy.includes('DataScope.didSwitchNotification')||!legacy.includes('.onDisappear { clearPresentation() }'))throw Error('Legacy lifecycle cleanup missing');
 JS
-xcrun swiftc -swift-version 5 "$TEST_DIR/lease.swift" "$ROOT/Matths/AccountRequestOwner.swift" \
+xcrun swiftc -swift-version 5 "$TEST_DIR/lease.swift" "$ROOT/Matths/AccountRequestOwner.swift" "$ROOT/Matths/TutorialFocus.swift" \
   "$TEST_DIR/flow.swift" "$TEST_DIR/restart.swift" "$TEST_DIR/legacy.swift" "$ROOT/tests/NativeTutorialAccountBoundaryCases.swift" -o "$TEST_DIR/cases"
 "$TEST_DIR/cases"

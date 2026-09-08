@@ -20,8 +20,8 @@ awk '/private func startIfNeeded\(\) async/,/private static func argumentValue/'
 
 dashboard_count=$(grep -c '\.init(id:' "$work/dashboard")
 arena_count=$(grep -c '\.init(id:' "$work/arena")
-[ "$dashboard_count" -eq 31 ] || {
-  echo "FAIL: native dashboard tutorial must contain 31 mapped steps, found $dashboard_count" >&2
+[ "$dashboard_count" -ge 5 ] || {
+  echo "FAIL: native dashboard tutorial must cover the current navigation, found $dashboard_count" >&2
   exit 1
 }
 [ "$arena_count" -eq 23 ] || {
@@ -55,19 +55,37 @@ grep -Fq 'store.requestedArenaTutorialChapter = chapter' "$profile"
 grep -Fq 'store.route = chapter == "ranked_shop" ? .arenaShop : .rank' "$profile"
 grep -Fq 'store.route = .home' "$profile"
 
-# MainTabBar has six destinations. Spotlight geometry must share that route order
-# instead of the old hard-coded five-column arithmetic.
-grep -Fq '.home, .curriculum, .assess, .wrongNotes, .community, .rank' "$root_view"
-grep -Fq 'Self.tutorialTabRoutes.firstIndex(of: route)' "$root_view"
-grep -Fq 'Self.tutorialTabRoutes.count' "$root_view"
-grep -Fq 'size.width - proxy.safeAreaInsets.trailing - 24' "$root_view"
-
-# The web tutorial covers all major destinations. Native mapping may merge web-only
-# pages, but it must not omit a real app tab or its top-level tools.
-grep -Fq 'route: .community' "$work/dashboard"
-grep -Fq 'spotlight: .tab(.community)' "$work/dashboard"
-grep -Fq 'spotlight: .topAction(.chat)' "$work/dashboard"
-grep -Fq 'route: .pro' "$work/dashboard"
+# Real views, not a guessed six-column bar or screen fractions, own spotlight geometry.
+node - "$root" "$work/dashboard" "$work/arena" <<'JS'
+const fs=require('node:fs'); const [root,dashboardPath,arenaPath]=process.argv.slice(2);
+const source=fs.readFileSync(root+'/Matths/RootView.swift','utf8');
+const dashboard=fs.readFileSync(dashboardPath,'utf8'), arena=fs.readFileSync(arenaPath,'utf8');
+for(const forbidden of ['spotlightRect(', 'tutorialTabRoutes', 'case contentTop', 'case contentMiddle', 'case contentBottom', 'home-coach'])
+  if(source.includes(forbidden))throw Error('Guessed or nonexistent tutorial target remains: '+forbidden);
+for(const id of ['todayPrimaryAction','learningCourses','weeklyMockEntry','quickPracticeStart','proEntry','tabLearning','tabRecords','tabMe','wrongNotes','topChat','communityBrowse','profileSettings'])
+  if(!dashboard.includes('target: .'+id))throw Error('Missing actual native entry '+id);
+for(const route of ['.home','.learn','.rank','.records','.me'])
+  if(!dashboard.includes('route: '+route))throw Error('Missing current navigation '+route);
+if(!source.includes('proxy[$0.bounds]')||!source.includes('clippingRects:')||!source.includes('resolution.frame'))
+  throw Error('Spotlight is not resolved from actual/clipped bounds');
+if(!source.includes('TutorialFocusRequestCenter.cancel(ownerID: previous.id)')||!source.includes('.onChange(of: proxy.size)'))
+  throw Error('Scroll focus lacks owner cleanup or rotation refresh');
+const anchors=fs.readdirSync(root+'/Matths').filter(x=>x.endsWith('.swift'))
+  .map(x=>fs.readFileSync(root+'/Matths/'+x,'utf8')).join('\n');
+for(const target of [...dashboard.matchAll(/target: \.(\w+)/g),...arena.matchAll(/target: \.(\w+)/g)].map(x=>x[1])){
+  const navigation=fs.readFileSync(root+'/Matths/TutorialNavigationAnchor.swift','utf8');
+  const viaNavigation=target.startsWith('tab')&&navigation.includes(': .'+target)&&navigation.includes('content.tutorialTarget(target)');
+  if(!anchors.includes('.tutorialTarget(.'+target)&&!viaNavigation)throw Error('Unimplemented tutorial anchor '+target);
+}
+const arenaSource=fs.readFileSync(root+'/Matths/GoatArenaScreen.swift','utf8');
+const compact=arenaSource.slice(arenaSource.indexOf('private func compactPrimaryAction('),arenaSource.indexOf('private func canInspectMatchedGame('));
+const noCycle=compact.slice(compact.indexOf('} else if snapshot.cycle == nil {'),compact.indexOf('} else if let match = snapshot.activeMatch {'));
+const placement=compact.slice(compact.indexOf('} else if snapshot.ranking.skill.status == "PLACEMENT_PENDING"'),compact.indexOf('} else if let cycle = snapshot.cycle,'));
+if(noCycle.includes('.arenaMatchmaking')||placement.includes('.arenaMatchmaking'))throw Error('Non-match CTA mislabeled as matchmaking');
+if(!noCycle.includes('.arenaEligibility')||!placement.includes('.placementEntry'))throw Error('Conditional CTA semantics lost');
+if(!/id: "unranked-battle"[\s\S]*?target: \.arenaMatchmaking/.test(arena))throw Error('Reported Unranked step is not on actual match CTA');
+console.log('Actual native target mapping and conditional Arena CTA checks passed');
+JS
 
 # Keep an authenticated-state-independent visual fixture so phone and iPad
 # layouts can be rendered in CI without mutating a real tutorial account.
@@ -107,7 +125,8 @@ grep -Fq 'proxy.size.height < 500' "$root_view"
 grep -Fq 'dynamicTypeSize.isAccessibilitySize' "$root_view"
 grep -Fq '.scrollIndicators(.visible)' "$root_view"
 grep -Fq '.fixedSize(horizontal: false,' "$root_view"
-grep -Fq 'vertical: !dynamicTypeSize.isAccessibilitySize)' "$root_view"
-grep -Fq '.frame(maxHeight: dynamicTypeSize.isAccessibilitySize ? maximumHeight : nil)' "$root_view"
+grep -Fq '.fixedSize(horizontal: false, vertical: true)' "$root_view"
+grep -Fq 'let panelWidth = shortHeight || sideBySide ? 320.0 : 620.0' "$root_view"
+grep -Fq 'TutorialFocusGeometry.coachPlacement(' "$root_view"
 
-echo "Native tutorial parity contract passed (dashboard=31, arena=23, chapters=6)"
+echo "Native tutorial parity contract passed (dashboard=$dashboard_count, arena=$arena_count, chapters=6; actual anchors)"

@@ -724,11 +724,40 @@ flush = body(app, "func flushAssessmentDraft() async")
 if not re.search(r"await\s+persistLearningImmediately\s*\(\s*\.assessments", flush):
     fail("평가 화면 이탈 전 로컬 최신 답안을 즉시 저장하지 않습니다")
 header = body(paper, "private var header: some View")
-exit_task = body(header, "Task")
-draft_flush = exit_task.find("await store.flushAssessmentDraft()")
-exit_route = exit_task.find("store.route = .assess")
-if draft_flush < 0 or exit_route < 0 or draft_flush > exit_route:
-    fail("평가 나가기에서 로컬 flush 완료 전에 화면을 전환합니다")
+if "Button(action: closePaper)" not in header:
+    fail("평가 헤더 나가기가 공통 저장 후 복귀 동작을 호출하지 않습니다")
+paper_document = body(paper, "private func paperDocument(")
+if "Button(returnLabel, action: closePaper)" not in paper_document:
+    fail("평가 결과의 복귀 버튼이 공통 저장 후 복귀 동작을 호출하지 않습니다")
+close_paper = body(paper, "private func closePaper()")
+require_in_order(
+    close_paper,
+    ["let account = store.captureAccountSessionBoundary()",
+     "let attemptID = store.currentAttemptID",
+     "let destination = store.assessmentReturnRoute",
+     "Task {"],
+    "평가 나가기가 비동기 저장 전에 계정·회차·복귀 위치를 캡처하지 않습니다",
+)
+# X와 결과 복귀가 이제 같은 함수에 모인다. 예전 header 안 Task만 찾으면
+# 실제 저장 구현을 검사하지 못한다. 새 함수의 flush 순서와 늦은 화면 이동
+# 방어를 함께 검사하며, 원래의 'flush 전에 route 변경 금지'는 그대로 유지한다.
+exit_task = body(close_paper, "Task")
+require_in_order(
+    exit_task,
+    ["if attemptID != nil",
+     "guard await scratchpad.flush() else { return }",
+     "guard store.ownsCurrentAccountSession(account)",
+     "store.currentAttemptID == attemptID",
+     "store.route == .paper",
+     "await store.flushAssessmentDraft()",
+     "guard store.ownsCurrentAccountSession(account)",
+     "store.currentAttemptID == attemptID",
+     "store.route == .paper",
+     "store.route = destination"],
+    "평가 나가기가 메모·답안 flush 및 계정·회차·현재 화면 재검증 전에 화면을 전환합니다",
+)
+if len(re.findall(r"store\.route\s*=(?!=)", exit_task)) != 1 or re.search(r"store\.route\s*=(?!=)", header):
+    fail("평가 나가기에 공통 저장 장벽을 우회하는 화면 전환이 있습니다")
 
 # 평가 네트워크/파일 await 동안 같은 물리 슬롯의 새 세션이 시작될 수도 있다.
 # 캡처한 AccountSessionBoundary가 아직 활성인지 다시 확인한 뒤에만 상태를 반영한다.

@@ -1,13 +1,11 @@
 //  KakaoSignInCoordinator.swift
 //  Matths
 //
-//  카카오 로그인 — 서버 PKCE 왕복. **카카오 SDK 를 쓰지 않는다.**
+//  카카오 로그인 — 공식 SDK 앱 전환 + 서버 검증·PKCE 교환.
 //
-//  왜 SDK 가 아닌가: SDK 를 넣으면 앱에 네이티브 키가 박히고, 카카오톡 앱 전환
-//  경로와 웹 폴백 두 갈래를 각각 관리해야 하며, 서드파티 의존이 하나 더 는다
-//  (고지 목록도 따라 늘어난다 — ProfileScreen.licenses). 서버는 이미 카카오
-//  OAuth 를 웹에서 돌리고 있었고, 앱용 진입점 한 줄만 없었다. 그래서 구글이
-//  쓰던 길을 그대로 탄다.
+//  네이티브 경로를 지원하는 서버에서는 카카오톡 인증을 먼저 사용한다.
+//  SDK 토큰만으로 Matths에 로그인하지 않고 서버가 발급 앱·사용자를 검증한다.
+//  신규 가입·이메일 연결은 기존 웹 절차를 유지하며 구형 서버도 그대로 지원한다.
 //
 //    앱 → GET  /auth/kakao/app?code_challenge=…   (ASWebAuthenticationSession)
 //        → 카카오 동의 → 서버 콜백
@@ -15,10 +13,7 @@
 //    앱 → POST /api/v1/auth/social/exchange       (code + codeVerifier)
 //        → AuthResponse
 //
-//  GoogleSignInCoordinator 와 거의 같은 모양이다. **일부러 합치지 않았다.**
-//  구글 경로는 지금 유일하게 살아 있는 소셜 로그인이고, 8/23 심사 제출 이틀 전에
-//  공용 부모로 끌어올리면 그 경로까지 같이 흔든다. 제출 뒤 둘을 하나로 모으는 게
-//  맞고, 그때 이 주석이 근거가 된다.
+//  GoogleSignInCoordinator의 정상 웹 인증 경로는 변경하지 않는다.
 
 import AuthenticationServices
 import CryptoKit
@@ -29,8 +24,17 @@ import UIKit
 final class KakaoSignInCoordinator: NSObject, ObservableObject,
     ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
+    private var sessionRequestID: UUID?
+    private var sessionContinuation: CheckedContinuation<URL, Error>?
+    private var sessionDiagnosticAttemptID: UUID?
+    #if canImport(KakaoSDKUser)
+    private let nativeSignIn = KakaoNativeSignIn()
+    #endif
 
     func signIn() async throws -> AuthResponse {
+        try Task.checkCancellation()
+        let diagnosticAttemptID = AuthFlowDiagnostics.currentAttemptID
+        AuthFlowDiagnostics.record("provider_lookup", attemptID: diagnosticAttemptID)
         let providers = try await ServerAPI.socialAuthProviders()
         guard providers.first(where: { $0.key == "kakao" })?.configured == true else {
             throw ServerAPIError(
@@ -41,6 +45,19 @@ final class KakaoSignInCoordinator: NSObject, ObservableObject,
         try Task.checkCancellation()
         let codeVerifier = try Self.makeCodeVerifier()
         let codeChallenge = Self.makeCodeChallenge(codeVerifier)
+        #if canImport(KakaoSDKUser)
+        if providers.first(where: { $0.key == "kakao" })?.nativeConfigured == true {
+            do {
+                let token = try await nativeSignIn.token()
+                try Task.checkCancellation()
+                let code = try await ServerAPI.beginNativeKakaoLogin(accessToken: token, codeChallenge: codeChallenge)
+                try Task.checkCancellation()
+                return try await ServerAPI.exchangeSocialAuthCode(code, codeVerifier: codeVerifier)
+            } catch let error as ServerAPIError where error.code == "KAKAO_NATIVE_REGISTRATION_REQUIRED" {
+                // Keep existing registration/consent and verified-email linking.
+            }
+        }
+        #endif
         // 로그인 전 공개 진입점이라 Bearer API router 와 분리돼 있다.
         // (구글에서 `/api/v1` 미들웨어 순서 때문에 시작 요청이 401 로 잠겼던 회귀가 있었다.)
         var startComponents = URLComponents(
@@ -55,12 +72,16 @@ final class KakaoSignInCoordinator: NSObject, ObservableObject,
                 message: "카카오 로그인 주소를 만들지 못했습니다.",
                 code: "SOCIAL_AUTH_START_URL_INVALID")
         }
-        let callbackURL = try await openAuthenticationSession(startURL: startURL)
+        let callbackURL = try await openAuthenticationSession(startURL: startURL, diagnosticAttemptID: diagnosticAttemptID)
+        try Task.checkCancellation()
         let code = try callbackCode(callbackURL, expectedPath: "/kakao")
-        return try await ServerAPI.exchangeSocialAuthCode(
+        AuthFlowDiagnostics.record("exchange_started", attemptID: diagnosticAttemptID)
+        let response = try await ServerAPI.exchangeSocialAuthCode(
             code,
             codeVerifier: codeVerifier
         )
+        AuthFlowDiagnostics.record("exchange_succeeded", attemptID: diagnosticAttemptID)
+        return response
     }
 
     func reauthenticateForAccountDeletion()
@@ -77,44 +98,81 @@ final class KakaoSignInCoordinator: NSObject, ObservableObject,
                 code: "ACCOUNT_REAUTHENTICATION_START_URL_INVALID")
         }
         let callbackURL = try await openAuthenticationSession(startURL: startURL)
+        try Task.checkCancellation()
         let proof = try callbackCode(callbackURL, expectedPath: "/kakao-reauth")
         return ServerAPI.KakaoWithdrawalReauthentication(
             proof: proof,
             codeVerifier: codeVerifier)
     }
 
-    private func openAuthenticationSession(startURL: URL) async throws -> URL {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<URL, Error>) in
-            let session = ASWebAuthenticationSession(
-                url: startURL,
-                callbackURLScheme: "matths"
-            ) { [weak self] url, error in
-                Task { @MainActor in
-                    self?.session = nil
-                    if let error { continuation.resume(throwing: error); return }
-                    guard let url else {
-                        continuation.resume(throwing: ServerAPIError(
-                            message: "카카오 로그인 결과를 확인하지 못했습니다.",
-                            code: "SOCIAL_AUTH_CALLBACK_MISSING"))
-                        return
-                    }
-                    continuation.resume(returning: url)
+    private func openAuthenticationSession(startURL: URL, diagnosticAttemptID: UUID? = nil) async throws -> URL {
+        try Task.checkCancellation()
+        cancel()
+        let requestID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
                 }
+                self.sessionRequestID = requestID
+                self.sessionContinuation = continuation
+                self.sessionDiagnosticAttemptID = diagnosticAttemptID
+                let session = ASWebAuthenticationSession(
+                    url: startURL,
+                    callbackURLScheme: "matths"
+                ) { [weak self] url, error in
+                    Task { @MainActor in
+                        if let error { self?.finishSession(requestID, result: .failure(error)); return }
+                        guard let url else {
+                            self?.finishSession(requestID, result: .failure(ServerAPIError(
+                                message: "카카오 로그인 결과를 확인하지 못했습니다.",
+                                code: "SOCIAL_AUTH_CALLBACK_MISSING")))
+                            return
+                        }
+                        self?.finishSession(requestID, result: .success(url))
+                    }
+                }
+                session.presentationContextProvider = self
+                session.prefersEphemeralWebBrowserSession = false
+                self.session = session
+                guard session.start() else {
+                    finishSession(requestID, result: .failure(ServerAPIError(
+                        message: "카카오 로그인 화면을 열지 못했습니다.",
+                        code: "SOCIAL_AUTH_START_FAILED")))
+                    return
+                }
+                AuthFlowDiagnostics.record("browser_started", attemptID: diagnosticAttemptID)
             }
-            session.presentationContextProvider = self
-            // 카카오톡·카카오계정 로그인 상태를 살리려면 사파리 쿠키를 공유해야 한다.
-            // ephemeral 이면 매번 아이디부터 다시 치게 된다.
-            session.prefersEphemeralWebBrowserSession = false
-            self.session = session
-            guard session.start() else {
-                self.session = nil
-                continuation.resume(throwing: ServerAPIError(
-                    message: "카카오 로그인 화면을 열지 못했습니다.",
-                    code: "SOCIAL_AUTH_START_FAILED"))
-                return
-            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in self?.cancelSession(requestID) }
         }
+    }
+
+    private func finishSession(_ requestID: UUID, result: Result<URL, Error>) {
+        guard sessionRequestID == requestID, let continuation = sessionContinuation else { return }
+        if case .success = result { AuthFlowDiagnostics.record("callback_received", attemptID: sessionDiagnosticAttemptID) }
+        sessionDiagnosticAttemptID = nil
+        sessionRequestID = nil
+        sessionContinuation = nil
+        session = nil
+        continuation.resume(with: result)
+    }
+
+    private func cancelSession(_ requestID: UUID) {
+        guard sessionRequestID == requestID else { return }
+        let previousSession = session
+        let continuation = sessionContinuation
+        // Retire ownership before cancel(), whose callback may arrive later or
+        // immediately. A late callback can never release the next session.
+        sessionRequestID = nil
+        sessionContinuation = nil
+        session = nil
+        previousSession?.cancel()
+        sessionDiagnosticAttemptID = nil
+        // Programmatic cancel must finish our waiter even if the system does
+        // not call its completion handler. User-cancel errors stay quiet in UI.
+        continuation?.resume(throwing: ASWebAuthenticationSessionError(.canceledLogin))
     }
 
     /// 콜백은 반드시 `matths://oauth/kakao` 여야 한다. 경로를 확인하지 않으면
@@ -156,8 +214,11 @@ final class KakaoSignInCoordinator: NSObject, ObservableObject,
     }
 
     func cancel() {
-        session?.cancel()
-        session = nil
+        #if canImport(KakaoSDKUser)
+        nativeSignIn.cancel()
+        #endif
+        guard let requestID = sessionRequestID else { return }
+        cancelSession(requestID)
     }
 
     private static func makeCodeVerifier() throws -> String {

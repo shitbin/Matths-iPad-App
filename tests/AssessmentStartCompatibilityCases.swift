@@ -43,7 +43,7 @@ enum ServerAPI {
 @MainActor final class AppStore {
     struct AccountSessionBoundary { let slot: String; let generation: UUID }
     enum Snapshot { case assessments([AssessmentAttemptV2]) }
-    enum Route { case assess, paper }
+    enum Route { case assess, paper, curriculum }
     let slot: String
     var accountGeneration = UUID()
     var assessmentStartGeneration = UUID()
@@ -51,6 +51,8 @@ enum ServerAPI {
     var assessmentSyncError: String?
     var attemptsV2 = AttemptStoreV2()
     var currentAttemptID: String?
+    var assessmentReturnRoute = Route.assess
+    var selectedCourseV2ID: String?
     var route = Route.assess
     var persistenceSucceeds = true
     var onPersist: (() -> Void)?
@@ -127,6 +129,17 @@ enum ServerAPI {
         await legacy.exerciseAssessmentStart()
         let afterLegacy = try await AssessmentStartJournal.shared.ticket(scope: scope, slot: legacy.slot)
         precondition(afterLegacy != legacyTicket)
+        remote.status = "in-progress"
+        ServerAPI.response = try JSONEncoder().encode(["assessment": remote])
+        let direct = AppStore(slot: "direct-entry-origin")
+        direct.assessmentReturnRoute = .curriculum
+        await direct.exerciseAssessmentStart()
+        precondition(direct.route == .paper && direct.assessmentReturnRoute == .assess,
+                     "a direct start must not inherit the previous course origin")
+        let courseEntry = AppStore(slot: "course-entry-origin")
+        await courseEntry.exerciseCourseAssessmentStart()
+        precondition(courseEntry.route == .paper && courseEntry.assessmentReturnRoute == .curriculum)
+        precondition(courseEntry.selectedCourseV2ID == "common-math-1", "course selection survives authentication/reset")
         print("Actual startServerPaper body: typed 409/legacy-envelope cancellation, generic/key-conflict retention, no blind retry, failed persistence, local evidence and account-switch guards: PASS")
     }
 }

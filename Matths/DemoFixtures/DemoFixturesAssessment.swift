@@ -28,13 +28,13 @@ enum DemoAssessmentFixtures {
           "questions": \#(gradedQuestions),
           "answers": ["b", "c", "12", "a", "7"],
           "startedAt": "@T-8d@",
-          "deadlineAt": "@T-8d@",
-          "submittedAt": "@T-8d@",
+          "deadlineAt": "@T-11480m@",
+          "submittedAt": "@T-11490m@",
           "scorePercent": 88,
           "passed": true,
           "timeLimitMs": 2400000,
           "disqualified": false,
-          "updatedAt": "@T-8d@"
+          "updatedAt": "@T-11490m@"
         },
         {
           "id": "demo-assessment-02",
@@ -47,13 +47,13 @@ enum DemoAssessmentFixtures {
           "questions": \#(gradedQuestions),
           "answers": ["b", "a", "12", "d", "7"],
           "startedAt": "@T-3d@",
-          "deadlineAt": "@T-3d@",
-          "submittedAt": "@T-3d@",
+          "deadlineAt": "@T-4300m@",
+          "submittedAt": "@T-4303m@",
           "scorePercent": 60,
           "passed": false,
           "timeLimitMs": 1200000,
           "disqualified": false,
-          "updatedAt": "@T-3d@"
+          "updatedAt": "@T-4303m@"
         },
         {
           "id": "demo-assessment-03",

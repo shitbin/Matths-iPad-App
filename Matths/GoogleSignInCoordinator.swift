@@ -7,8 +7,14 @@ import UIKit
 final class GoogleSignInCoordinator: NSObject, ObservableObject,
     ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
+    private var sessionRequestID: UUID?
+    private var sessionContinuation: CheckedContinuation<URL, Error>?
+    private var sessionDiagnosticAttemptID: UUID?
 
     func signIn() async throws -> AuthResponse {
+        try Task.checkCancellation()
+        let diagnosticAttemptID = AuthFlowDiagnostics.currentAttemptID
+        AuthFlowDiagnostics.record("provider_lookup", attemptID: diagnosticAttemptID)
         let providers = try await ServerAPI.socialAuthProviders()
         guard providers.first(where: { $0.key == "google" })?.configured == true else {
             throw ServerAPIError(
@@ -34,17 +40,21 @@ final class GoogleSignInCoordinator: NSObject, ObservableObject,
                 message: "Google 로그인 주소를 만들지 못했습니다.",
                 code: "SOCIAL_AUTH_START_URL_INVALID")
         }
-        let callbackURL = try await openAuthenticationSession(startURL: startURL)
+        let callbackURL = try await openAuthenticationSession(startURL: startURL, diagnosticAttemptID: diagnosticAttemptID)
+        try Task.checkCancellation()
 
         let code = try callbackCode(
             callbackURL,
             expectedPath: "/google",
             missingCodeMessage: "Google 로그인 확인 코드가 없습니다.")
         // 교환은 provider 를 보지 않는다 — 카카오와 같은 주소를 쓴다.
-        return try await ServerAPI.exchangeSocialAuthCode(
+        AuthFlowDiagnostics.record("exchange_started", attemptID: diagnosticAttemptID)
+        let response = try await ServerAPI.exchangeSocialAuthCode(
             code,
             codeVerifier: codeVerifier
         )
+        AuthFlowDiagnostics.record("exchange_succeeded", attemptID: diagnosticAttemptID)
+        return response
     }
 
     func reauthenticateForAccountDeletion()
@@ -61,6 +71,7 @@ final class GoogleSignInCoordinator: NSObject, ObservableObject,
                 code: "ACCOUNT_REAUTHENTICATION_START_URL_INVALID")
         }
         let callbackURL = try await openAuthenticationSession(startURL: startURL)
+        try Task.checkCancellation()
         let proof = try callbackCode(
             callbackURL,
             expectedPath: "/google-reauth",
@@ -70,36 +81,74 @@ final class GoogleSignInCoordinator: NSObject, ObservableObject,
             codeVerifier: codeVerifier)
     }
 
-    private func openAuthenticationSession(startURL: URL) async throws -> URL {
-        try await withCheckedThrowingContinuation {
-            (continuation: CheckedContinuation<URL, Error>) in
-            let session = ASWebAuthenticationSession(
-                url: startURL,
-                callbackURLScheme: "matths"
-            ) { [weak self] url, error in
-                Task { @MainActor in
-                    self?.session = nil
-                    if let error { continuation.resume(throwing: error); return }
-                    guard let url else {
-                        continuation.resume(throwing: ServerAPIError(
-                            message: "Google 로그인 결과를 확인하지 못했습니다.",
-                            code: "SOCIAL_AUTH_CALLBACK_MISSING"))
-                        return
-                    }
-                    continuation.resume(returning: url)
+    private func openAuthenticationSession(startURL: URL, diagnosticAttemptID: UUID? = nil) async throws -> URL {
+        try Task.checkCancellation()
+        cancel()
+        let requestID = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
                 }
+                self.sessionRequestID = requestID
+                self.sessionContinuation = continuation
+                self.sessionDiagnosticAttemptID = diagnosticAttemptID
+                let session = ASWebAuthenticationSession(
+                    url: startURL,
+                    callbackURLScheme: "matths"
+                ) { [weak self] url, error in
+                    Task { @MainActor in
+                        if let error { self?.finishSession(requestID, result: .failure(error)); return }
+                        guard let url else {
+                            self?.finishSession(requestID, result: .failure(ServerAPIError(
+                                message: "Google 로그인 결과를 확인하지 못했습니다.",
+                                code: "SOCIAL_AUTH_CALLBACK_MISSING")))
+                            return
+                        }
+                        self?.finishSession(requestID, result: .success(url))
+                    }
+                }
+                session.presentationContextProvider = self
+                session.prefersEphemeralWebBrowserSession = false
+                self.session = session
+                guard session.start() else {
+                    finishSession(requestID, result: .failure(ServerAPIError(
+                        message: "Google 로그인 화면을 열지 못했습니다.",
+                        code: "SOCIAL_AUTH_START_FAILED")))
+                    return
+                }
+                AuthFlowDiagnostics.record("browser_started", attemptID: diagnosticAttemptID)
             }
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = false
-            self.session = session
-            guard session.start() else {
-                self.session = nil
-                continuation.resume(throwing: ServerAPIError(
-                    message: "Google 로그인 화면을 열지 못했습니다.",
-                    code: "SOCIAL_AUTH_START_FAILED"))
-                return
-            }
+        } onCancel: { [weak self] in
+            Task { @MainActor in self?.cancelSession(requestID) }
         }
+    }
+
+    private func finishSession(_ requestID: UUID, result: Result<URL, Error>) {
+        guard sessionRequestID == requestID, let continuation = sessionContinuation else { return }
+        if case .success = result { AuthFlowDiagnostics.record("callback_received", attemptID: sessionDiagnosticAttemptID) }
+        sessionDiagnosticAttemptID = nil
+        sessionRequestID = nil
+        sessionContinuation = nil
+        session = nil
+        continuation.resume(with: result)
+    }
+
+    private func cancelSession(_ requestID: UUID) {
+        guard sessionRequestID == requestID else { return }
+        let previousSession = session
+        let continuation = sessionContinuation
+        // Retire ownership before cancel(), whose callback may arrive later or
+        // immediately. A late callback can never release the next session.
+        sessionRequestID = nil
+        sessionContinuation = nil
+        session = nil
+        previousSession?.cancel()
+        sessionDiagnosticAttemptID = nil
+        // Programmatic cancel must finish our waiter even if the system does
+        // not call its completion handler. User-cancel errors stay quiet in UI.
+        continuation?.resume(throwing: ASWebAuthenticationSessionError(.canceledLogin))
     }
 
     private func callbackCode(
@@ -143,8 +192,8 @@ final class GoogleSignInCoordinator: NSObject, ObservableObject,
     }
 
     func cancel() {
-        session?.cancel()
-        session = nil
+        guard let requestID = sessionRequestID else { return }
+        cancelSession(requestID)
     }
 
     private static func makeCodeVerifier() throws -> String {

@@ -50,8 +50,10 @@ struct ArenaShopScreen: View {
                 } else if let shop {
                     if compactHeight && !dynamicTypeSize.isAccessibilitySize {
                         compactWallet(shop)
+                            .tutorialTarget(.arenaShopWallet)
                     } else {
                         wallet(shop)
+                            .tutorialTarget(.arenaShopWallet)
                     }
                     if shop.policy.sundayLocked { policyLock(shop.policy) }
                     if let successMessage { successNotice(successMessage) }
@@ -68,6 +70,7 @@ struct ArenaShopScreen: View {
             .padding(.horizontal, compact ? Tokens.Space.s4 : Tokens.Space.s8)
             .padding(.vertical, compactHeight ? Tokens.Space.s3 : Tokens.Space.s6)
         }
+        .tutorialViewport()
         .background(Tokens.paper)
         .task { await load() }
         .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) {
@@ -359,6 +362,7 @@ struct ArenaShopScreen: View {
                     .font(.mStat)
                     .foregroundStyle(Tokens.ink)
             }
+            .tutorialTarget(.arenaShopCatalog, when: item.id == shop.items.first?.id)
             Text(ArenaDisplayTerms.apply(item.displayName))
                 .font(.mHeading)
                 .foregroundStyle(Tokens.ink)

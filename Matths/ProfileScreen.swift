@@ -73,9 +73,10 @@ struct ProfileScreen: View {
                             selectProfileAvatar(code)
                         } label: {
                             VStack(spacing: 5) {
-                                Text(String(label.prefix(1)))
-                                    .font(.mHeading)
+                                Image("Avatar-" + code.lowercased().replacingOccurrences(of: "_", with: "-"))
+                                    .resizable().scaledToFill()
                                     .frame(width: 46, height: 46)
+                                    .clipShape(Circle())
                                     .background(Tokens.primarySoft, in: Circle())
                                 Text(label).font(.mMicro)
                             }
@@ -111,6 +112,7 @@ struct ProfileScreen: View {
                 HStack(spacing: Tokens.Space.s3) { tutorialButtons }
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) { tutorialButtons }
             }
+            .tutorialTarget(.profileTutorials)
 
             if let serverProfileError {
                 Text(serverProfileError)
@@ -220,9 +222,11 @@ struct ProfileScreen: View {
         guard owner.isCurrent(in: store) else { return }
         defer { if owner.isCurrent(in: store) { profileMutationInFlight = false } }
         do {
-            _ = try await ServerAPI.updateProfileAvatarPreset(code, authorization: owner.authorization)
+            let avatar = try await ServerAPI.updateProfileAvatarPreset(code, authorization: owner.authorization)
             guard owner.isCurrent(in: store) else { return }
-            await refreshServerProfile(force: true)
+            store.acceptProfileAvatar(avatar, owner: owner)
+            serverProfile = store.serverProfile
+            serverProfileError = nil
         } catch {
             guard owner.isCurrent(in: store) else { return }
             serverProfileError = (error as? ServerAPIError)?.errorDescription
@@ -239,17 +243,16 @@ struct ProfileScreen: View {
         guard owner.isCurrent(in: store) else { return }
         defer { if owner.isCurrent(in: store) { profileMutationInFlight = false } }
         do {
-            guard image.size.width > 0,
-                  image.size.height > 0,
-                  abs(image.size.width - image.size.height) < 2,
-                  let jpeg = image.jpegData(compressionQuality: 0.82) else {
+            guard let jpeg = ProfilePhotoPreparation.jpeg(from: image) else {
                 throw ServerAPIError(
-                    message: "사진을 1:1로 자른 뒤 저장해 주세요.",
+                    message: "사진을 읽지 못했습니다. 다른 사진을 선택해 주세요.",
                     code: "PROFILE_AVATAR_IMAGE_INVALID")
             }
-            _ = try await ServerAPI.updateProfileAvatarCustom(jpegData: jpeg, authorization: owner.authorization)
+            let avatar = try await ServerAPI.updateProfileAvatarCustom(jpegData: jpeg, authorization: owner.authorization)
             guard owner.isCurrent(in: store) else { return }
-            await refreshServerProfile(force: true)
+            store.acceptProfileAvatar(avatar, owner: owner)
+            serverProfile = store.serverProfile
+            serverProfileError = nil
         } catch {
             guard owner.isCurrent(in: store) else { return }
             serverProfileError = (error as? ServerAPIError)?.errorDescription
@@ -471,16 +474,24 @@ struct ProfileScreen: View {
                     }
                     .pickerStyle(.segmented).frame(maxWidth: 260)
                     .accessibilityLabel("코치 수위")
+                    .disabled(profileMutationInFlight)
                     .onChange(of: store.coach.level) { _, level in
-                        guard !applyingServerProfile, let owner = AccountRequestOwner(store: store) else { return }
+                        guard !applyingServerProfile, !profileMutationInFlight,
+                              let owner = AccountRequestOwner(store: store) else { return }
+                        let previousLevel = SpiceLevel.fromServer(store.serverProfile?.coachMode)
+                        profileMutationInFlight = true
                         Task {
                             guard owner.isCurrent(in: store) else { return }
+                            defer { if owner.isCurrent(in: store) { profileMutationInFlight = false } }
                             do {
                                 try await ServerAPI.updateCoachMode(level.rawValue, authorization: owner.authorization)
                                 guard owner.isCurrent(in: store) else { return }
-                                await refreshServerProfile(force: true)
+                                store.acceptCoachMode(level, owner: owner)
+                                serverProfile = store.serverProfile
+                                serverProfileError = nil
                             } catch {
                                 guard owner.isCurrent(in: store) else { return }
+                                store.coach.level = previousLevel
                                 serverProfileError = (error as? ServerAPIError)?.errorDescription
                                     ?? "코치 모드를 저장하지 못했습니다."
                             }
@@ -911,6 +922,8 @@ struct ProfileScreen: View {
     /// 여기 없는데 번들에 들어가는 것이 있으면 그게 곧 결함이다. 폰트·음성처럼
     /// 사용자에게 보이지 않는 자산도 마찬가지다.
     private static let licenses: [(String, String, String)] = [
+        ("Kakao SDK for iOS", "Apache License 2.0", "github.com/kakao/kakao-ios-sdk"),
+        ("Alamofire", "MIT License", "github.com/Alamofire/Alamofire"),
         ("Qwen3.5 (Alibaba Cloud)", "Apache License 2.0", "huggingface.co/Qwen"),
         ("Qwen2.5-VL 3B (Alibaba Cloud)", "Qwen Research License · 비상업 연구·평가용, 상업 이용 별도 허가 필요", "huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/blob/37ce9f696340e294a5d3e0e806466addd1b22b3a/LICENSE"),
         ("DeepSeek-R1-Distill-Qwen-7B", "MIT License", "huggingface.co/deepseek-ai"),
@@ -1048,7 +1061,9 @@ struct ProfileScreen: View {
         let side: CGFloat = compactHeight ? 48 : 62
         return ZStack {
             Circle().fill(Tokens.actionPrimary)
-            if let source = serverProfile?.profileAvatar?.imageSrc,
+            if let name = serverProfile?.profileAvatar?.bundledImageName {
+                Image(name).resizable().scaledToFill()
+            } else if let source = serverProfile?.profileAvatar?.imageSrc,
                let url = URL(string: source, relativeTo: ServerAPI.baseURL)?.absoluteURL {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
@@ -2096,19 +2111,31 @@ private struct WithdrawSheet: View {
                 errorText = "서버 탈퇴는 완료됐지만 같은 계정 슬롯에 새 세션이 감지되어 이 기기의 로컬 파일은 지우지 않았습니다. 새 세션에서 로그아웃한 뒤 앱을 다시 실행해주세요."
                 return
             }
+            // Freeze whichever session is current before draining the deleted
+            // owner's writers. A→B→A→B during this await can reuse A's files even
+            // when the final slot is B, so checking only the final slot is unsafe.
+            let cleanupSession = store.captureAccountSessionBoundary()
             await store.invalidateLearningPersistence(for: withdrawn.slot)
+            guard store.ownsCurrentAccountSession(cleanupSession) else {
+                errorText = "서버 탈퇴는 완료됐지만 계정이 전환되어 이 기기의 파일 정리를 보류했습니다. 현재 계정의 기록은 삭제하지 않았습니다."
+                return
+            }
             // 아직 같은 세션일 때만 로그아웃한다. 이미 다른 계정으로 전환됐다면 그
             // 새 세션은 건드리지 않고, 아래에서 캡처해 둔 old owner 파일만 정리한다.
-            if stillOwnsSession {
+            if store.ownsCurrentAccountSession(withdrawn.session) {
                 guard await store.signOut(discardingCurrentSlot: true) else {
                     errorText = "서버 탈퇴는 완료됐지만 이 기기의 계정 전환을 마치지 못했습니다. 앱을 다시 실행하면 로그아웃 상태로 복구됩니다."
                     return
                 }
             }
-            await MainActor.run {
-                Self.purgeWithdrawnSlot(named: withdrawn.slot, directory: withdrawn.directory)
-                dismiss()
+            // This Task is already on MainActor. Keep the final reuse check and
+            // purge synchronous; another actor hop would reopen the race.
+            guard DataScope.slot != withdrawn.slot else {
+                errorText = "서버 탈퇴는 완료됐지만 같은 계정의 새 세션이 있어 파일 정리를 보류했습니다. 현재 계정의 기록은 삭제하지 않았습니다."
+                return
             }
+            Self.purgeWithdrawnSlot(named: withdrawn.slot, directory: withdrawn.directory)
+            if stillOwnsSession { dismiss() }
         } catch {
             guard owner.isCurrent(in: store) else { return }
             errorText = Self.withdrawalFailureMessage(error)

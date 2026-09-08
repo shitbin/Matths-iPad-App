@@ -27,7 +27,8 @@ versions=$(sed -n 's/.*CURRENT_PROJECT_VERSION = \([0-9]*\);/\1/p' "$ROOT/Matths
 [ "$(printf '%s\n' "$versions" | sort -u | wc -l | tr -d ' ')" -eq 1 ]
 [ "$(printf '%s\n' "$versions" | head -n 1)" -ge 16 ]
 grep -q '^# App Review 메모 — build 16$' "$ROOT/appstore/review-notes-ko.md"
-grep -q '^# App Store Connect 개인정보 응답 — build 16$' "$ROOT/appstore/app-privacy-ko.md"
+grep -q '^# App Store Connect 개인정보 응답 — 출시 준비본$' "$ROOT/appstore/app-privacy-ko.md"
+grep -q '게시 완료를 의미하지 않습니다' "$ROOT/appstore/app-privacy-ko.md"
 grep -q '^# App Store Connect 입력 기준 — build 16$' "$ROOT/appstore/app-store-connect-inputs-ko.md"
 grep -q '6803570339' "$ROOT/appstore/app-store-connect-inputs-ko.md"
 grep -q '6803570684' "$ROOT/appstore/app-store-connect-inputs-ko.md"

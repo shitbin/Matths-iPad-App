@@ -17,6 +17,7 @@ struct FirstSuccessOnboardingOverlay: View {
     @State private var work: Task<Void, Never>?
     @State private var pendingPractice: (problems: [GeneratedProblem], seed: UInt64, conceptID: String)?
     @State private var restartConfirmation = false
+    @State private var showsGuidedStart = false
     @State private var onboardingViewport: CGSize = .zero
     private var compactHeight: Bool {
         UniversalLayoutPolicy.usesCompactOnboardingChoices(width: onboardingViewport.width,
@@ -32,11 +33,12 @@ struct FirstSuccessOnboardingOverlay: View {
     private var mayShow: Bool {
         store.authProvider == "server" && !["teacher", "admin"].contains(store.serverProfile?.role ?? "student")
             && !store.isSessionMode && !store.hasPendingAssessmentAuthentication && !store.requestedDashboardTutorial && !paused
+            && store.nativeTutorialPresentationOwner == nil
     }
     var body: some View {
         Color.clear.allowsHitTesting(false)
             .task(id: ownerTrigger) {
-                work?.cancel(); presented = false; store.isTutorialPresentationActive = false
+                work?.cancel(); endOwnedPresentation()
                 paused = false; message = nil; pendingPractice = nil
                 recordPresentationDiagnostic("owner_task_started")
                 let owner = store.captureAccountSessionBoundary()
@@ -75,11 +77,18 @@ struct FirstSuccessOnboardingOverlay: View {
                 // A student overlay can be removed when a just-loaded profile
                 // identifies the next account as staff. It must release its own
                 // presentation flag or the visible workspace stays AX-hidden.
-                if presented {
-                    presented = false
-                    if store.nativeTutorialPresentationOwner == nil { store.isTutorialPresentationActive = false }
-                }
+                endOwnedPresentation()
             }
+    }
+    /// Profile hydration can restart this task while a native tour has just
+    /// acquired the shared presentation lease. A non-presented first-learning
+    /// view owns nothing and must not clear another overlay's flag.
+    private func endOwnedPresentation() {
+        let ownedPresentation = presented
+        presented = false
+        if ownedPresentation, store.nativeTutorialPresentationOwner == nil {
+            store.isTutorialPresentationActive = false
+        }
     }
     private var content: some View {
         NavigationStack {
@@ -162,7 +171,7 @@ struct FirstSuccessOnboardingOverlay: View {
     }
     private var stageCaption: String {
         switch model.journey.stage {
-        case .goal: "1 / 4 · 공부 목표"
+        case .goal: "시작 방법 선택"
         case .diagnosis: "2 / 4 · 가볍게 현재 위치 확인"
         case .lesson: "3 / 4 · 개념 하나 이해하기"
         case .checks: "4 / 4 · 확인 문제 3개"
@@ -173,16 +182,27 @@ struct FirstSuccessOnboardingOverlay: View {
     @ViewBuilder private var stageContent: some View {
         switch model.journey.stage {
         case .goal:
-            Text("지금 가장 필요한 공부는 무엇인가요?").font(stageTitleFont)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s2), count: compactHeight ? 2 : 1), spacing: Tokens.Space.s2) {
-                ForEach(LearningGoal.allCases) { goal in
-                    Button {
-                        if model.update({ $0.selectGoal(goal) }) { model.setGoal(goal) }
-                    } label: { Text(goal.title).frame(maxWidth: .infinity, minHeight: 24) }
-                    .buttonStyle(SecondaryButtonStyle())
+            Text("원하는 과목부터 골라볼까요?").font(stageTitleFont)
+            Text("과목과 단원을 고르면 개념 설명을 보고 바로 문제를 풀 수 있어요.")
+                .font(.mBody).foregroundStyle(Tokens.text2)
+            Button("과목 고르고 시작하기") { browseCoursesWithoutGuide() }
+                .buttonStyle(PrimaryButtonStyle()).disabled(working || model.isSyncing)
+                .accessibilityIdentifier("first-learning-browse-courses")
+            Text("앱 사용 안내는 프로필과 설정에서 언제든 다시 볼 수 있어요.")
+                .font(.mCaption).foregroundStyle(Tokens.text2)
+            DisclosureGroup("안내를 따라 첫 학습 해보기", isExpanded: $showsGuidedStart) {
+                Text("목표를 고르고, 개념 하나와 확인 문제 3개로 사용법을 익힙니다.")
+                    .font(.mCallout).foregroundStyle(Tokens.text2)
+                    .padding(.vertical, Tokens.Space.s2)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s2), count: compactHeight ? 2 : 1), spacing: Tokens.Space.s2) {
+                    ForEach(LearningGoal.allCases) { goal in
+                        Button {
+                            if model.update({ $0.selectGoal(goal) }) { model.setGoal(goal) }
+                        } label: { Text(goal.title).frame(maxWidth: .infinity, minHeight: 24) }
+                        .buttonStyle(SecondaryButtonStyle())
+                    }
                 }
-            }
-            Text("목표에 맞춰 오늘 먼저 보여드릴 공부가 달라집니다. 과목의 공식 학습 순서는 바뀌지 않아요.").font(.mCallout).foregroundStyle(Tokens.text2)
+            }.font(.mBodyB)
         case .diagnosis:
             let first = model.journey.diagnosticAnswers.isEmpty
             Text(first ? "규칙을 적용해 볼까요?" : "거꾸로 생각해 볼까요?").font(stageTitleFont)
@@ -281,7 +301,7 @@ struct FirstSuccessOnboardingOverlay: View {
     }
     private func deferJourney() {
         work?.cancel(); working = false; paused = true; pendingPractice = nil
-        presented = false; store.isTutorialPresentationActive = false; store.route = .home
+        endOwnedPresentation(); store.route = .home
     }
     private func prepareLesson() async {
         guard !working, let authorization = ServerAPI.captureAuthorization() else { return }
@@ -318,7 +338,7 @@ struct FirstSuccessOnboardingOverlay: View {
         let remaining = problems.filter { model.journey.checkedAnswers[$0.id] == nil }
         guard !remaining.isEmpty else { return }
         pendingPractice = (remaining, seed, concept.id)
-        presented = false; store.isTutorialPresentationActive = false
+        endOwnedPresentation()
     }
     private func launchPreparedPractice() {
         guard let pending = pendingPractice, model.journey.slot == DataScope.slot, store.authProvider == "server" else { pendingPractice = nil; return }
@@ -378,12 +398,21 @@ struct FirstSuccessOnboardingOverlay: View {
     }
     private func complete() {
         guard model.remoteConflict == nil, model.journey.canCompleteTutorial, model.update({ _ = $0.finish(now: Date()) }) else { return }
-        paused = true; presented = false; store.isTutorialPresentationActive = false; store.route = .home
+        paused = true; endOwnedPresentation(); store.route = .home
         saveTutorialReceipt()
     }
     private func skip() {
         guard model.remoteConflict == nil, model.update({ $0.skip() }) else { return }
         deferJourney(); saveTutorialReceipt()
+    }
+    private func browseCoursesWithoutGuide() {
+        guard model.journey.slot == DataScope.slot, model.journey.stage == .goal,
+              model.remoteConflict == nil, model.update({ $0.skip() }) else { return }
+        // This is an explicit skip of the guide, not a completed lesson or a
+        // fabricated PASS. Reuse its durable SKIP receipt and existing retry.
+        deferJourney()
+        saveTutorialReceipt()
+        store.route = .curriculum
     }
     private func restartJourney() {
         guard model.remoteConflict == nil else { return }

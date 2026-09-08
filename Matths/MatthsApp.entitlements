@@ -51,6 +51,10 @@
 	<array>
 		<string>applinks:www.matths.kr</string>
 		<string>applinks:matths.kr</string>
+		<string>applinks:app.matths.kr</string>
+		<string>applinks:academy.matths.kr</string>
+		<string>applinks:admin.matths.kr</string>
+		<string>applinks:parents.matths.kr</string>
 	</array>
 </dict>
 </plist>

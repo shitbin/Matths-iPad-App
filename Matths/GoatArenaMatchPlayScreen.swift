@@ -41,6 +41,10 @@ private extension PKDrawing {
 ///
 /// 값은 전부 GOAT Arena 홈이 이미 갖고 있던 것이다 — 새 서버 호출을 만들지 않는다.
 struct GoatArenaMatchBriefing: Equatable {
+    static var newMatch: Self {
+        .init(roleLabel: nil, matchLabel: nil, stakeText: nil,
+              timeLimitSeconds: nil, startsByText: nil, skipsLobby: false)
+    }
     /// "도전자" · "방어자" — 홈이 쓰는 같은 라벨 함수의 결과를 그대로 받는다.
     var roleLabel: String?
     /// "자리 도전, Ranked" 처럼 홈 카드의 `경기` 칸과 같은 문장.
@@ -144,6 +148,7 @@ struct GoatArenaMatchPlayScreen: View {
     /// 잔여 60초 이하에서 남은 시간 표시가 숨 쉬는 상태(웹 arenaTimerPulse 대응).
     @State private var timerPulsing = false
     @State private var preStartContract: ServerAPI.GoatArenaParticipantMatch.PreStartContract?
+    @State private var latestPreStartMatch: ServerAPI.GoatArenaParticipantMatch?
     @State private var isLoadingPreStartContract = false
 
     private let countdown = Timer.publish(
@@ -549,6 +554,8 @@ struct GoatArenaMatchPlayScreen: View {
                         .font(.mNumeric)
                         .foregroundStyle(Tokens.text2)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     countdownLabel
                 }
 
@@ -577,7 +584,9 @@ struct GoatArenaMatchPlayScreen: View {
                     .foregroundStyle(
                         remainingSeconds <= 60 ? Tokens.danger : Tokens.ink)
                     .monospacedDigit()
+                    .lineLimit(1)
             }
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, Tokens.Space.s3)
             .frame(minHeight: 36)
             .background(
@@ -867,8 +876,16 @@ struct GoatArenaMatchPlayScreen: View {
         isLoadingPreStartContract = true
         defer { isLoadingPreStartContract = false }
         do {
-            preStartContract = try await ServerAPI.getGoatArenaMatch(
-                matchId: matchId).preStartContract
+            let detail = try await ServerAPI.getGoatArenaMatch(matchId: matchId)
+            guard accountIsCurrent else { preStartContract = nil; return }
+            guard ArenaMatchEntryPolicy.permitsStart(actions: detail.capabilities?.availableActions,
+                                                    hasContract: detail.preStartContract != nil) else {
+                preStartContract = nil
+                actionError = "현재 경기 상태에서는 새로 시작할 수 없습니다. 이미 진행하거나 제출한 경기인지 확인해 주세요."
+                return
+            }
+            latestPreStartMatch = detail
+            preStartContract = detail.preStartContract
             if preStartContract == nil {
                 actionError = "서버가 확정한 경기 조건을 확인할 수 없습니다. GOAT Arena에서 다시 열어 주세요."
             }
@@ -909,10 +926,13 @@ struct GoatArenaMatchPlayScreen: View {
         }
         if let roleLabel = briefing?.roleLabel {
             facts.append(("내 역할", roleLabel))
+        } else if let role = latestPreStartMatch?.role {
+            facts.append(("내 역할", role == "DEFENDER" ? "방어자" : role == "CHALLENGER" ? "도전자" : "확인 중"))
         }
         facts.append((
             "제한 시간",
-            briefing?.timeLimitSeconds.map { timeText($0) } ?? "시작할 때 서버가 확정"))
+            (latestPreStartMatch?.timeLimitSeconds ?? briefing?.timeLimitSeconds)
+                .flatMap { $0 > 0 ? timeText($0) : nil } ?? "시작할 때 서버가 확정"))
         if let stakeText = briefing?.stakeText {
             facts.append(("맡긴 일수", stakeText))
         }

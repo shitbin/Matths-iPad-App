@@ -33,6 +33,7 @@ struct CoachGuidanceCases {
         observationQuotesThisAttempt()
         repeatedAnswerIsNamedAsFact()
         spiceChangesToneOnly()
+        allGradingPathsRespectTone()
         correctAnswerUsesThisAttempt()
         multipleChoiceUsesTheNumberOnScreen()
         conceptChoicesAreNotMistakenForCalculations()
@@ -44,6 +45,21 @@ struct CoachGuidanceCases {
     }
 
     // 관찰은 이번에 제출한 값을 그대로 인용한다.
+    static func allGradingPathsRespectTone() {
+        for problem in [logProblem, choiceProblem] {
+            for correct in [true, false] {
+                var mild = CoachEngine()
+                var spicy = CoachEngine()
+                spicy.level = .spicy
+                let a = mild.guidance(problem: problem, studentInput: "2", correct: correct)!
+                let b = spicy.guidance(problem: problem, studentInput: "2", correct: correct)!
+                precondition(a.observation == b.observation)
+                precondition(a.reason == b.reason)
+                precondition(a.nextAction != b.nextAction, "All grading paths must respect tone")
+            }
+        }
+    }
+
     static func observationQuotesThisAttempt() {
         var coach = CoachEngine()
         coach.level = .spicy

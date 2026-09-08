@@ -83,6 +83,7 @@ enum DemoMode {
         if on { enterDemoSlot() } else { restoreRealSlot() }
         // 응시 중이던 데모 회차도 처음(대기실)으로 — 같은 흐름을 다시 밟아 볼 수 있어야 한다.
         DemoWeeklyMockLive.reset()
+        DemoArenaFixtures.resetMatchSessions()
         if on { DemoRouter.resetTutorialState() }
         NSLog("DEMO-MODE %@ · slot=%@", on ? "ON" : "OFF", DataScope.slot)
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
@@ -476,8 +477,12 @@ enum DemoRouter {
             return DemoAccountFixtures.dashboardActivity
 
         // 학생 학원 교실 — 가입 이후의 반복 행동을 네이티브 화면에서 검토한다.
-        case "GET /api/v1/academy/student",
-             "POST /api/v1/academy/student/join-code",
+        case "GET /api/v1/academy/student":
+            if DemoMode.launchArgumentValue(after: "-studentAcademyFixture") == "unlinked" {
+                return DemoAccountFixtures.academyUnlinked
+            }
+            return DemoAccountFixtures.academyDashboard
+        case "POST /api/v1/academy/student/join-code",
              "POST /api/v1/academy/student/join",
              "POST /api/v1/academy/student/leave":
             return DemoAccountFixtures.academyDashboard
@@ -895,6 +900,7 @@ enum DemoRouter {
         ("POST", "/api/v1/goat-arena/matches/main/friendly/invitations/{id}/cancel"),
         ("POST", "/api/v1/goat-arena/revenge-rights/{id}/claim"),
         ("POST", "/api/v1/goat-arena/revenge-rights/{id}/forfeit"),
+        ("GET",  "/api/v1/goat-arena/matches/{matchId}"),
         ("GET",  "/api/v1/goat-arena/matches/{matchId}/supplemental-evidence"),
         ("POST", "/api/v1/goat-arena/matches/{matchId}/accept"),
         ("POST", "/api/v1/goat-arena/matches/{matchId}/decline"),
@@ -1259,17 +1265,26 @@ enum DemoRouter {
             return DemoAccountFixtures.quickExpire
 
         // GOAT Arena 경기 명령
+        case "/api/v1/goat-arena/matches/{matchId}":
+            let fixture = DemoMode.launchArgumentValue(after: "-goatFixture")
+            let role = fixture == nil || fixture == "defender" ? "DEFENDER" : "CHALLENGER"
+            return DemoArenaFixtures.matchDetail(matchId: captures["matchId"] ?? "demo-match-01", role: role)
         case "/api/v1/goat-arena/matches/{matchId}/accept",
              "/api/v1/goat-arena/matches/{matchId}/decline":
             return DemoArenaFixtures.matchCommandResponse(
                 matchId: captures["matchId"] ?? "", accepted: template.hasSuffix("accept"))
         case "/api/v1/goat-arena/matches/{matchId}/start",
              "/api/v1/goat-arena/matches/{matchId}/advance":
+            let fixture = DemoMode.launchArgumentValue(after: "-goatFixture")
+            let role = fixture == nil || fixture == "defender" ? "DEFENDER" : "CHALLENGER"
             return DemoArenaFixtures.matchStart(
                 matchId: captures["matchId"] ?? "",
-                slot: (int(body, "questionSlot") ?? 0) + 1)
+                slot: (int(body, "questionSlot") ?? 0) + 1,
+                role: role)
         case "/api/v1/goat-arena/matches/{matchId}/questions":
-            return DemoArenaFixtures.questionPack(matchId: captures["matchId"] ?? "", slot: 1)
+            let fixture = DemoMode.launchArgumentValue(after: "-goatFixture")
+            let role = fixture == nil || fixture == "defender" ? "DEFENDER" : "CHALLENGER"
+            return DemoArenaFixtures.questionPack(matchId: captures["matchId"] ?? "", slot: 1, role: role)
         case "/api/v1/goat-arena/matches/{matchId}/heartbeat",
              "/api/v1/goat-arena/matches/{matchId}/focus",
              "/api/v1/goat-arena/matches/{matchId}/answers",

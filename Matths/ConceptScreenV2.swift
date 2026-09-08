@@ -391,8 +391,9 @@ struct ConceptScreenV2: View {
                                concept: ConceptV2,
                                percent: Int) -> some View {
         VStack(alignment: .leading, spacing: shortHeight ? Tokens.Space.s2 : Tokens.Space.s3) {
-            Button { store.route = .curriculum } label: {
-                Label("커리큘럼", systemImage: "chevron.left")
+            if !ProductExperience.enabled {
+                Button { store.route = .curriculum } label: {
+                    Label("커리큘럼", systemImage: "chevron.left")
                     .font(.mCaption).foregroundStyle(Tokens.text3)
                     // 시각 크기는 13pt 그대로 두고 히트 영역만 44pt 로 넓힌다.
                     // 바깥 음수 패딩이 레이아웃 높이를 원래대로 되돌리므로
@@ -402,8 +403,9 @@ struct ConceptScreenV2: View {
                     .contentShape(Rectangle())
                     .padding(.vertical, -14)
                     .padding(.trailing, -Tokens.Space.s5)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             HStack(alignment: .lastTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {

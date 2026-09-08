@@ -2,53 +2,43 @@ import SwiftUI
 
 struct LearningFlowTopBar: View {
     @EnvironmentObject private var store: AppStore
-    private var title: String {
-        switch store.route {
-        case .curriculum: "전체 과정"
-        case .assess: "공식 평가"
-        case .profile: "프로필과 설정"
-        case .community: "커뮤니티"
-        case .concept: "개념 학습"
-        case .quickPractice: "짧게 연습"
-        case .commerce: "이용권"
-        case .notifications: "알림"
-        case .services: "전체 서비스"
-        case .chat: "AI 코치"
-        case .pro: "풀이 분석"
-        case .archive: "자료실"
-        case .studyHall: "수험관"
-        case .storeCatalog: "상점"
-        case .faq: "도움말"
-        case .support: "문의"
-        case .coachSuggestions: "코치 제안"
-        case .arenaShop: "Arena 상점"
-        case .hostedPortal: "서비스"
-        case .academy: store.workspace == .student ? "학원" : store.workspace.title
-        default: StudentDestination.containing(store.route).title
-        }
-    }
     var body: some View {
         HStack(spacing: Tokens.Space.s3) {
             if !store.route.isTab && store.route != .academy {
                 Button {
+                    if let previous = store.previousBrowseRoute {
+                        store.route = previous
+                        return
+                    }
                     switch store.route {
                     case .commerce: store.route = store.commerceOrigin
                     case .notifications: store.route = store.notificationOrigin
                     case .hostedPortal: store.route = store.serviceOrigin
+                    case .concept: store.route = .curriculum
                     default: store.route = StudentDestination.containing(store.route).route
                     }
                 } label: {
                     Image(systemName: "chevron.left").frame(width: 44, height: 44)
                 }.accessibilityLabel("이전 화면으로")
             }
-            Text(title).font(.mBodyB).accessibilityAddTraits(.isHeader)
+            // Keep the original identity in the shell. Page titles belong to
+            // their content, not a second competing navigation heading.
+            PrimaryBrandIdentity()
+                .frame(width: 116, height: 36)
+                .accessibilityHidden(false)
+                .accessibilityLabel("Matths")
+                .accessibilityIdentifier("navigation-brand")
             Spacer()
             if store.workspace != .student {
                 WorkspacePicker(compact: true, showsAccountActions: true)
             }
-            Button { store.route = .notifications } label: {
+            Button {
+                guard store.route != .notifications else { return }
+                store.route = .notifications
+            } label: {
                 Image(systemName: "bell").frame(width: 44, height: 44)
             }.accessibilityLabel("알림 열기")
+                .tutorialTarget(.topNotifications)
         }
         .foregroundStyle(Tokens.ink).padding(.horizontal, Tokens.Space.s3)
         .frame(minHeight: 48).background(Tokens.surface)
@@ -61,7 +51,6 @@ struct LearningFlowSidebar: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                PrimaryBrandIdentity().frame(width: 140, height: 44).padding(.bottom, Tokens.Space.s5)
                 if store.workspace == .student {
                     ForEach(StudentDestination.allCases) { destination in
                         destinationButton(destination.title, icon: destination.icon, route: destination.route)
@@ -77,6 +66,7 @@ struct LearningFlowSidebar: View {
             }
             .padding(Tokens.Space.s4)
         }
+        .tutorialViewport()
         .frame(width: 204)
         .background(Tokens.surface)
         .overlay(alignment: .trailing) { Divider() }
@@ -93,6 +83,7 @@ struct LearningFlowSidebar: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(store.selectedTab == route ? [.isSelected] : [])
+        .modifier(TutorialNavigationAnchor(route: route))
     }
 }
 
@@ -133,53 +124,63 @@ struct TodayLearningScreen: View {
     @ObservedObject private var activities = TodayActivityStore.shared
     @ObservedObject private var journey = FirstLearningJourneyStore.shared
     @State private var selectedActivity: TodayActionCandidate?
+    @State private var navigationID = UUID()
+    @State private var actionBusy = false
     @Environment(\.scenePhase) private var scenePhase
 
     @Environment(\.matthsBrowseViewportSize) private var viewport
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var compact: Bool { viewport.height < 460 && viewport.width >= 620 && !typeSize.isAccessibilitySize }
+    private var usesColumns: Bool { viewport.width >= 760 && !typeSize.isAccessibilitySize }
+    private var agenda: [TodayActionCandidate] {
+        TodayDashboardPolicy.agenda(store.todayActionCandidates, primary: store.resolvedTodayAction)
+    }
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { _ in todayContent }
             .task { await activities.refresh(store: store) }
             .onChange(of: scenePhase) { _, value in
                 if value == .active { Task { await activities.refresh(store: store) } }
             }
-            .onChange(of: store.route) { _, _ in selectedActivity = nil }
+            .onChange(of: store.route) { _, _ in
+                selectedActivity = nil
+                navigationID = UUID()
+                actionBusy = false
+            }
             .fullScreenCover(item: $selectedActivity) { action in
                 TodayActivityDestination(action: action) { selectedActivity = nil }
                     .onDisappear { Task { await activities.refresh(store: store, force: true) } }
             }
     }
     private var todayContent: some View {
-        Group {
-            if compact {
+        VStack(alignment: .leading, spacing: compact ? Tokens.Space.s3 : Tokens.Space.s5) {
+            heading
+            if usesColumns || compact {
                 HStack(alignment: .top, spacing: Tokens.Space.s5) {
-                    VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                        heading
-                        Button("다른 학습 보기") { store.route = .learn }.frame(minHeight: 44)
-                        Button("학습 기록") { store.route = .records }.frame(minHeight: 44)
-                        connectionNotice
-                    }.frame(maxWidth: 220, alignment: .leading).font(.mCallout)
-                    if let action = store.resolvedTodayAction { actionCard(action) }
+                    if let action = store.resolvedTodayAction {
+                        actionCard(action).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    TodayLearningOverview(compact: compact)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                VStack(alignment: .leading, spacing: Tokens.Space.s6) {
-                    heading
-                    if let action = store.resolvedTodayAction { actionCard(action) }
-                    HStack {
-                        Button("다른 학습 보기") { store.route = .learn }; Spacer()
-                        Button("학습 기록") { store.route = .records }
-                    }.font(.mCallout).frame(minHeight: 44)
-                    connectionNotice
-                }
+                if let action = store.resolvedTodayAction { actionCard(action) }
+                TodayLearningOverview()
             }
-        }.frame(maxWidth: compact ? 980 : 700, alignment: .leading)
+            agendaSection
+            connectionNotice
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var heading: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-            Text("오늘의 수학").font(.mHeading).accessibilityAddTraits(.isHeader)
-            Text(journey.goal.title).font(.mBody).foregroundStyle(Tokens.text2)
+            HStack(alignment: .firstTextBaseline) {
+                Text("오늘의 수학").font(.mTitle).accessibilityAddTraits(.isHeader)
+                Spacer(minLength: Tokens.Space.s2)
+                Label("\(store.streakDays)일 연속", systemImage: "flame")
+                    .font(.mCaption).foregroundStyle(Tokens.text2)
+            }
+            Text("\(store.userName.isEmpty ? "나" : store.userName)님의 목표 · \(journey.goal.title)")
+                .font(.mCallout).foregroundStyle(Tokens.text2)
             if !journey.journey.isTerminal, journey.journey.stage != .goal {
                 Button("첫 학습 이어서 마치기") {
                     NotificationCenter.default.post(name: .matthsResumeFirstLearning, object: nil)
@@ -203,11 +204,34 @@ struct TodayLearningScreen: View {
                 Text("마감 안내: " + deadline.formatted(date: .abbreviated, time: .shortened))
                     .font(.mCaption).foregroundStyle(Tokens.text2)
             }
-            Button(action.visibleAction) { perform(action) }.buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("today-primary-action")
+            Button(actionBusy ? "기록 확인 중…" : action.visibleAction) { perform(action) }
+                .buttonStyle(PrimaryButtonStyle()).disabled(actionBusy)
+                .accessibilityIdentifier("today-primary-action")
+                .tutorialTarget(.todayPrimaryAction)
         }
         .padding(compact ? Tokens.Space.s3 : Tokens.Space.s5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Tokens.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2).fill(Tokens.actionPrimary)
+                .frame(width: 3).padding(.vertical, Tokens.Space.s5)
+                .accessibilityHidden(true)
+        }
+    }
+    @ViewBuilder private var agendaSection: some View {
+        if !agenda.isEmpty {
+            VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                Text("함께 확인할 일").font(.mHeading)
+                ForEach(agenda) { action in
+                    FlowDestinationRow(action.title,
+                                       detail: action.freshness == .cached ? action.visibleReason : action.position ?? action.visibleReason,
+                                       icon: action.kind == .review ? "arrow.counterclockwise" : "calendar.badge.clock") {
+                        perform(action)
+                    }
+                    if action.id != agenda.last?.id { Divider() }
+                }
+            }
+        }
     }
     @ViewBuilder private var connectionNotice: some View {
         if availability.state == .offline || availability.state == .failed || !activities.failedSources.isEmpty {
@@ -221,12 +245,24 @@ struct TodayLearningScreen: View {
         }
     }
     private func perform(_ action: TodayActionCandidate) {
+        // A sheet keeps route == .home, so route changes alone cannot retire
+        // the preceding asynchronous assessment lookup.
+        navigationID = UUID()
+        actionBusy = false
         switch action.destination {
         case .officialAssessment(let id):
             let owner = store.captureAccountSessionBoundary()
+            let requestedNavigation = navigationID
+            actionBusy = true
             Task {
+                defer { if navigationID == requestedNavigation { actionBusy = false } }
                 await store.pullServerAssessments()
-                guard store.ownsCurrentAccountSession(owner) else { return }
+                guard store.ownsCurrentAccountSession(owner), navigationID == requestedNavigation,
+                      store.route == .home else { return }
+                store.assessmentReturnRoute = .assess
+                guard store.attemptsV2.attempts.contains(where: {
+                    $0.id == id && $0.serverBacked == true && !$0.isServerCancelled && $0.submittedAt == nil
+                }) else { store.route = .assess; return }
                 store.currentAttemptID = id; store.route = .paper
             }
         case .academyAttendance: store.route = .academy
@@ -242,7 +278,7 @@ struct TodayLearningScreen: View {
 struct LearningHubScreen: View {
     @EnvironmentObject private var store: AppStore
     @State private var showsPractice = false
-    @State private var showsPath = false
+    @State private var showsTools = false
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
             Text("학습").font(.mHeading).accessibilityAddTraits(.isHeader)
@@ -264,24 +300,29 @@ struct LearningHubScreen: View {
                     Button("수업 이어가기") { store.openConceptV2(concept.id) }.buttonStyle(PrimaryButtonStyle())
                 }.card()
             }
-            FlowDestinationRow("과정 찾기", detail: "과목 → 단원 → 필요한 개념", icon: "books.vertical") { showsPath = true }
-            if let attempt = store.attemptsV2.attempts.first(where: { $0.serverBacked == true && $0.submittedAt == nil }) {
+            FlowDestinationRow("과목과 단원", detail: "개념 수업과 단계 평가를 한곳에서", icon: "books.vertical") { store.route = .curriculum }
+                .tutorialTarget(.learningCourses)
+            if let attempt = store.attemptsV2.attempts.first(where: { $0.serverBacked == true && $0.submittedAt == nil && !$0.isServerCancelled }) {
                 FlowDestinationRow("작성하던 평가 확인", detail: attempt.title, icon: "doc.badge.clock") {
+                    store.assessmentReturnRoute = .assess
                     store.currentAttemptID = attempt.id; store.route = .paper
                 }
             }
-            FlowDestinationRow("공식 평가", detail: "평가 기록과 다음에 응시할 평가", icon: "checkmark.seal") { store.route = .assess }
+            FlowDestinationRow("평가센터", detail: "주간 공식 모의고사 · 응시와 결과", icon: "checkmark.seal") { store.route = .assess }
+                .tutorialTarget(.weeklyMockEntry)
             FlowDestinationRow("짧게 연습", detail: "유형을 골라 문제 풀기", icon: "pencil.line") { store.route = .quickPractice }
-            FlowDestinationRow("오프라인 연습", detail: "공식 점수와 진도에 반영되지 않는 연습", icon: "wifi.slash") { showsPractice = true }
-            DisclosureGroup("시험 대비와 풀이 도구") {
-                FlowDestinationRow("주간 모의고사", icon: "calendar") { store.route = .weeklyMock }
-                FlowDestinationRow("배치고사", icon: "scope") { store.route = .placement }
+                .tutorialTarget(.quickPracticeStart)
+            DisclosureGroup("연습 자료와 풀이 도구", isExpanded: $showsTools) {
                 FlowDestinationRow("기출 연습", icon: "doc.text") { store.route = .kice }
                 FlowDestinationRow("시험지 풀이 분석", icon: "camera") { store.route = .pro }
+                    .tutorialTarget(.proEntry)
+                FlowDestinationRow("오프라인 연습", detail: "공식 점수·진도에 반영되지 않는 기기 내 연습", icon: "wifi.slash") { showsPractice = true }
             }.font(.mBody).padding(.vertical, Tokens.Space.s3)
         }
         .fullScreenCover(isPresented: $showsPractice) { OfflinePracticeScreen() }
-        .fullScreenCover(isPresented: $showsPath) { LearningPathBrowser() }
+        .onReceive(NotificationCenter.default.publisher(for: TutorialFocusRequestCenter.notification)) { _ in
+            if TutorialFocusRequestCenter.current?.target == .proEntry { showsTools = true }
+        }
     }
 }
 
@@ -301,9 +342,10 @@ struct LearningRecordsScreen: View {
             }
             LearningReviewSchedule()
             FlowDestinationRow("전체 오답", detail: "다시 볼 문제와 복습 예정일", icon: "arrow.counterclockwise") { store.route = .wrongNotes }
+                .tutorialTarget(.wrongNotes)
             let summary = store.learningSummary
             FlowDestinationRow("개념 학습 기록", detail: "\(summary.done)/\(summary.total)개 완료 · \(summary.percent)%", icon: "chart.bar.xaxis") { store.route = .curriculum }
-            FlowDestinationRow("공식 평가 결과", icon: "checkmark.seal") { store.route = .assess }
+            FlowDestinationRow("공식 모의고사 결과", icon: "checkmark.seal") { store.route = .assess }
             FlowDestinationRow("최근 7일 학습 리포트", detail: "공부한 날 · 학습 시간 · 문제 기록", icon: "chart.xyaxis.line") { showsWeeklyReport = true }
             if sync.pending > 0 || sync.lastError != nil {
                 Text("계정 확인을 기다리는 기록이 있어요. 기기의 기록과 서버 진도가 잠시 다를 수 있습니다.").font(.mCaption).foregroundStyle(Tokens.text2)
@@ -319,28 +361,58 @@ struct MeHubScreen: View {
     @ObservedObject private var journey = FirstLearningJourneyStore.shared
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            Text(store.userName).font(.mHeading).accessibilityAddTraits(.isHeader)
-            WorkspacePicker()
-            Menu("학습 목표 변경") {
+            Text("나").font(.mTitle).accessibilityAddTraits(.isHeader)
+            Button { store.route = .profile } label: {
+                HStack(spacing: Tokens.Space.s3) {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 38)).foregroundStyle(Tokens.actionPrimary)
+                    VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                        Text(store.userName.isEmpty ? "내 계정" : store.userName).font(.mHeading)
+                        Text("프로필 · 학교 · 계정 보안").font(.mCaption).foregroundStyle(Tokens.text2)
+                    }
+                    Spacer(minLength: Tokens.Space.s2)
+                    Image(systemName: "chevron.right").font(.mCaption)
+                }
+                .foregroundStyle(Tokens.ink)
+                .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+                .padding(Tokens.Space.s4)
+                .background(Tokens.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(store.userName), 프로필과 설정")
+            .tutorialTarget(.profileSettings)
+            if store.workspace == .student { WorkspacePicker() }
+            Menu {
                 ForEach(LearningGoal.allCases) { goal in
                     Button(goal.title) { journey.setGoal(goal); WidgetBridge.publish(from: store) }
                 }
-            }.font(.mCallout).frame(minHeight: 44)
+            } label: {
+                HStack {
+                    Text("학습 목표").foregroundStyle(Tokens.ink)
+                    Spacer()
+                    Text(journey.goal.title).foregroundStyle(Tokens.text2)
+                    Image(systemName: "chevron.up.chevron.down").foregroundStyle(Tokens.text3)
+                }.font(.mCallout).frame(minHeight: 44)
+            }
             if !journey.journey.isTerminal {
                 FlowDestinationRow("첫 학습 이어하기", detail: "개념 하나와 확인 문제 3개", icon: "play.circle") {
                     NotificationCenter.default.post(name: .matthsResumeFirstLearning, object: nil)
                 }
             }
-            FlowDestinationRow("프로필과 설정", detail: "학교 · 계정 보안 · 튜토리얼", icon: "person.crop.circle") { store.route = .profile }
-            FlowDestinationRow("학원", icon: "building.2") { store.route = .academy }
-            FlowDestinationRow("알림", icon: "bell") { store.route = .notifications }
-            FlowDestinationRow("AI 코치", detail: "질문과 대화 기록 · 모델 관리", icon: "bubble.left.and.text.bubble.right") { store.route = .chat }
-            FlowDestinationRow("커뮤니티", icon: "person.2") { store.route = .community }
-            FlowDestinationRow("자료실", icon: "folder") { store.route = .archive }
-            FlowDestinationRow("수험관", icon: "building.columns") { store.route = .studyHall }
-            FlowDestinationRow("이용권과 구매 복원", icon: "creditcard") { store.route = .commerce }
-            FlowDestinationRow("전체 서비스", detail: "상점 · 학원 · 지원", icon: "square.grid.2x2") { store.route = .services }
-            FlowDestinationRow("도움말과 문의", icon: "questionmark.circle") { store.route = .faq }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("학습과 이용").font(.mCaption).foregroundStyle(Tokens.text3)
+                FlowDestinationRow("학원과 수업", detail: "소속 학원 · 수업 · 출석", icon: "building.2") { store.route = .academy }
+                Divider()
+                FlowDestinationRow("이용권과 구매 복원", icon: "creditcard") { store.route = .commerce }
+                Divider()
+                FlowDestinationRow("학습 도구와 자료", detail: "AI 코치 · 자료실 · 커뮤니티", icon: "square.grid.2x2") { store.route = .services }
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("도움이 필요할 때").font(.mCaption).foregroundStyle(Tokens.text3)
+                FlowDestinationRow("자주 묻는 질문", icon: "questionmark.circle") { store.route = .faq }
+                Divider()
+                FlowDestinationRow("문의 내역과 새 문의", detail: "계정 · 학습 · 결제 문제", icon: "bubble.left") { store.route = .support }
+            }
         }
     }
 }

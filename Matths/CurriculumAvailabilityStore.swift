@@ -21,7 +21,11 @@ final class CurriculumAvailabilityStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: key),
            var cached = try? JSONDecoder().decode(CurriculumAvailabilitySnapshot.self, from: data),
            cached.isValid, cached.environment == environment {
-            cached.source = .lastVerifiedCache
+            if (cached.availabilityPolicyRevision ?? 1) < CurriculumAvailabilitySnapshot.currentPolicyRevision {
+                cached = cached.migratingLegacyDevelopmentPolicy()
+            } else if cached.source != .bundledSafeBaseline {
+                cached.source = .lastVerifiedCache
+            }
             initial = cached
         }
         snapshot = initial
@@ -34,7 +38,7 @@ final class CurriculumAvailabilityStore: ObservableObject {
             state = .authenticationRequired
             return
         }
-        if !force, snapshot.source == .liveServer,
+        if !force, lastVerifiedUptime > 0,
            ProcessInfo.processInfo.systemUptime - lastVerifiedUptime < 60 { return }
         let identity = UUID()
         requestID = identity
@@ -77,6 +81,8 @@ final class CurriculumAvailabilityStore: ObservableObject {
         var value = snapshot
         if !value.orderedCourseIDs.contains(courseID) { value.orderedCourseIDs.append(courseID) }
         value.locked[courseID] = true
+        value.explicitServerDenials = Array(Set(value.explicitServerDenials ?? []).union([courseID])).sorted()
+        value.availabilityPolicyRevision = CurriculumAvailabilitySnapshot.currentPolicyRevision
         value.fetchedAt = Date()
         value.source = .liveServer
         apply(value)
@@ -84,7 +90,8 @@ final class CurriculumAvailabilityStore: ObservableObject {
         log.info("server423 course entry denied")
     }
 
-    private func apply(_ value: CurriculumAvailabilitySnapshot) {
+    private func apply(_ incoming: CurriculumAvailabilitySnapshot) {
+        let value = incoming.preservingExplicitServerDenials(from: snapshot)
         lastVerifiedUptime = ProcessInfo.processInfo.systemUptime
         CurriculumPolicy.apply(value)
         if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: cacheKey) }

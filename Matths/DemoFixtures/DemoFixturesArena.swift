@@ -9,6 +9,14 @@
 import Foundation
 
 enum DemoArenaFixtures {
+    private static let sessionLock = NSLock()
+    private static var startedSessions: [String: Date] = [:]
+
+    static func resetMatchSessions() {
+        sessionLock.lock()
+        startedSessions.removeAll()
+        sessionLock.unlock()
+    }
 
     // MARK: - GOAT Arena 읽기 정본 (/api/v1/goat-arena)
     //
@@ -119,7 +127,8 @@ enum DemoArenaFixtures {
           "startsBy": "@T+21h@",
           "submitsBy": "@T+22h@",
           "integrityState": "CLEAR",
-          "availableActions": ["ACCEPT", "DECLINE"],
+          "timeLimitSeconds": 1500,
+          "availableActions": ["START"],
           "attempt": {
             "status": "READY",
             "startedAt": null,
@@ -142,6 +151,29 @@ enum DemoArenaFixtures {
 
     // MARK: - 경기 명령
 
+    /// A real DTO-shaped, GET-only lobby fixture. Without this route, a button
+    /// screenshot passed while opening the actual lobby always failed.
+    static func matchDetail(matchId: String, role: String) -> String {
+        let id = DemoRouter.escaped(matchId)
+        let participant = role == "DEFENDER" ? "DEFENDER" : "CHALLENGER"
+        return #"""
+        {"match":{
+          "id":"\#(id)","status":"MATCHED","role":"\#(participant)",
+          "activeRanking":"SUB","matchType":"NORMAL","integrityState":"CLEAR",
+          "timeLimitSeconds":1500,
+          "capabilities":{"mutations":"ARENA_MATCH_V1","availableActions":["START"]},
+          "timeline":{"matchedAt":"@T-5m@","startsBy":"@T+21h@"},
+          "preStartContract":{
+            "title":"검수용 경기 조건","description":"실제 계정이나 자산을 변경하지 않는 합성 경기입니다.",
+            "stake":"실제 자산 이동 없음","win":"합성 결과만 표시","loss":"합성 결과만 표시",
+            "deadlineLabel":"시작 마감","deadlineAt":"@T+21h@",
+            "deadlineNotice":"시작 버튼을 누르기 전에는 개인 타이머가 시작되지 않습니다.",
+            "rulesHref":"/goat-arena/rulebook"
+          }
+        }}
+        """#
+    }
+
     static let matchCommandReceipt = #"""
     { "match": { "id": "demo-match-01", "status": "MATCHED", "integrityState": "CLEAR" } }
     """#
@@ -154,15 +186,25 @@ enum DemoArenaFixtures {
         """#
     }
 
-    static func matchStart(matchId: String, slot: Int) -> String {
+    static func matchStart(matchId: String, slot: Int, role: String = "CHALLENGER", now: Date = Date()) -> String {
         let id = DemoRouter.escaped(matchId)
         let number = max(1, min(slot, 5))
+        let participant = role == "DEFENDER" ? "DEFENDER" : "CHALLENGER"
+        let key = matchId + ":" + participant
+        sessionLock.lock()
+        let started = startedSessions[key] ?? now
+        startedSessions[key] = started
+        sessionLock.unlock()
+        let formatter = ISO8601DateFormatter()
+        let startedAt = formatter.string(from: started)
+        let endsAt = formatter.string(from: started.addingTimeInterval(1500))
+        let activeMilliseconds = Int(min(1500, max(0, now.timeIntervalSince(started))) * 1000)
         return #"""
         {
           "attempt": {
             "attemptId": "demo-attempt-01",
             "matchId": "\#(id)",
-            "participantRole": "CHALLENGER",
+            "participantRole": "\#(participant)",
             "questionPackId": "fixture-question-pack",
             "questionPackVersion": "1",
             "scoringPolicyVersion": "RANKED-2026-08",
@@ -171,27 +213,28 @@ enum DemoArenaFixtures {
             "questionCount": 5,
             "currentQuestionNumber": \#(number),
             "timeLimitSeconds": 1500,
-            "startedAt": "@T-2m@",
-            "endsAt": "@T+23m@",
+            "startedAt": "\#(startedAt)",
+            "endsAt": "\#(endsAt)",
             "commonSubmitsBy": "@T+40m@",
             "networkReconnectGraceMs": 30000,
-            "recognizedHeartbeatActiveMs": 120000,
+            "recognizedHeartbeatActiveMs": \#(activeMilliseconds),
             "submittedAt": null,
             "evidenceDeadlineAt": null,
             "evidenceRequired": false
           },
-          "questionPack": \#(questionPackBody(matchId: id, slot: number))
+          "questionPack": \#(questionPackBody(matchId: id, slot: number, role: participant))
         }
         """#
     }
 
-    static func questionPack(matchId: String, slot: Int) -> String {
+    static func questionPack(matchId: String, slot: Int, role: String = "CHALLENGER") -> String {
         #"""
-        { "questionPack": \#(questionPackBody(matchId: DemoRouter.escaped(matchId), slot: slot)) }
+        { "questionPack": \#(questionPackBody(matchId: DemoRouter.escaped(matchId), slot: slot, role: role)) }
         """#
     }
 
-    private static func questionPackBody(matchId: String, slot: Int) -> String {
+    private static func questionPackBody(matchId: String, slot: Int, role: String) -> String {
+        let participant = role == "DEFENDER" ? "DEFENDER" : "CHALLENGER"
         let stems = [
             "자연수 $n$ 에 대하여 $f(n)$ 을 $n$ 의 양의 약수의 개수라 할 때, $f(n)=6$ 을 만족시키는 100 이하의 자연수 $n$ 의 개수를 구하시오.",
             "함수 $f(x)=x^3-3x^2+k$ 의 극댓값과 극솟값의 곱이 $-4$ 일 때, 상수 $k$ 의 값을 구하시오.",
@@ -204,7 +247,7 @@ enum DemoArenaFixtures {
         {
           "questionPackId": "fixture-question-pack",
           "matchId": "\#(matchId)",
-          "participantRole": "CHALLENGER",
+          "participantRole": "\#(participant)",
           "packVersion": "1",
           "curriculumVersion": "2026-08",
           "questionVersion": "1",

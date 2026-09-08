@@ -172,6 +172,19 @@ enum DemoAccountFixtures {
 
     // MARK: - 학생 학원 교실
 
+    /// UI-only, isolated DemoMode scenario: reproduce the academy connection
+    /// screen without unlinking any real account or mutating a membership.
+    static let academyUnlinked = #"""
+    {
+      "membership": null, "academy": null, "academyClass": null,
+      "weeks": [], "attendance": null,
+      "academies": [
+        { "id": "demo-academy-01", "name": "매쓰온 수학학원", "status": "ACTIVE" },
+        { "id": "demo-academy-02", "name": "한빛수학연구소", "status": "ACTIVE" }
+      ]
+    }
+    """#
+
     static let academyDashboard = #"""
     {
       "membership": {

@@ -64,9 +64,12 @@ struct LearningPathBrowser: View {
                     }
                 }
             }
-            Section("준비 중") {
-                ForEach(CurriculumV2.data.courses.filter { !CurriculumPolicy.isAvailable($0.id) }) { course in
-                    Label(course.title + " · 준비 중", systemImage: "lock").font(.mCallout).foregroundStyle(Tokens.text2)
+            let unavailable = CurriculumV2.data.courses.filter { !CurriculumPolicy.isAvailable($0.id) }
+            if !unavailable.isEmpty {
+                Section("현재 이용할 수 없는 과목") {
+                    ForEach(unavailable) { course in
+                        Label(course.title + " · 이용 확인 필요", systemImage: "exclamationmark.circle").font(.mCallout).foregroundStyle(Tokens.text2)
+                    }
                 }
             }
         }.listStyle(.insetGrouped)
