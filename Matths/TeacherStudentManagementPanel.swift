@@ -179,6 +179,8 @@ struct TeacherStudentManagementPanel: View {
     @State private var removingSelection = false
     @State private var narrowShowsDetail = false
     @State private var containerWidth: CGFloat = 0
+    @State private var conceptQuery = ""
+    @State private var conceptLimit = 24
 
     private var splitLayout: Bool {
         StaffWorkspaceMetrics.usesListDetail(width: containerWidth) && !dynamicTypeSize.isAccessibilitySize
@@ -559,11 +561,26 @@ struct TeacherStudentManagementPanel: View {
                 highlight("강점", map.topStrength, color: Tokens.successInk)
                 highlight("우선 보완", map.topPriority, color: Tokens.dangerInk)
             }
-            if let bottleneck = map.bottlenecks.first {
+            ForEach(map.bottlenecks) { bottleneck in
                 Label(
                     "잠재 병목: \(bottleneck.conceptTitle) · 후속 \(bottleneck.affectedConceptCount)개",
                     systemImage: "point.3.filled.connected.trianglepath.dotted")
                     .font(.mCaption).foregroundStyle(Tokens.warningInk)
+            }
+            if let recommendation = map.recommendation {
+                DisclosureGroup("우선 학습: " + recommendation.conceptTitle) {
+                    VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                        ForEach(Array(recommendation.reasons.enumerated()), id: \.offset) { _, reason in
+                            Text(reason).font(.mCaption)
+                        }
+                        Text("\(recommendation.diagnostic ? "진단" : "복습") \(recommendation.total)문제 · 이전 오답 \(recommendation.retryCount)개")
+                            .font(.mCaption)
+                        ForEach(Array(recommendation.difficulties.enumerated()), id: \.offset) { _, difficulty in
+                            Text("난이도 \(difficulty.level): \(difficulty.count)문제").font(.mMicro)
+                        }
+                        Text("문제 자동 배정이 아닌 학습 권장 구성입니다.").font(.mMicro)
+                    }
+                }
             }
         }
     }
@@ -590,7 +607,8 @@ struct TeacherStudentManagementPanel: View {
 
     private func conceptList(_ map: ServerAPI.TeacherStudentMathMap) -> some View {
         let concepts = map.concepts
-            .filter { $0.status != "UNKNOWN" }
+            .filter { conceptQuery.isEmpty || [$0.title, $0.courseTitle, $0.unitTitle]
+                .contains(where: { $0.localizedCaseInsensitiveContains(conceptQuery) }) }
             .sorted { ($0.mastery ?? 101) < ($1.mastery ?? 101) }
         return VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack {
@@ -599,16 +617,23 @@ struct TeacherStudentManagementPanel: View {
                 Text("분석 \(map.analyzedConceptCount) · 부족 \(map.unknownConceptCount)")
                     .font(.mMicro).foregroundStyle(Tokens.text3)
             }
+            TextField("과목·단원·개념 검색", text: $conceptQuery)
+                .textFieldStyle(.roundedBorder)
             if concepts.isEmpty {
-                Text("개념별 풀이가 5개 이상 쌓이면 보완 우선순위가 표시됩니다.")
+                Text(conceptQuery.isEmpty ? "개념별 기록이 아직 없습니다." : "검색 결과가 없습니다.")
                     .font(.mCaption).foregroundStyle(Tokens.text3)
             } else {
-                ForEach(concepts.prefix(12)) { concept in
+                ForEach(concepts.prefix(conceptLimit)) { concept in
+                    DisclosureGroup {
+                        conceptEvidence(concept)
+                    } label: {
                     HStack(spacing: Tokens.Space.s2) {
                         Circle().fill(statusColor(concept.status)).frame(width: 8, height: 8)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(concept.title).font(.mCaption).foregroundStyle(Tokens.ink).lineLimit(1)
-                            Text("\(concept.courseTitle) · \(concept.evidence.correctCount)/\(concept.evidence.attemptCount) 정답 · \(concept.confidenceLabel)")
+                            Text(concept.title).font(.mCaption).foregroundStyle(Tokens.ink)
+                            Text(concept.evidence.attemptCount == 0
+                                 ? "\(concept.courseTitle) · 풀이 기록 없음"
+                                 : "\(concept.courseTitle) · \(concept.evidence.correctCount)/\(concept.evidence.attemptCount) 정답 · \(concept.confidenceLabel)")
                                 .font(.mMicro).foregroundStyle(Tokens.text3).lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -617,14 +642,62 @@ struct TeacherStudentManagementPanel: View {
                     }
                     .padding(.vertical, Tokens.Space.s1)
                     .accessibilityElement(children: .combine)
+                    }
+                }
+                if concepts.count > conceptLimit {
+                    Button("개념 더 보기 (남은 \(concepts.count - conceptLimit)개)") { conceptLimit += 24 }
+                        .frame(minHeight: 44)
                 }
             }
         }
+        .onChange(of: conceptQuery) { _, _ in conceptLimit = 24 }
+        .onChange(of: map) { _, _ in conceptLimit = 24; conceptQuery = "" }
+    }
+
+    private func conceptEvidence(_ concept: ServerAPI.TeacherStudentMathMap.Concept) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            Text(concept.unitTitle).font(.mCaption)
+            Text("\(concept.statusLabel) · \(concept.confidenceLabel)").font(.mCaption)
+            if let low = concept.evidence.lowDifficulty {
+                Text("난이도 1–2: \(low.correct)/\(low.total) 정답").font(.mCaption)
+            }
+            if let high = concept.evidence.highDifficulty {
+                Text("난이도 3–5: \(high.correct)/\(high.total) 정답").font(.mCaption)
+            }
+            Text("재도전 회복: \(concept.evidence.retryRecoveredCount)/\(concept.evidence.retryAttemptedCount)")
+                .font(.mCaption)
+            if let count = concept.evidence.problemTypeCount {
+                Text("문제 유형: \(count)종").font(.mCaption)
+            }
+            if let ms = concept.evidence.averageResponseTimeMs, ms.isFinite {
+                Text("평균 풀이 시간: \(Int((ms / 1000).rounded()))초").font(.mCaption)
+            }
+            if let last = concept.evidence.lastStudiedAt,
+               let date = studyDate(last) {
+                Text("마지막 학습: \(date.formatted(date: .abbreviated, time: .shortened))").font(.mCaption)
+            }
+            if let prerequisite = concept.prerequisiteCount, let unlock = concept.unlockCount {
+                Text("선수 개념 \(prerequisite)개 · 후속 개념 \(unlock)개").font(.mCaption)
+            }
+        }
+        .foregroundStyle(Tokens.text2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, Tokens.Space.s2)
+    }
+
+    private func studyDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
     private func summary(_ statistics: ServerAPI.TeacherStudentStatistics) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             Text("학부모 공유용 요약").font(.mBodyB)
+            ShareLink(item: statistics.summary.bullets.map { $0.label + ": " + $0.text }.joined(separator: "\n")) {
+                Label("요약 공유", systemImage: "square.and.arrow.up")
+            }
+            .frame(minHeight: 44)
             ForEach(statistics.summary.bullets) { bullet in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(bullet.label).font(.mCaption).foregroundStyle(Tokens.ink)
@@ -632,6 +705,7 @@ struct TeacherStudentManagementPanel: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Tokens.Space.s3)
         .background(Tokens.primarySoft,
                     in: RoundedRectangle(cornerRadius: Tokens.Radius.sm, style: .continuous))

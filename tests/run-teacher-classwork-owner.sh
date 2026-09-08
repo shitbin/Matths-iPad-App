@@ -15,7 +15,8 @@ assert(source.includes('pickerOwner.isCurrent(in: store), model.actionID == nil'
 assert(source.includes('DisclosureGroup("개념 선택·변경", isExpanded: $showsConceptPicker)'));
 assert(source.includes('showsConceptPicker = model.selectedConceptKeys.isEmpty'));
 assert(source.includes('let concepts = model.allConcepts.filter(model.matchesSearch)'));
-assert(source.includes('Array(concepts.prefix(12))'));
+assert(source.includes('Array(concepts.prefix(visibleConceptLimit))'));
+assert(source.includes('visibleConceptLimit += 24'));
 assert((source.match(/action: requestSave/g)||[]).length===2,'toolbar and footer must share one guarded save confirmation');
 assert(source.includes('private func requestSave()'));
 JS

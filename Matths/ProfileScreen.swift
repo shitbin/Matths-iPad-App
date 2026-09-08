@@ -85,7 +85,7 @@ struct ProfileScreen: View {
                                     ? Tokens.primary : Tokens.text2)
                         }
                         .buttonStyle(.plain)
-                        .disabled(profileMutationInFlight)
+                        .disabled(profileMutationInFlight || store.serverProfile == nil)
                     }
 
                     Button {
@@ -104,7 +104,7 @@ struct ProfileScreen: View {
                         .foregroundStyle(Tokens.primary)
                     }
                     .buttonStyle(.plain)
-                    .disabled(profileMutationInFlight)
+                    .disabled(profileMutationInFlight || store.serverProfile == nil)
                 }
             }
 
@@ -474,7 +474,7 @@ struct ProfileScreen: View {
                     }
                     .pickerStyle(.segmented).frame(maxWidth: 260)
                     .accessibilityLabel("코치 수위")
-                    .disabled(profileMutationInFlight)
+                    .disabled(profileMutationInFlight || store.serverProfile == nil)
                     .onChange(of: store.coach.level) { _, level in
                         guard !applyingServerProfile, !profileMutationInFlight,
                               let owner = AccountRequestOwner(store: store) else { return }

@@ -336,6 +336,7 @@ struct TeacherClassworkPanel: View {
     @State private var saveOwner: AccountRequestOwner?
     @State private var confirmsRegrade = false
     @State private var showsConceptPicker = false
+    @State private var visibleConceptLimit = 12
     private var loadIdentity: String { model.selectedClassID + "|" + (owner?.id.uuidString ?? "none") }
 
     private var compactLandscape: Bool {
@@ -705,7 +706,7 @@ struct TeacherClassworkPanel: View {
 
     private var conceptPicker: some View {
         let concepts = model.allConcepts.filter(model.matchesSearch)
-        let visibleConcepts = Array(concepts.prefix(12))
+        let visibleConcepts = Array(concepts.prefix(visibleConceptLimit))
         return Group {
             if concepts.isEmpty {
                 Text("검색 결과가 없습니다.").font(.mCaption).foregroundStyle(Tokens.text2)
@@ -726,8 +727,10 @@ struct TeacherClassworkPanel: View {
                     .accessibilityLabel("\(concept.conceptTitle), \(model.selectedConceptKeys.contains(concept.key) ? "선택됨" : "선택 안 됨")")
                 }
                 if concepts.count > visibleConcepts.count {
-                    Text("검색 결과 \(concepts.count)개 중 12개를 표시합니다. 나머지 \(concepts.count - visibleConcepts.count)개는 과목·단원·개념 이름을 더 구체적으로 검색해 주세요.")
-                        .font(.mCaption).foregroundStyle(Tokens.text2)
+                    Button("개념 더 보기 (남은 \(concepts.count - visibleConcepts.count)개)") {
+                        visibleConceptLimit += 24
+                    }
+                    .frame(minHeight: 44)
                 }
             }
         }

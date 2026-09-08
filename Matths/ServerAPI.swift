@@ -927,13 +927,26 @@ enum ServerAPI {
     }
 
     struct TeacherStudentMathMap: Codable, Equatable {
+        struct Recommendation: Codable, Equatable {
+            struct Difficulty: Codable, Equatable { var level: Int; var count: Int }
+            var conceptTitle: String
+            var reasons: [String]
+            var total: Int
+            var diagnostic: Bool
+            var difficulties: [Difficulty]
+            var retryCount: Int
+        }
         struct Evidence: Codable, Equatable {
+            struct Difficulty: Codable, Equatable { var total: Int; var correct: Int }
             var attemptCount: Int
             var correctCount: Int
             var retryAttemptedCount: Int
             var retryRecoveredCount: Int
             var averageResponseTimeMs: Double?
             var lastStudiedAt: String?
+            var lowDifficulty: Difficulty? = nil
+            var highDifficulty: Difficulty? = nil
+            var problemTypeCount: Int? = nil
         }
         struct Concept: Codable, Identifiable, Equatable {
             var id: String
@@ -945,6 +958,8 @@ enum ServerAPI {
             var statusLabel: String
             var confidenceLabel: String
             var evidence: Evidence
+            var prerequisiteCount: Int? = nil
+            var unlockCount: Int? = nil
         }
         struct Bottleneck: Codable, Identifiable, Equatable {
             var conceptId: String
@@ -961,6 +976,7 @@ enum ServerAPI {
         var topPriority: Concept?
         var bottlenecks: [Bottleneck]
         var concepts: [Concept]
+        var recommendation: Recommendation? = nil
     }
 
     struct TeacherStudentDetail: Codable, Equatable {

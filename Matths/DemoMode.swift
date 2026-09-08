@@ -1173,6 +1173,9 @@ enum DemoRouter {
             return DemoAccountFixtures.teacherAcademyDashboard
 
         case "/api/v1/academy/teacher/students/{membershipId}":
+            if DemoMode.launchArgumentValue(after: "-teacherStudentsFixture") == "full-map" {
+                return DemoAccountFixtures.teacherStudentFullMapDetail
+            }
             return DemoAccountFixtures.teacherStudentDetail
 
         case "/api/v1/academy/teacher/classes/{classId}/classwork",

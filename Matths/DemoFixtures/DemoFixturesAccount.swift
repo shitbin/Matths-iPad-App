@@ -615,6 +615,51 @@ enum DemoAccountFixtures {
     }
     """#
 
+    static var teacherStudentFullMapDetail: String {
+        guard var body = (try? JSONSerialization.jsonObject(with: Data(teacherStudentDetail.utf8))) as? [String: Any],
+              var map = body["mathMap"] as? [String: Any],
+              let original = (map["concepts"] as? [[String: Any]])?.first else { return teacherStudentDetail }
+        map["concepts"] = (1...220).map { index -> [String: Any] in
+            var concept = original
+            concept["id"] = "qa-concept-\(index)"
+            concept["title"] = "검증 개념 \(index)"
+            concept["prerequisiteCount"] = 1
+            concept["unlockCount"] = 2
+            var evidence = concept["evidence"] as! [String: Any]
+            evidence["lowDifficulty"] = ["total": 5, "correct": 3]
+            evidence["highDifficulty"] = ["total": 4, "correct": 1]
+            evidence["problemTypeCount"] = 3
+            if index > 100 {
+                concept["status"] = "UNKNOWN"
+                concept["statusLabel"] = "데이터 부족"
+                concept["confidenceLabel"] = "판단 전"
+                concept["mastery"] = NSNull()
+                evidence["attemptCount"] = 0
+                evidence["correctCount"] = 0
+                evidence["retryAttemptedCount"] = 0
+                evidence["retryRecoveredCount"] = 0
+                evidence["lowDifficulty"] = ["total": 0, "correct": 0]
+                evidence["highDifficulty"] = ["total": 0, "correct": 0]
+                evidence["problemTypeCount"] = 0
+                evidence["averageResponseTimeMs"] = NSNull()
+                evidence["lastStudiedAt"] = NSNull()
+            }
+            concept["evidence"] = evidence
+            return concept
+        }
+        map["analyzedConceptCount"] = 100
+        map["unknownConceptCount"] = 120
+        map["recommendation"] = [
+            "conceptTitle": "검증 개념 1", "reasons": ["합성 검수용 학습 권장 구성"],
+            "total": 5, "diagnostic": false, "retryCount": 1,
+            "difficulties": [["level": 1, "count": 2], ["level": 3, "count": 3]],
+        ]
+        body["mathMap"] = map
+        guard let data = try? JSONSerialization.data(withJSONObject: body),
+              let json = String(data: data, encoding: .utf8) else { return teacherStudentDetail }
+        return json
+    }
+
     static let teacherAttendanceRoster = #"""
     {
       "dateKey": "@D+0@",
