@@ -10,12 +10,12 @@ import UIKit
 enum ProNativeRuntimeSelfTest {
     private static var started = false
     private enum Profile: String {
-        case researchPair = "research-small-pair"
+        case smallPair = "qwen35-2b-deepseek7b"
         case highMemory9B = "high-memory-9b"
     }
-    private static var profile: Profile = .researchPair
+    private static var profile: Profile = .smallPair
     private static var vision: ModelDownloader.ModelSpec {
-        profile == .highMemory9B ? ModelDownloader.spec9B : ModelDownloader.specVision3B
+        profile == .highMemory9B ? ModelDownloader.spec9B : ModelDownloader.specVision2B
     }
     private static var reasoning: ModelDownloader.ModelSpec {
         profile == .highMemory9B ? ModelDownloader.spec9B : ModelDownloader.specDeepSeek7B
@@ -51,9 +51,9 @@ enum ProNativeRuntimeSelfTest {
         var runtimeOS: String?
         var hostPhysicalMemoryBytes: UInt64?
         var fixtureKind = "One native-rendered synthetic linear-equation sheet; not a handwriting/accuracy benchmark"
-        var licenseScope = "Qwen2.5-VL3B upstream research/evaluation only; commercial deployment permission unresolved"
-        var modelProfile = "Existing Qwen2.5-VL3B + projector to DeepSeek7B sequential pair; no product model preference change"
-        var profileID = Profile.researchPair.rawValue
+        var licenseScope = "Qwen3.5-2B original and quantization Apache-2.0; DeepSeek7B MIT; runtime QA is not full release approval"
+        var modelProfile = "Qwen3.5-2B + matching F16 projector to DeepSeek7B sequential pair"
+        var profileID = Profile.smallPair.rawValue
         var expectedModelSwitch = true
         var maximumResidentBytes: UInt64 = 8 * 1_024 * 1_024 * 1_024
         var maximumRuntimeSeconds = 720
@@ -107,9 +107,12 @@ enum ProNativeRuntimeSelfTest {
         guard !started, DemoMode.isOn, Bundle.main.bundleIdentifier == "kr.matths.app.uiqa",
               let index = args.firstIndex(of: "-proNativeRuntimeSelfTest"), index + 1 < args.count,
               ["prepare", "verify", "revalidate"].contains(args[index + 1]),
-              args.contains("-researchOnlyVisionQA") else { return }
+              (args.contains("-isolatedVisionQA") || args.contains("-researchOnlyVisionQA")) else { return }
         if let profileIndex = args.firstIndex(of: "-proNativeRuntimeProfile") {
-            guard profileIndex + 1 < args.count, let requested = Profile(rawValue: args[profileIndex + 1]) else { return }
+            guard profileIndex + 1 < args.count else { return }
+            let name = args[profileIndex + 1] == "research-small-pair"
+                ? Profile.smallPair.rawValue : args[profileIndex + 1]
+            guard let requested = Profile(rawValue: name) else { return }
             profile = requested
         }
         started = true
@@ -122,7 +125,7 @@ enum ProNativeRuntimeSelfTest {
             .appendingPathComponent("ProNativeRuntimeQA", isDirectory: true)
     }
     private static var directory: URL {
-        profile == .highMemory9B ? baseDirectory.appendingPathComponent(profile.rawValue, isDirectory: true) : baseDirectory
+        baseDirectory.appendingPathComponent(profile.rawValue, isDirectory: true)
     }
     private static var jobDirectory: URL { directory.appendingPathComponent(LocalAIJobRecovery.directoryName, isDirectory: true) }
 

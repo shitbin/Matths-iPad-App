@@ -37,7 +37,7 @@ enum LocalModelPromptCases {
         require(qwen35Thinking.hasSuffix("<think>\n"), "Qwen3.5 reasoning prefill")
 
         let qwen35 = LocalModelPrompt.oneShot(
-            modelIdentifier: "Qwen3.5-9B-Q4_K_M.gguf",
+            modelIdentifier: "Qwen3.5-2B-Q4_K_M.gguf",
             system: "SYSTEM",
             user: "USER",
             thinking: false)

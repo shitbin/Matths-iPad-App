@@ -284,6 +284,7 @@ final class AITutor: ObservableObject {
         // 열거 순서에 따라 그걸 본체로 열려다 실패할 수 있다.
         let candidates = files.filter {
             $0.pathExtension == "gguf"
+                && !ModelDownloader.isRetiredModel($0.lastPathComponent)
                 && !$0.lastPathComponent.lowercased().hasPrefix("mmproj")
                 && LocalAIModelPack.fileReady($0.lastPathComponent)
         }

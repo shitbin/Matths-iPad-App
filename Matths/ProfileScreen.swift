@@ -521,12 +521,6 @@ struct ProfileScreen: View {
                         .accessibilityLabel("복습 리마인더")
                 }
                 DottedRule()
-                settingRow("화면 모션", caption: "전환, 등장, 채점 피드백 애니메이션 (기기의 동작 줄이기가 켜져 있으면 항상 꺼짐)") {
-                    Toggle("", isOn: $store.motionOn)
-                        .labelsHidden().tint(Tokens.primary)
-                        .accessibilityLabel("화면 모션")
-                }
-                DottedRule()
                 // 별도 효과음 트랙은 없다. 끄기 상태를 효과음 모드처럼 안내하지 않는다.
                 settingRow("개념 해설 음성", caption: "개념 영상의 해설 음성을 끄거나 성우를 고릅니다") {
                     Picker("", selection: conceptVoice) {
@@ -925,7 +919,7 @@ struct ProfileScreen: View {
         ("Kakao SDK for iOS", "Apache License 2.0", "github.com/kakao/kakao-ios-sdk"),
         ("Alamofire", "MIT License", "github.com/Alamofire/Alamofire"),
         ("Qwen3.5 (Alibaba Cloud)", "Apache License 2.0", "huggingface.co/Qwen"),
-        ("Qwen2.5-VL 3B (Alibaba Cloud)", "Qwen Research License · 비상업 연구·평가용, 상업 이용 별도 허가 필요", "huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/blob/37ce9f696340e294a5d3e0e806466addd1b22b3a/LICENSE"),
+        ("Qwen3.5-2B 사진 판독기 (Alibaba Cloud)", "Apache License 2.0", "huggingface.co/Qwen/Qwen3.5-2B/blob/15852e8c16360a2fea060d615a32b45270f8a8fc/LICENSE"),
         ("DeepSeek-R1-Distill-Qwen-7B", "MIT License", "huggingface.co/deepseek-ai"),
         ("llama.cpp (ggml-org)", "MIT License", "github.com/ggml-org/llama.cpp"),
         ("KaTeX", "MIT License", "katex.org"),

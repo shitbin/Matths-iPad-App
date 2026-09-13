@@ -202,7 +202,7 @@ struct StoreCatalogScreen: View {
 
             if let error = model.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.mCaption).foregroundStyle(Tokens.danger)
+                    .font(.mCaption).foregroundStyle(Tokens.dangerInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -385,7 +385,7 @@ struct StoreCatalogScreen: View {
             }
             if let error = model.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.mCaption).foregroundStyle(Tokens.danger)
+                    .font(.mCaption).foregroundStyle(Tokens.dangerInk)
             }
         }
         .storeCatalogSurface()

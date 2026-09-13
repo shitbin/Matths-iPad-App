@@ -57,6 +57,7 @@ grep -q 'MOCK_EXAM_ONLY' "$IAP"
 grep -q '"/api/v1/commerce/apple/redeem"' "$IAP"
 grep -q 'App Store 계정을 확인한 뒤 구매 복원을 다시 시도해 주세요.' "$IAP"
 grep -q 'App Store 연결을 확인한 뒤 다시 시도해 주세요.' "$IAP"
+grep -q 'value.appleCheckoutEnabled ?? value.checkoutEnabled' "$HUB"
 grep -q '1개월 자동 갱신 · 결제마다 29일 학습 사이클' "$HUB"
 grep -q '한 달마다 자동 갱신됩니다' "$HUB"
 

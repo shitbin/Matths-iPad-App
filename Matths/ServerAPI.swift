@@ -3211,6 +3211,8 @@ enum ServerAPI {
     private struct GoatArenaMatchesResponse: Codable {
         var matches: [GoatArenaParticipantMatch?]
         var nextCursor: String? = nil
+        var scope: String? = nil
+        var complete: Bool? = nil
     }
 
     private struct GoatArenaMatchResponse: Codable {
@@ -3219,15 +3221,76 @@ enum ServerAPI {
 
     /// 최근 경기부터(서버 정렬: updatedAt 내림차순) 한 페이지를 읽는다.
     static func getGoatArenaMatches(
-        limit: Int = 5
+        limit: Int = 5,
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
     ) async throws -> [GoatArenaParticipantMatch] {
         let response: GoatArenaMatchesResponse = try await request(
             "GET",
             "/api/v1/goat-arena/matches",
             body: nil,
             authed: true,
-            query: ["limit": String(max(1, min(limit, 20)))])
+            query: ["limit": String(max(1, min(limit, 20)))], authorization: authorization)
         return response.matches.compactMap { $0 }
+    }
+
+    /// 현재 사용자가 방어자인 미처리 경기 전체를 확인한다.
+    ///
+    /// 새 서버는 역할·actionable 필터를 적용한 cursor를 돌려준다. 구버전 서버가
+    /// 쿼리를 무시해도 nextCursor가 끝날 때까지 모든 참가 경기 페이지를 읽은 뒤
+    /// 클라이언트에서 다시 거르므로, 최근 20경기 밖의 방어를 "없음"으로 오판하지 않는다.
+    static func getGoatArenaActionableDefenses(
+        authorization: AuthorizationSnapshot = authorizationForCurrentRequest()
+    ) async throws -> [GoatArenaParticipantMatch] {
+        var cursor: String?
+        var seenCursors = Set<String>()
+        var collected: [GoatArenaParticipantMatch] = []
+
+        for _ in 0..<100 {
+            var query = [
+                "limit": "50",
+                "role": "DEFENDER",
+                "actionable": "true",
+            ]
+            if let cursor { query["cursor"] = cursor }
+            let response: GoatArenaMatchesResponse = try await request(
+                "GET",
+                "/api/v1/goat-arena/matches",
+                body: nil,
+                authed: true,
+                query: query,
+                authorization: authorization)
+            collected.append(contentsOf: response.matches.compactMap { $0 }.filter(Self.isActionableDefense))
+
+            if response.complete == true || response.nextCursor == nil {
+                return Array(Dictionary(grouping: collected, by: \.id).values.compactMap(\.first))
+                    .sorted { Self.matchUpdatedAt($0) > Self.matchUpdatedAt($1) }
+            }
+            guard let next = response.nextCursor, seenCursors.insert(next).inserted else {
+                throw ServerAPIError(
+                    message: "받은 공격 목록을 끝까지 확인하지 못했습니다. 다시 시도해 주세요.",
+                    code: "ARENA_DEFENSE_CURSOR_INVALID")
+            }
+            cursor = next
+        }
+        throw ServerAPIError(
+            message: "받은 공격이 많아 목록을 끝까지 확인하지 못했습니다. 다시 시도해 주세요.",
+            code: "ARENA_DEFENSE_PAGE_LIMIT")
+    }
+
+    private static func isActionableDefense(_ match: GoatArenaParticipantMatch) -> Bool {
+        guard match.role == "DEFENDER" else { return false }
+        if let actions = match.capabilities?.availableActions {
+            return !Set(actions).isDisjoint(with: ["START", "SAVE_ANSWER", "ADVANCE", "SUBMIT", "SUBMIT_EVIDENCE"])
+        }
+        return ["MATCHED", "READY", "IN_PROGRESS", "SUBMITTED", "HELD"].contains(match.status)
+            || ["READY", "IN_PROGRESS", "EVIDENCE_REQUIRED"].contains(match.attempt?.status ?? "")
+    }
+
+    private static func matchUpdatedAt(_ match: GoatArenaParticipantMatch) -> Date {
+        guard let value = match.timeline?.updatedAt else { return .distantPast }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value) ?? .distantPast
     }
 
     static func getGoatArenaMatch(

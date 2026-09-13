@@ -2,8 +2,12 @@ import Foundation
 
 @main enum ArenaLobbyFixtureCases {
     struct Envelope: Decodable { let match: ServerAPI.GoatArenaParticipantMatch }
+    struct Matches: Decodable { let matches: [ServerAPI.GoatArenaParticipantMatch] }
     static func main() throws {
         let now = Date(timeIntervalSince1970: 1_788_840_000)
+        let list = try JSONDecoder().decode(Matches.self, from: Data(DemoTemplate.resolve(DemoArenaFixtures.participantMatches, now: now).utf8))
+        precondition(list.matches.first?.role == "DEFENDER")
+        precondition(list.matches.first?.capabilities?.availableActions == ["START"])
         for role in ["DEFENDER", "CHALLENGER"] {
             let json = DemoTemplate.resolve(DemoArenaFixtures.matchDetail(matchId: "match-01", role: role), now: now)
             let value = try JSONDecoder().decode(Envelope.self, from: Data(json.utf8)).match

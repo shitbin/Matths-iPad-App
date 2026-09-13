@@ -212,7 +212,7 @@ struct RootView: View {
     }
 
     private func usesSidebar(width: CGFloat) -> Bool {
-        ProductExperience.enabled && !hasStaffWorkspace && width >= 900 && !navigationTypeSize.isAccessibilitySize
+        false // Student navigation stays in the bottom bar on iPhone and iPad.
     }
 
     private var hasStaffWorkspace: Bool {
@@ -395,7 +395,7 @@ struct RootView: View {
                 Group {
                     switch store.route {
                     case .home:
-                        if ProductExperience.enabled { TodayLearningScreen() } else { HomeScreen() }
+                        HomeScreen()
                     case .learn: LearningHubScreen()
                     case .records: LearningRecordsScreen()
                     case .me: MeHubScreen()
@@ -1890,6 +1890,7 @@ private enum HomeArenaTierState: Equatable {
 
 struct HomeScreen: View {
     @EnvironmentObject private var store: AppStore
+    @ObservedObject private var activities = TodayActivityStore.shared
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var hSize
     @Environment(\.verticalSizeClass) private var vSize
@@ -1909,6 +1910,9 @@ struct HomeScreen: View {
     /// "다시 시도" 가 미는 재조회 토큰 — 값이 바뀌면 .task(id:) 가 새로 돈다.
     /// 계정 전환과 같은 취소·재시작 경로를 그대로 타므로 늦은 응답 가드도 동일하다.
     @State private var retryToken = UUID()
+    @State private var selectedActivity: TodayActionCandidate?
+    @State private var todayNavigationID = UUID()
+    @State private var todayActionBusy = false
 
     private var accountRole: String {
         #if DEBUG
@@ -1976,7 +1980,17 @@ struct HomeScreen: View {
             }
         }
         .task(id: "\(accountIdentity)|\(retryToken.uuidString)") {
-            await refreshDashboard()
+            async let dashboard: Void = refreshDashboard()
+            async let agenda: Void = activities.refresh(store: store, force: true)
+            _ = await (dashboard, agenda)
+        }
+        .onChange(of: store.route) { _, _ in
+            todayNavigationID = UUID()
+            todayActionBusy = false
+        }
+        .fullScreenCover(item: $selectedActivity) { action in
+            TodayActivityDestination(action: action) { selectedActivity = nil }
+                .onDisappear { Task { await activities.refresh(store: store, force: true) } }
         }
     }
 
@@ -2023,11 +2037,120 @@ struct HomeScreen: View {
     private var missionBlock: some View {
         VStack(alignment: .leading,
                spacing: vSize == .compact ? Tokens.Space.s3 : Tokens.Space.s4) {
-            MissionHeroCard(mission: mission)
+            MissionHeroCard(
+                mission: mission,
+                actionBusy: todayActionBusy,
+                onActivity: performTodayAction)
                 .entrance(1)
+
+            todayProgressStrip
+
+            if !todayAgenda.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("함께 확인할 일")
+                        .font(.mCaption)
+                        .foregroundStyle(Tokens.text3)
+                        .padding(.bottom, Tokens.Space.s1)
+                    ForEach(todayAgenda) { action in
+                        Button { performTodayAction(action) } label: {
+                            HStack(spacing: Tokens.Space.s3) {
+                                Image(systemName: action.kind == .review
+                                      ? "arrow.counterclockwise"
+                                      : "calendar.badge.clock")
+                                    .frame(width: 24)
+                                    .foregroundStyle(Tokens.text2)
+                                    .accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(action.title).font(.mCallout).foregroundStyle(Tokens.ink)
+                                    Text(action.position ?? action.visibleReason)
+                                        .font(.mCaption).foregroundStyle(Tokens.text3)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                }
+                                Spacer(minLength: Tokens.Space.s2)
+                                Image(systemName: "chevron.right")
+                                    .font(.mMicro).foregroundStyle(Tokens.text3)
+                                    .accessibilityHidden(true)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(todayActionBusy)
+                        if action.id != todayAgenda.last?.id { Divider() }
+                    }
+                }
+            }
 
             HomeShortcutRow()
                 .entrance(2)
+        }
+    }
+
+    private var todayAgenda: [TodayActionCandidate] {
+        Array(TodayDashboardPolicy.agenda(
+            store.todayActionCandidates,
+            primary: store.resolvedTodayAction).prefix(3))
+    }
+
+    private var todayProgressStrip: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Tokens.Space.s4) {
+                todayMetric("오늘 학습", "\(displayedDashboard.stats.todayStudyMinutes)분")
+                todayMetric("남은 복습", "\(store.todayReviewIDs.count)개")
+                todayMetric("확인할 일", "\(todayAgenda.count)개")
+            }
+            VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                todayMetric("오늘 학습", "\(displayedDashboard.stats.todayStudyMinutes)분")
+                todayMetric("남은 복습", "\(store.todayReviewIDs.count)개")
+                todayMetric("확인할 일", "\(todayAgenda.count)개")
+            }
+        }
+        .padding(.horizontal, Tokens.Space.s3)
+        .padding(.vertical, Tokens.Space.s2)
+        .background(Tokens.paper2, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func todayMetric(_ label: String, _ value: String) -> some View {
+        HStack(spacing: Tokens.Space.s1) {
+            Text(label).font(.mCaption).foregroundStyle(Tokens.text3)
+            Text(value).font(.mCaption.weight(.semibold)).foregroundStyle(Tokens.ink).monospacedDigit()
+        }
+        .frame(minHeight: 28)
+    }
+
+    private func performTodayAction(_ action: TodayActionCandidate) {
+        todayNavigationID = UUID()
+        todayActionBusy = false
+        switch action.destination {
+        case .officialAssessment(let id):
+            let owner = store.captureAccountSessionBoundary()
+            let requestedNavigation = todayNavigationID
+            todayActionBusy = true
+            Task {
+                defer { if todayNavigationID == requestedNavigation { todayActionBusy = false } }
+                await store.pullServerAssessments()
+                guard store.ownsCurrentAccountSession(owner), todayNavigationID == requestedNavigation,
+                      store.route == .home else { return }
+                store.assessmentReturnRoute = .assess
+                guard store.attemptsV2.attempts.contains(where: {
+                    $0.id == id && $0.serverBacked == true && !$0.isServerCancelled && $0.submittedAt == nil
+                }) else { store.route = .assess; return }
+                store.currentAttemptID = id
+                store.route = .paper
+            }
+        case .academyAttendance:
+            store.route = .academy
+        case .review:
+            store.startReview(ids: Array(store.todayReviewIDs.prefix(5)))
+        case .concept(let id):
+            store.openConceptV2(id)
+        case .assessments:
+            store.route = .assess
+        case .learn:
+            store.route = .learn
+        case .weeklyMock, .arena, .academyWeek:
+            selectedActivity = action
         }
     }
 
@@ -2043,6 +2166,7 @@ struct HomeScreen: View {
     private var weeklySection: some View {
         WeeklyStudySection(activity: displayedDashboard, source: displayedSource,
                            onRetry: { retryToken = UUID() })
+            .tutorialTarget(.todayProgress)
             .entrance(4)
     }
 
@@ -2053,13 +2177,13 @@ struct HomeScreen: View {
     }
 
     /// 통계 받침을 세울 상태인지 — 시작 전에는 0분·0/7일뿐이라 걷어낸다.
-    private var showsWeeklySection: Bool { !isStaffHome && !isPreStart }
+    private var showsWeeklySection: Bool { !isStaffHome }
 
     /// 만료 중에는 아레나 예고를 조용히 접는다 — 서버 랭킹 화면이 곧장 실패한다.
     /// 출구(다시 로그인)는 상단 배너 하나가 맡고, 랭킹전 안내는 랭킹 탭 몫이다 —
     /// 홈에 대체 문구를 남기면 상단 배너와 같은 말을 두 번 하는 고아 한 줄이 된다(RG-05).
     private var showsArenaTeaser: Bool {
-        !isStaffHome && !isPreStart && displayedSource != .expired
+        !isStaffHome && displayedSource != .expired
     }
 
     /// 섹션 사이 간격. 세로가 짧으면(가로 iPhone) 28pt 가 세 번 들어가 84pt 를 먹는다.
@@ -2366,6 +2490,7 @@ private func nextMission(in store: AppStore) -> (course: CourseV2, concept: Conc
 /// 새 학습이 쌓인다(오답노트 배지와 같은 축, store.dueReviewCount).
 private enum HomeMission {
     case academy(role: String)
+    case activity(TodayActionCandidate)
     case firstConcept(course: CourseV2, concept: ConceptV2)
     /// followUp = 다음에 배울 새 개념 — 히어로에서 "바로 가기" 보조 행으로만 보인다
     case review(count: Int, followUp: (course: CourseV2, concept: ConceptV2)?)
@@ -2378,6 +2503,11 @@ private func homeMission(in store: AppStore, preStart: Bool,
                          accountRole: String = "student") -> HomeMission {
     if accountRole == "teacher" || accountRole == "admin" {
         return .academy(role: accountRole)
+    }
+    // 홈의 실제 첫 행동도 TodayActionResolver가 선택한다. 기존 공지·주간 기록·
+    // Arena 예고는 HomeScreen에 그대로 남기고 미션 결정 축만 공통 정책으로 합친다.
+    if let action = store.resolvedTodayAction {
+        return .activity(action)
     }
     let next = nextMission(in: store)
     if preStart {
@@ -2567,6 +2697,8 @@ private struct MissionHeroCard: View {
 
     /// 홈이 판정해서 내려주는 오늘의 미션 — stateTitle 과 같은 값이다.
     let mission: HomeMission
+    let actionBusy: Bool
+    let onActivity: (TodayActionCandidate) -> Void
 
     /// 과목 진도 — 완료 개념 수 / 전체. 히어로 진행바는 이 실데이터만 쓴다.
     private func progress(in course: CourseV2) -> Double {
@@ -2593,6 +2725,8 @@ private struct MissionHeroCard: View {
             switch mission {
             case let .academy(role):
                 academyMission(role: role)
+            case let .activity(action):
+                activityMission(action)
             case let .review(count, followUp):
                 reviewMission(count: count, followUp: followUp)
             case let .firstConcept(course, concept):
@@ -2605,6 +2739,41 @@ private struct MissionHeroCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card(padding: short ? Tokens.Space.s4 : Tokens.Space.s6)
+    }
+
+    @ViewBuilder private func activityMission(_ action: TodayActionCandidate) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+            Text(action.kind == .timedWork ? "이어서 할 일" : "지금 할 일")
+                .font(.mMicro).foregroundStyle(Tokens.text3)
+            Text(action.title)
+                .font(.mTitle).foregroundStyle(Tokens.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(action.visibleReason)
+                .font(.mCallout).foregroundStyle(Tokens.text2)
+                .fixedSize(horizontal: false, vertical: true)
+            if let position = action.position {
+                Text(position).font(.mCaption).foregroundStyle(Tokens.text2)
+            }
+            if let minutes = action.minutes {
+                Label("약 \(minutes)분", systemImage: "clock")
+                    .font(.mCaption).foregroundStyle(Tokens.text2)
+            }
+            if let deadline = action.deadline {
+                Label(deadline.formatted(date: .abbreviated, time: .shortened),
+                      systemImage: "calendar.badge.clock")
+                    .font(.mCaption).foregroundStyle(Tokens.warningInk)
+            }
+        }
+
+        Button(actionBusy ? "최신 기록 확인 중…" : action.visibleAction) {
+            onActivity(action)
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(actionBusy)
+        .frame(maxWidth: 300, alignment: .leading)
+        .accessibilityIdentifier("today-primary-action")
+        .tutorialTarget(.todayPrimaryAction)
     }
 
     /// 교사·운영자에게 학생 진도나 오답을 첫 행동으로 제시하지 않는다. 역할별 정본
@@ -2693,6 +2862,7 @@ private struct MissionHeroCard: View {
         .buttonStyle(PrimaryButtonStyle())
         .frame(maxWidth: 300, alignment: .leading)
         .accessibilityLabel("복습 시작, 오늘 복습 \(count)개")
+        .tutorialTarget(.todayPrimaryAction)
 
         // 새 개념은 보조 행으로 강등 — 주 CTA 와 경쟁하지 않는 평문 링크 문법.
         // 문구는 동작 그대로 말한다: 누르면 복습을 건너뛰고 즉시 개념으로 간다.
@@ -2751,6 +2921,7 @@ private struct MissionHeroCard: View {
         // 버튼이 아니라 구획 배경처럼 읽힌다. 본문과 같은 leading 정렬.
         Button(preStart ? "지금 시작하기" : "이어서 풀기") { store.openConceptV2(concept.id) }
             .buttonStyle(PrimaryButtonStyle())
+            .tutorialTarget(.todayPrimaryAction)
             .frame(maxWidth: 300, alignment: .leading)
             .accessibilityLabel("\(preStart ? "지금 시작하기" : "이어서 풀기"), \(concept.title)")
     }
@@ -2771,6 +2942,7 @@ private struct MissionHeroCard: View {
 
         Button("커리큘럼 보기") { store.route = .curriculum }
             .buttonStyle(PrimaryButtonStyle())
+            .tutorialTarget(.todayPrimaryAction)
             .frame(maxWidth: 300, alignment: .leading)   // 주 CTA 와 같은 폭 규칙
     }
 

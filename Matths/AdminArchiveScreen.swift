@@ -37,10 +37,17 @@ struct AdminArchiveScreen: View {
     private struct MoveRequest: Identifiable { let ids: [String]; var id: String { ids.joined(separator: ":") } }
     private enum Destructive: Identifiable {
         case folder(ServerAPI.AdminArchiveFolder), item(ServerAPI.AdminArchiveItem), purge(ServerAPI.AdminArchiveItem)
-        var id: String { switch self { case .folder(let v): "folder:\(v.id)"; case .item(let v): "item:\(v.id)"; case .purge(let v): "purge:\(v.id)" } }
+        case bulk(ids: [String], titles: [String])
+        var id: String {
+            switch self {
+            case .folder(let v): "folder:\(v.id)"
+            case .item(let v): "item:\(v.id)"
+            case .purge(let v): "purge:\(v.id)"
+            case .bulk(let ids, _): "bulk:" + ids.sorted().joined(separator: ":")
+            }
+        }
     }
 
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = AdminArchiveModel()
     @State private var section: Section = .files
@@ -50,7 +57,6 @@ struct AdminArchiveScreen: View {
     @State private var showsUpload = false
     let onClose: () -> Void
 
-    private var compactLandscape: Bool { verticalSizeClass == .compact && !dynamicTypeSize.isAccessibilitySize }
     private var folderID: String? { model.dashboard?.selectedFolder?.id }
 
     var body: some View {
@@ -59,13 +65,10 @@ struct AdminArchiveScreen: View {
             if let value = model.errorMessage { banner(value, Tokens.dangerInk, "exclamationmark.triangle.fill") }
             if let value = model.noticeMessage { banner(value, Tokens.successInk, "checkmark.circle.fill") }
             if model.isLoading && model.dashboard == nil { Spacer(); ProgressView("자료실을 불러오는 중입니다"); Spacer() }
-            else if let dashboard = model.dashboard {
-                if section == .trash { trash(dashboard) }
-                else if compactLandscape { HStack(spacing: 0) { folders(dashboard).frame(width: 340); Divider(); items(dashboard).frame(maxWidth: .infinity, maxHeight: .infinity) } }
-                else { ScrollView { VStack(spacing: 12) { folders(dashboard, ownsScroll: false); items(dashboard, ownsScroll: false) }.readableWidth(Tokens.readableWidth).adaptiveHPadding().adaptiveVPadding() } }
-            } else { ContentUnavailableView("자료실을 불러오지 못했습니다", systemImage: "externaldrive.badge.exclamationmark") }
+            else if let dashboard = model.dashboard { archiveContent(dashboard) }
+            else { ContentUnavailableView("자료실을 불러오지 못했습니다", systemImage: "externaldrive.badge.exclamationmark") }
         }
-        .background(Tokens.paper).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .background(Tokens.paper)
         .task { await model.load() }
         .compactHeightSheet(item: $model.preview) { value in CommunityFilePreview(url: value.url) { model.preview = nil }.ignoresSafeArea() }
         .sheet(item: $folderEdit) { value in AdminArchiveFolderSheet(folder: value.folder, parentID: folderID) { folder in await saveFolder(value.folder, form: folder) } }
@@ -75,6 +78,32 @@ struct AdminArchiveScreen: View {
             Button(destructiveLabel, role: .destructive) { if let value = destructive { Task { await performDestructive(value) } } }
             Button("취소", role: .cancel) { destructive = nil }
         } message: { Text(destructiveMessage) }
+    }
+
+    @ViewBuilder private func archiveContent(_ dashboard: ServerAPI.AdminArchiveDashboard) -> some View {
+        if section == .trash {
+            trash(dashboard)
+        } else {
+            GeometryReader { viewport in
+                if viewport.size.width >= 760 && !dynamicTypeSize.isAccessibilitySize {
+                    HStack(spacing: 0) {
+                        folders(dashboard).frame(width: min(360, viewport.size.width * 0.34))
+                        Divider()
+                        items(dashboard).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            folders(dashboard, ownsScroll: false)
+                            items(dashboard, ownsScroll: false)
+                        }
+                        .readableWidth(Tokens.readableWidth)
+                        .adaptiveHPadding()
+                        .adaptiveVPadding()
+                    }
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -115,14 +144,22 @@ struct AdminArchiveScreen: View {
             Button("이름·권한 편집") { folderEdit = .init(folder: folder) }
             Button(folder.isPinned ? "상단 고정 해제" : "상단 고정") { Task { await pin(folder) } }
             Button("빈 폴더 삭제", role: .destructive) { destructive = .folder(folder) }
-        } label: { Image(systemName: "ellipsis.circle").frame(width: 38, height: 38) }.accessibilityLabel("\(folder.name) 관리")
+        } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44) }.accessibilityLabel("\(folder.name) 관리")
     }
 
     private func items(_ dashboard: ServerAPI.AdminArchiveDashboard, ownsScroll: Bool = true) -> some View {
         let content = VStack(alignment: .leading, spacing: 9) {
             HStack { Text("자료 \(dashboard.items.count)개").font(.mBodyB); Spacer(); if !model.selectedIDs.isEmpty { Text("\(model.selectedIDs.count)개 선택").font(.mCaption).foregroundStyle(Tokens.primary) } }
             if !model.selectedIDs.isEmpty {
-                HStack { Button("이동") { moveRequest = .init(ids: Array(model.selectedIDs)) }.buttonStyle(.bordered); Button("휴지통", role: .destructive) { Task { await bulkDelete() } }.buttonStyle(.bordered) }
+                HStack {
+                    Button("이동") { moveRequest = .init(ids: Array(model.selectedIDs)) }.buttonStyle(.bordered)
+                    Button("휴지통", role: .destructive) {
+                        let ids = Array(model.selectedIDs)
+                        let titles = dashboard.items.filter { model.selectedIDs.contains($0.id) }.map(\.title)
+                        destructive = .bulk(ids: ids, titles: titles)
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
             if dashboard.items.isEmpty { ContentUnavailableView("자료 없음", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 160) }
             ForEach(dashboard.items) { item in itemRow(item) }
@@ -132,11 +169,11 @@ struct AdminArchiveScreen: View {
 
     private func itemRow(_ item: ServerAPI.AdminArchiveItem) -> some View {
         HStack(spacing: 9) {
-            Button { toggle(item.id) } label: { Image(systemName: model.selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title3).foregroundStyle(Tokens.primary) }.buttonStyle(.plain).accessibilityLabel(model.selectedIDs.contains(item.id) ? "선택 해제" : "선택")
+            Button { toggle(item.id) } label: { Image(systemName: model.selectedIDs.contains(item.id) ? "checkmark.circle.fill" : "circle").font(.title3).foregroundStyle(Tokens.primary).frame(width: 44, height: 44) }.buttonStyle(.plain).accessibilityLabel(model.selectedIDs.contains(item.id) ? "\(item.title) 선택 해제" : "\(item.title) 선택")
             Button { Task { await model.open(item) } } label: {
-                VStack(alignment: .leading, spacing: 3) { HStack { Text(item.title).font(.mBodyB); if !item.isPublished { badge("비공개") } }; Text("\(item.category) · \(ByteCountFormatter.string(fromByteCount: Int64(item.sizeBytes), countStyle: .file)) · 다운로드 \(item.downloadCount)").font(.mMicro).foregroundStyle(Tokens.text3); if item.backupStatus != "READY" { Text("백업 \(item.backupStatus)").font(.mMicro).foregroundStyle(Tokens.warning) } }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 3) { HStack { Text(item.title).font(.mBodyB); if !item.isPublished { badge("비공개") } }; Text("\(item.category) · \(ByteCountFormatter.string(fromByteCount: Int64(item.sizeBytes), countStyle: .file)) · 다운로드 \(item.downloadCount)").font(.mMicro).foregroundStyle(Tokens.text3); if item.backupStatus != "READY" { Text("백업 \(item.backupStatus)").font(.mMicro).foregroundStyle(Tokens.warningInk) } }.frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.plain)
-            Menu { Button("열기") { Task { await model.open(item) } }; Button("다른 폴더로 이동") { moveRequest = .init(ids: [item.id]) }; Button("휴지통으로 이동", role: .destructive) { destructive = .item(item) } } label: { Image(systemName: "ellipsis.circle").frame(width: 38, height: 38) }
+            Menu { Button("열기") { Task { await model.open(item) } }; Button("다른 폴더로 이동") { moveRequest = .init(ids: [item.id]) }; Button("휴지통으로 이동", role: .destructive) { destructive = .item(item) } } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44) }
         }.padding(10).background(Tokens.surface, in: RoundedRectangle(cornerRadius: 11))
     }
 
@@ -161,7 +198,6 @@ struct AdminArchiveScreen: View {
     }
     private func pin(_ folder: ServerAPI.AdminArchiveFolder) async { _ = await model.apply(id: "pin:\(folder.id)", message: folder.isPinned ? "상단 고정을 해제했습니다." : "상단에 고정했습니다.") { try await ServerAPI.pinAdminArchiveFolder(id: folder.id, pinned: !folder.isPinned) } }
     private func move(_ ids: [String], destination: String?) async -> Bool { await model.apply(id: "move", message: "선택 자료를 이동했습니다.") { try await ServerAPI.moveAdminArchiveItems(ids: ids, destinationFolderID: destination, folderID: folderID) } }
-    private func bulkDelete() async { _ = await model.apply(id: "bulk-delete", message: "선택 자료를 휴지통으로 옮겼습니다.") { try await ServerAPI.deleteAdminArchiveItems(ids: Array(model.selectedIDs), folderID: folderID) } }
     private func restore(_ item: ServerAPI.AdminArchiveItem) async { _ = await model.apply(id: "restore:\(item.id)", message: "자료를 원래 위치로 복구했습니다.") { try await ServerAPI.restoreAdminArchiveItem(id: item.id) } }
     private func upload(_ form: AdminArchiveUploadForm) async -> Bool { await model.apply(id: "upload", message: form.notify ? "자료를 등록하고 회원에게 공지했습니다." : "자료를 등록했습니다.") { try await ServerAPI.uploadAdminArchive(files: form.files, description: form.description, category: form.category, folderID: folderID, notifyUsers: form.notify) } }
     private func performDestructive(_ value: Destructive) async {
@@ -169,12 +205,24 @@ struct AdminArchiveScreen: View {
         case .folder(let folder): _ = await model.apply(id: value.id, message: "빈 폴더를 삭제했습니다.") { try await ServerAPI.deleteAdminArchiveFolder(id: folder.id) }
         case .item(let item): _ = await model.apply(id: value.id, message: "자료를 휴지통으로 옮겼습니다.") { try await ServerAPI.deleteAdminArchiveItem(id: item.id, folderID: folderID) }
         case .purge(let item): _ = await model.apply(id: value.id, message: "자료 원본을 영구 삭제했습니다.") { try await ServerAPI.purgeAdminArchiveItem(id: item.id) }
+        case .bulk(let ids, _): _ = await model.apply(id: value.id, message: "선택 자료를 휴지통으로 옮겼습니다.") { try await ServerAPI.deleteAdminArchiveItems(ids: ids, folderID: folderID) }
         }
         destructive = nil
     }
     private func toggle(_ id: String) { if model.selectedIDs.contains(id) { model.selectedIDs.remove(id) } else { model.selectedIDs.insert(id) } }
-    private var destructiveLabel: String { switch destructive { case .folder: "빈 폴더 삭제"; case .item: "휴지통으로 이동"; case .purge: "파일 원본 영구 삭제"; case nil: "삭제" } }
-    private var destructiveMessage: String { switch destructive { case .folder: "폴더 안에 자료나 하위 폴더가 있으면 서버가 삭제를 거부합니다."; case .item: "30일 동안 휴지통에서 복구할 수 있습니다."; case .purge: "복구할 수 없으며 저장소 원본도 제거됩니다."; case nil: "" } }
+    private var destructiveLabel: String { switch destructive { case .folder: "빈 폴더 삭제"; case .item, .bulk: "휴지통으로 이동"; case .purge: "파일 원본 영구 삭제"; case nil: "삭제" } }
+    private var destructiveMessage: String {
+        switch destructive {
+        case .folder: return "폴더 안에 자료나 하위 폴더가 있으면 서버가 삭제를 거부합니다."
+        case .item: return "30일 동안 휴지통에서 복구할 수 있습니다."
+        case .purge: return "복구할 수 없으며 저장소 원본도 제거됩니다."
+        case .bulk(let ids, let titles):
+            let names = titles.prefix(3).joined(separator: ", ")
+            let suffix = ids.count > 3 ? " 외 \(ids.count - 3)개" : ""
+            return "\(ids.count)개 자료(\(names)\(suffix))를 휴지통으로 옮깁니다. 30일 동안 복구할 수 있습니다."
+        case nil: return ""
+        }
+    }
     private func accessLabel(_ value: String) -> String { ["AUTHENTICATED":"로그인 회원", "MOCK_EXAM_PACKAGE":"주간 모의고사 이용권", "LEARNING_PACKAGE":"29일 학습권"][value] ?? value }
     private func badge(_ value: String) -> some View { Text(value).font(.mMicro.weight(.semibold)).padding(.horizontal, 7).padding(.vertical, 3).foregroundStyle(Tokens.primary).background(Tokens.primary.opacity(0.1), in: Capsule()) }
     private func banner(_ value: String, _ color: Color, _ icon: String) -> some View { Label(value, systemImage: icon).font(.mCaption).foregroundStyle(color).padding(.horizontal, 16).padding(.vertical, 7).frame(maxWidth: .infinity, alignment: .leading).background(color.opacity(0.1)) }

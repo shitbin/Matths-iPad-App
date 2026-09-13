@@ -37,7 +37,7 @@ if grep -Fq 'DeepSeek-R1-Distill-Qwen-7B-GGUF")!' "$legacy"; then
   echo "텍스트 전용 DeepSeek 모델에 가짜 사진 모듈 URL이 남아 있습니다" >&2
   exit 1
 fi
-grep -Fq '/resolve/5037fcf/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf' "$legacy"
+grep -Fq '/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf' "$legacy"
 if grep -Eq 'Qwen3\.5-9B-GGUF/resolve/main|Qwen2\.5-VL-3B-Instruct-GGUF/resolve/main' "$legacy"; then
   echo "운영 로컬 AI 모델 URL이 변경 가능한 main revision을 사용합니다" >&2
   exit 1

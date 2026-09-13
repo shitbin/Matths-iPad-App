@@ -82,7 +82,7 @@ struct DebugLocalModelSelector: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "camera.viewfinder")
-                Text("사진 판독은 Qwen VL 3B로 고정 · 두 모델은 순차 실행")
+                Text("사진 판독: Qwen3.5-2B · 수학 추론과 순차 실행")
             }
             .font(.mMicro)
             .foregroundStyle(Tokens.text4)

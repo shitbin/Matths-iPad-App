@@ -10,7 +10,7 @@ EVIDENCE="${MATTHS_EVIDENCE_DIR:-$ROOT/../evidence/ipad-$(date +%Y%m%d-%H%M%S)}"
 
 usage() {
   print "사용법: MATTHS_DEVICE=<기기 이름 또는 UDID> $0 build-install|smoke|vision <tier>|collect|session-template|verify-session <session.json>"
-  print "tier: vision3B, deepseek7B, ling3-q3, 4B, 9B-lite, 9B-lite-text, 9B-iq3-text, 9B"
+  print "tier: vision2B (legacy alias: vision3B), deepseek7B, ling3-q3, 4B, 9B-lite, 9B-lite-text, 9B-iq3-text, 9B"
 }
 
 need_device() {
@@ -38,7 +38,7 @@ case "${1:-}" in
     need_device
     tier="${2:-}"
     case "$tier" in
-      vision3B|deepseek7B|ling3-q3|4B|9B-lite|9B-lite-text|9B-iq3-text|9B) ;;
+      vision2B|vision3B|deepseek7B|ling3-q3|4B|9B-lite|9B-lite-text|9B-iq3-text|9B) ;;
       *) usage; exit 2 ;;
     esac
     xcrun devicectl device process launch --terminate-existing --device "$DEVICE" \

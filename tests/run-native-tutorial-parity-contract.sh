@@ -79,10 +79,11 @@ for(const target of [...dashboard.matchAll(/target: \.(\w+)/g),...arena.matchAll
 }
 const arenaSource=fs.readFileSync(root+'/Matths/GoatArenaScreen.swift','utf8');
 const compact=arenaSource.slice(arenaSource.indexOf('private func compactPrimaryAction('),arenaSource.indexOf('private func canInspectMatchedGame('));
-const noCycle=compact.slice(compact.indexOf('} else if snapshot.cycle == nil {'),compact.indexOf('} else if let match = snapshot.activeMatch {'));
+const noCycle=compact.slice(compact.indexOf('} else if snapshot.activeMatch == nil {'),compact.indexOf('} else if let match = snapshot.activeMatch {'));
 const placement=compact.slice(compact.indexOf('} else if snapshot.ranking.skill.status == "PLACEMENT_PENDING"'),compact.indexOf('} else if let cycle = snapshot.cycle,'));
-if(noCycle.includes('.arenaMatchmaking')||placement.includes('.arenaMatchmaking'))throw Error('Non-match CTA mislabeled as matchmaking');
-if(!noCycle.includes('.arenaEligibility')||!placement.includes('.placementEntry'))throw Error('Conditional CTA semantics lost');
+if(placement.includes('.arenaMatchmaking'))throw Error('Placement CTA mislabeled as matchmaking');
+if(!noCycle.includes('.arenaMatchmaking')||!placement.includes('.placementEntry'))throw Error('Conditional CTA semantics lost');
+if(!arenaSource.includes('.tutorialTarget(.arenaEligibility, when: loadedContent?.snapshot.cycle == nil)'))throw Error('No-cycle eligibility belongs to the real commerce control');
 if(!/id: "unranked-battle"[\s\S]*?target: \.arenaMatchmaking/.test(arena))throw Error('Reported Unranked step is not on actual match CTA');
 console.log('Actual native target mapping and conditional Arena CTA checks passed');
 JS

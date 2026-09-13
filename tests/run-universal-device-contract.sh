@@ -55,7 +55,7 @@ grep -Fq 'accessibilityLabel(accessibilityLabel(for: item))' "$root_view"
 # or sidebar. Requiring the old exact condition would reintroduce a duplicate bar.
 grep -Fq 'if !keyboardVisible && !usesSidebar(width: width) && !hasStaffWorkspace { bottomChrome }' "$root_view"
 grep -Fq 'ProductExperience.enabled && store.workspace != .student && store.route == .academy' "$root_view"
-grep -Fq 'width >= 900 && !navigationTypeSize.isAccessibilitySize' "$root_view"
+grep -Fq 'false // Student navigation stays in the bottom bar on iPhone and iPad.' "$root_view"
 grep -Fq 'keyboardVisible && verticalSizeClass == .compact' "$root_view"
 
 # 퀵 연습 가로 화면은 문제/메모/답/제출을 한 화면에 두되, 메모판을 단순 장식처럼
@@ -98,7 +98,10 @@ grep -Fq 'height: landscapeNoteCanvasHeight' "$quick_practice"
 grep -Fq '.card(padding: landscapeSolvingCardPadding)' "$quick_practice"
 grep -Fq 'if showsStatsBelowPrimary { statsCard }' "$quick_practice"
 grep -Fq '.keyboardType(.numbersAndPunctuation)' "$quick_practice"
-grep -Fq 'if !answerFocused' "$quick_practice"
+if grep -Fq 'if !answerFocused' "$quick_practice"; then
+  echo 'FAIL: answer focus must not remove the landscape solution note' >&2
+  exit 1
+fi
 
 # 배치고사 가로 화면은 30문항 탐색 줄 아래에서도 5개 선택지와 이동 버튼을 한 화면에
 # 유지한다. 짧은 높이에 일반 카드의 20~24pt 세로 여백을 되살리지 못하게 한다.

@@ -338,7 +338,7 @@ struct StudyHallScreen: View {
                     Spacer()
                     if item.progress.status == "SUBMITTED" {
                         Label("완료", systemImage: "checkmark.circle.fill")
-                            .font(.mMicro).foregroundStyle(Tokens.success)
+                            .font(.mMicro).foregroundStyle(Tokens.successInk)
                     }
                 }
                 Text(item.title).font(.mHeading).foregroundStyle(Tokens.ink)
@@ -373,7 +373,7 @@ struct StudyHallScreen: View {
                 Spacer()
                 if content.progress.status == "SUBMITTED" {
                     Label("제출 완료", systemImage: "checkmark.seal.fill")
-                        .font(.mCaption).foregroundStyle(Tokens.success)
+                        .font(.mCaption).foregroundStyle(Tokens.successInk)
                 }
             }
             .padding(.horizontal, Tokens.Space.s4)
@@ -426,7 +426,7 @@ struct StudyHallScreen: View {
             ProgressView(value: Double(content.progress.percent), total: 100).tint(Tokens.primary)
             if content.progress.status == "SUBMITTED" {
                 Text("\(points(content.progress.scorePoints))/\(points(content.progress.totalPoints))점 · 정답 \(content.progress.correctCount)개 · \(content.progress.scorePercent)%")
-                    .font(.mCaption).foregroundStyle(Tokens.success)
+                    .font(.mCaption).foregroundStyle(Tokens.successInk)
             }
         }.studyHallSurface()
     }
@@ -545,11 +545,11 @@ struct StudyHallScreen: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             if let notice = model.noticeMessage {
                 Label(notice, systemImage: "checkmark.circle.fill")
-                    .font(.mCaption).foregroundStyle(Tokens.success)
+                    .font(.mCaption).foregroundStyle(Tokens.successInk)
             }
             if let error = model.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.mCaption).foregroundStyle(Tokens.danger)
+                    .font(.mCaption).foregroundStyle(Tokens.dangerInk)
             }
             if content.progress.status != "SUBMITTED" {
                 HStack(spacing: Tokens.Space.s3) {

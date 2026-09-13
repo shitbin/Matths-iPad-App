@@ -341,10 +341,10 @@ struct SupportInquiryScreen: View {
 
     @ViewBuilder private var feedbackText: some View {
         if let message = model.errorMessage {
-            Text(message).font(.mCaption).foregroundStyle(Tokens.danger)
+            Text(message).font(.mCaption).foregroundStyle(Tokens.dangerInk)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let message = model.noticeMessage {
-            Text(message).font(.mCaption).foregroundStyle(Tokens.success)
+            Text(message).font(.mCaption).foregroundStyle(Tokens.successInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

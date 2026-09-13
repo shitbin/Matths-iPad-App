@@ -22,11 +22,12 @@ assert(today.includes('TodayDashboardPolicy.agenda'));
 assert(!today.includes('Button("다른 학습 보기")') && !today.includes('Button("학습 기록")'));
 const learn = section('struct LearningHubScreen:', 'struct LearningRecordsScreen:');
 assert(!learn.includes('LearningPathBrowser()'), 'only one canonical course browser');
-for (const route of ['curriculum', 'assess', 'quickPractice', 'kice', 'pro']) {
+for (const route of ['curriculum', 'assess', 'quickPractice', 'pro']) {
   assert(learn.includes(`store.route = .${route}`), `learning destination ${route} remains accessible`);
 }
 assert(!learn.includes('store.route = .weeklyMock'), 'official mock exams are owned by the assessment center');
-assert(learn.includes('OfflinePracticeScreen()'), 'offline practice remains available');
+assert(!learn.includes('OfflinePracticeScreen()'), 'user-requested offline entry removal');
+assert(learn.includes('KiceLibrarySheet()'), 'past papers require explicit selection');
 const overview = read('TodayLearningOverview.swift');
 assert(overview.includes('ServerAPI.getDashboardActivity()'));
 assert(overview.includes('store.ownsCurrentAccountSession(owner)'));

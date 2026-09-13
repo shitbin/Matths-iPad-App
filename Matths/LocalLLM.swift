@@ -100,6 +100,9 @@ final class LlamaEngine: LLMEngine, @unchecked Sendable {
 
     func load(modelPath: String) throws {
         try queue.sync {
+            guard !ModelDownloader.isRetiredModel((modelPath as NSString).lastPathComponent) else {
+                throw EngineError.loadFailed("지원이 종료된 판독기입니다. Qwen3.5-2B 모델을 준비해 주세요.")
+            }
             guard ctx == nil else { return }
             guard !LocalAIResourceStopSignal.shared.isRequested else { throw CancellationError() }
             let interval = OSSignpostID(log: Self.metricsLog)
@@ -786,7 +789,7 @@ final class ModelDownloader: NSObject, ObservableObject {
         mmprojURL: URL(string: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/f0a5ec3/mmproj-F16.gguf")!)
 
     /// 8GB 기기의 opt-in 9B **텍스트 추론** 사양. 875MB 비전 프로젝터를
-    /// 전혀 열지 않고, 사진 판독 3B VLM이 내려간 뒤 이 모델만 순차 로드한다.
+    /// 전혀 열지 않고, 사진 판독 2B VLM이 내려간 뒤 이 모델만 순차 로드한다.
     /// iPad14,3 실측: 6.0초 로드, 68.9초 추론, 최대 상주 3.57GB, 한국어 JSON 통과.
     nonisolated static let spec9BLiteText = ModelSpec(
         file: "Qwen3.5-9B-UD-IQ3_XXS.gguf",
@@ -827,12 +830,17 @@ final class ModelDownloader: NSObject, ObservableObject {
     /// 8GB 기기 사진 판독 전용. 이 모델은 정답 추론·채점 판정을 하지 않고
     /// 인쇄문과 손글씨를 원문 그대로 전사하는 역할만 맡는다. 전사가 끝나면 즉시
     /// 내려가고 DeepSeek 7B가 텍스트만 받아 추론한다.
-    nonisolated static let specVision3B = ModelSpec(
-        file: "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
-        url: URL(string: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/5037fcf/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf")!,
-        sizeLabel: "2.8GB", shortName: "Qwen2.5-VL 3B 판독기",
-        mmprojFile: "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
-        mmprojURL: URL(string: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/5037fcf/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf")!)
+    nonisolated static let specVision2B = ModelSpec(
+        file: "Qwen3.5-2B-Q4_K_M.gguf",
+        url: URL(string: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf")!,
+        sizeLabel: "2.0GB", shortName: "Qwen3.5-2B 판독기",
+        mmprojFile: "mmproj-Qwen3.5-2B-F16.gguf",
+        mmprojURL: URL(string: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/mmproj-F16.gguf")!)
+
+    /// Retain users' old files, but never select the retired research-only reader.
+    nonisolated static func isRetiredModel(_ file: String) -> Bool {
+        file.lowercased().contains("qwen2.5-vl-3b")
+    }
 
     /// 저사양 기기에서 9B 를 무리해서 쓰겠다는 사용자 선택 (프로필 설정)
     nonisolated static var force9BOnSmallDevice: Bool {
@@ -880,7 +888,7 @@ final class ModelDownloader: NSObject, ObservableObject {
         if debugForcedTier == "9B-lite-text" || debugForcedTier == "9B-iq3-text" { return "" }
         #endif
         let base: String
-        if modelFile == specVision3B.file { base = specVision3B.mmprojFile }
+        if modelFile == specVision2B.file { base = specVision2B.mmprojFile }
         else if modelFile.contains("9B") { base = spec9B.mmprojFile }   // 9B·9B-lite 공용
         // Release에서도 사용자가 이미 사이드로드한 4B 본체와 로컬 프로젝터의 짝은
         // 찾되, DEBUG 다운로드 사양의 mutable 원격 URL까지 링크하지 않는다.
@@ -1047,7 +1055,7 @@ final class ModelDownloader: NSObject, ObservableObject {
     nonisolated static func spec(forTier tier: String) -> ModelSpec {
         switch tier {
         case "4B":      return spec4B
-        case "vision3B": return specVision3B
+        case "vision2B", "vision3B": return specVision2B
         case "deepseek7B": return specDeepSeek7B
         case "ling3-q3": return specLing3Q3
         case "9B-lite": return spec9BLite
@@ -1072,7 +1080,7 @@ final class ModelDownloader: NSObject, ObservableObject {
     /// 시험지 분석은 8GB 기기에서 사진 판독과 수학 추론을 서로 다른 모델로
     /// 순차 실행한다. 12GB 이상은 기존 9B VLM 한 개로 두 역할을 처리한다.
     nonisolated static var analysisVisionSpec: ModelSpec {
-        hasLargeMemory ? spec9B : specVision3B
+        hasLargeMemory ? spec9B : specVision2B
     }
 
     nonisolated static var analysisReasoningSpec: ModelSpec {

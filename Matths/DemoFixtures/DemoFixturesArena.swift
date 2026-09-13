@@ -149,6 +149,14 @@ enum DemoArenaFixtures {
     }
     """#
 
+    static var participantMatches: String {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(matchDetail(matchId: "demo-match-01", role: "DEFENDER").utf8)) as? [String: Any],
+              let match = object["match"],
+              let data = try? JSONSerialization.data(withJSONObject: ["matches": [match], "nextCursor": NSNull()]),
+              let result = String(data: data, encoding: .utf8) else { return "{\"matches\":[]}" }
+        return result
+    }
+
     // MARK: - 경기 명령
 
     /// A real DTO-shaped, GET-only lobby fixture. Without this route, a button

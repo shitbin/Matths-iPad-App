@@ -88,17 +88,14 @@ final class TodayActivityStore: ObservableObject {
         refreshing = true
         let pending = Task { @MainActor [weak self] in
             guard let self else { return }
-            async let weekly = Self.result { try await Self.weekly(authorization) }
-            async let arena = Self.result { try await Self.arena(authorization) }
-            async let academy = Self.result { try await self.academyContext(store: store, authorization: authorization) }
-            async let assessments = Self.result { try await ServerAPI.assessmentSnapshot(authorization: authorization) }
-            let values = await (weekly, arena, academy, assessments)
-            guard !Task.isCancelled, self.requestID == identity, store.ownsCurrentAccountSession(owner),
-                  ServerAPI.isCurrentAuthorization(authorization), (store.serverProfile?.role ?? "student") == role else { return }
-            self.apply(values.0, source: .serverWeeklyMock, project: TodayActivityProjection.weekly)
-            self.apply(values.1, source: .serverArena, project: TodayActivityProjection.arena)
-            self.apply(values.2, source: .serverAcademy, project: TodayActivityProjection.academy)
-            self.apply(values.3, source: .serverAssessment, project: TodayActivityProjection.assessments)
+            // 각 출처는 동시에 시작하지만 도착하는 즉시 자기 결과만 반영한다.
+            // 한 서비스가 느리거나 실패해도 이미 확인한 평가·Arena 과업을 가리지 않는다.
+            async let weekly: Void = self.refreshWeekly(identity, owner, authorization, role, store)
+            async let arena: Void = self.refreshArena(identity, owner, authorization, role, store)
+            async let academy: Void = self.refreshAcademy(identity, owner, authorization, role, store)
+            async let assessments: Void = self.refreshAssessments(identity, owner, authorization, role, store)
+            _ = await (weekly, arena, academy, assessments)
+            guard self.isCurrent(identity, owner, authorization, role, store) else { return }
             self.lastRefreshUptime = ProcessInfo.processInfo.systemUptime
             self.refreshing = false
             WidgetBridge.publish(from: store)
@@ -106,6 +103,45 @@ final class TodayActivityStore: ObservableObject {
         task = pending
         await pending.value
         if requestID == identity { task = nil; refreshing = false }
+    }
+    private func isCurrent(_ identity: UUID, _ owner: AppStore.AccountSessionBoundary,
+                           _ authorization: ServerAPI.AuthorizationSnapshot, _ role: String,
+                           _ store: AppStore) -> Bool {
+        !Task.isCancelled && requestID == identity && store.ownsCurrentAccountSession(owner)
+            && ServerAPI.isCurrentAuthorization(authorization)
+            && (store.serverProfile?.role ?? "student") == role
+    }
+    private func refreshWeekly(_ identity: UUID, _ owner: AppStore.AccountSessionBoundary,
+                               _ authorization: ServerAPI.AuthorizationSnapshot, _ role: String,
+                               _ store: AppStore) async {
+        let result = await Self.result { try await Self.weekly(authorization) }
+        guard isCurrent(identity, owner, authorization, role, store) else { return }
+        apply(result, source: .serverWeeklyMock, project: TodayActivityProjection.weekly)
+        WidgetBridge.publish(from: store)
+    }
+    private func refreshArena(_ identity: UUID, _ owner: AppStore.AccountSessionBoundary,
+                              _ authorization: ServerAPI.AuthorizationSnapshot, _ role: String,
+                              _ store: AppStore) async {
+        let result = await Self.result { try await Self.arena(authorization) }
+        guard isCurrent(identity, owner, authorization, role, store) else { return }
+        apply(result, source: .serverArena, project: TodayActivityProjection.arena)
+        WidgetBridge.publish(from: store)
+    }
+    private func refreshAcademy(_ identity: UUID, _ owner: AppStore.AccountSessionBoundary,
+                                _ authorization: ServerAPI.AuthorizationSnapshot, _ role: String,
+                                _ store: AppStore) async {
+        let result = await Self.result { try await academyContext(store: store, authorization: authorization) }
+        guard isCurrent(identity, owner, authorization, role, store) else { return }
+        apply(result, source: .serverAcademy, project: TodayActivityProjection.academy)
+        WidgetBridge.publish(from: store)
+    }
+    private func refreshAssessments(_ identity: UUID, _ owner: AppStore.AccountSessionBoundary,
+                                    _ authorization: ServerAPI.AuthorizationSnapshot, _ role: String,
+                                    _ store: AppStore) async {
+        let result = await Self.result { try await ServerAPI.assessmentSnapshot(authorization: authorization) }
+        guard isCurrent(identity, owner, authorization, role, store) else { return }
+        apply(result, source: .serverAssessment, project: TodayActivityProjection.assessments)
+        WidgetBridge.publish(from: store)
     }
     private func apply<T>(_ result: Result<T, Error>, source: TodayActionCandidate.Source,
                           project: (T, Date) -> [TodayActionCandidate]) {
@@ -208,10 +244,36 @@ enum TodayActivityProjection {
         guard let match = value.activeMatch, let id = match.id, TodayActivityPolicy.isSafeServerID(id),
               TodayActivityPolicy.canOfferArena(matchStatus: match.status, attemptStatus: match.attempt?.status,
                                                integrity: match.integrityState, actions: match.availableActions) else { return [] }
-        return [.init(id: "arena:" + id, kind: .timedWork, title: "진행 중인 Arena 경기",
-                      reason: "아직 제출하지 않은 내 경기가 있어요. 경기 상태를 확인하고 이어가세요.",
-                      action: "경기 이어 보기", minutes: nil, destination: .arena(id), source: .serverArena,
+        let actions = Set(match.availableActions ?? [])
+        let evidence = actions.contains("SUBMIT_EVIDENCE") || match.attempt?.status == "EVIDENCE_REQUIRED"
+        let canStart = actions.contains("START") || match.attempt?.status == "READY"
+            || (match.attempt == nil && ["MATCHED", "READY"].contains(match.status))
+        let defender = match.role == "DEFENDER"
+        let title: String
+        let reason: String
+        let action: String
+        let kind: TodayActionCandidate.Kind
+        if evidence {
+            title = "Arena 풀이 증거 제출 필요"
+            reason = "경기 결과 확인에 필요한 풀이 증거가 남아 있어요. 서버가 안내한 항목과 기한을 확인하세요."
+            action = "풀이 증거 제출"
+            kind = .deadline
+        } else if canStart && defender {
+            title = "받은 Arena 공격 확인"
+            reason = "대응해야 할 방어전이 있어요. 상대와 시작 기한을 확인하고 준비하세요."
+            action = "방어전 확인"
+            kind = .timedWork
+        } else {
+            title = defender ? "진행 중인 Arena 방어전" : "진행 중인 Arena 경기"
+            reason = "아직 제출하지 않은 내 경기가 있어요. 경기 상태를 확인하고 이어가세요."
+            action = defender ? "방어전 이어 보기" : "경기 이어 보기"
+            kind = .timedWork
+        }
+        return [.init(id: "arena:" + id, kind: kind, title: title,
+                      reason: reason, action: action, minutes: nil,
+                      destination: .arena(id), source: .serverArena,
                       freshness: .current, fetchedAt: now,
-                      deadline: date(match.attempt?.endsAt ?? match.submitsBy))]
+                      deadline: date(match.attempt?.evidenceDeadlineAt ?? match.attempt?.endsAt ?? match.submitsBy ?? match.startsBy),
+                      position: defender ? "내 역할 · 방어" : "내 역할 · 공격")]
     }
 }

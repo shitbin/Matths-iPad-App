@@ -160,7 +160,7 @@ struct TeacherClassManagementPanel: View {
 
     private var newClassButton: some View {
         Button { startNew() } label: { Label("새 반", systemImage: "plus") }
-            .buttonStyle(PrimaryButtonStyle())
+            .buttonStyle(SecondaryButtonStyle())
             .disabled(model.actionID != nil)
     }
 

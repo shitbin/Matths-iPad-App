@@ -438,7 +438,6 @@ private struct AccountScopedAdminUsersScreen: View {
         .padding(.top, Tokens.Space.s2)
         .padding(.bottom, Tokens.Space.s3)
         .background(Tokens.surface)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     @ViewBuilder private var content: some View {
@@ -782,11 +781,10 @@ private struct AccountScopedAdminUsersScreen: View {
                     Label("관리 작업", systemImage: "wrench.and.screwdriver")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
-                .buttonStyle(PrimaryButtonStyle())
+                .buttonStyle(SecondaryButtonStyle())
                 .disabled(model.actionID != nil)
                 .padding(.horizontal, Tokens.Space.s3).padding(.vertical, Tokens.Space.s2)
                 .background(Tokens.surface)
-                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             }
         }
     }

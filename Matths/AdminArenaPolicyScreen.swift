@@ -89,7 +89,7 @@ struct AdminArenaPolicyScreen: View {
         ContentUnavailableView("Arena 정책을 불러오지 못했습니다", systemImage: "slider.horizontal.3")
       }
     }
-    .background(Tokens.paper).dynamicTypeSize(...DynamicTypeSize.xxxLarge).task {
+    .background(Tokens.paper).task {
       await model.load()
     }
     .sheet(item: $priceTarget) { target in

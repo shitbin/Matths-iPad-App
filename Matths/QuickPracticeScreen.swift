@@ -521,19 +521,21 @@ struct QuickPracticeScreen: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
 
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {
-                        if !answerFocused {
-                            QuickSolutionNote(
-                                drawing: $noteDrawing,
-                                tool: $noteTool,
-                                allowsFinger: $noteAllowsFinger,
-                                height: landscapeNoteCanvasHeight,
-                                toolbarTitle: "풀이 메모",
-                                showsToolTitles: false,
-                                showsFingerToggle: false,
-                                showsHelper: false,
-                                canUndo: !noteUndoStack.isEmpty,
-                                onUndo: undoNote)
-                        }
+                        // 포커스는 하드웨어 키보드에서도 생긴다. 포커스만으로 메모를
+                        // 제거하면 풀이를 보며 답을 입력할 수 없고, 필기가 사라진 것처럼
+                        // 보인다. 시스템 키보드가 실제로 차지하는 영역은 바깥 스크롤과
+                        // safe area가 처리하므로 같은 메모 뷰를 계속 유지한다.
+                        QuickSolutionNote(
+                            drawing: $noteDrawing,
+                            tool: $noteTool,
+                            allowsFinger: $noteAllowsFinger,
+                            height: landscapeNoteCanvasHeight,
+                            toolbarTitle: "풀이 메모",
+                            showsToolTitles: false,
+                            showsFingerToggle: false,
+                            showsHelper: false,
+                            canUndo: !noteUndoStack.isEmpty,
+                            onUndo: undoNote)
                         HStack(spacing: Tokens.Space.s2) {
                             TextField("답", text: $answer)
                                 .textFieldStyle(.roundedBorder)

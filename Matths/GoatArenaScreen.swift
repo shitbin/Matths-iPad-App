@@ -77,6 +77,12 @@ struct GoatArenaScreen: View {
     /// (recentResultsSection 주석). 스냅샷과 별개의 읽기 전용 목록이라 실패해도
     /// 화면을 막지 않는다.
     @State private var recentMatches: [ServerAPI.GoatArenaParticipantMatch] = []
+    @State private var recentMatchesLoading = false
+    @State private var recentMatchesError: String?
+    @State private var recentMatchesLoadedAt: Date?
+    @State private var showsDefenseInbox = false
+    @State private var selectedDefense: ServerAPI.GoatArenaParticipantMatch?
+    @State private var selectedDefenseOwner: AccountRequestOwner?
     @State private var loadedAccountSlot: String?
     @State private var defenderCommandInFlight: GoatArenaDefenderCommandAction?
     @State private var pendingDefenderCommand: GoatArenaPendingDefenderCommand?
@@ -257,6 +263,12 @@ struct GoatArenaScreen: View {
             isRefreshing = false
             matchLaunch = nil
             recentMatches = []
+            recentMatchesLoading = false
+            recentMatchesError = nil
+            recentMatchesLoadedAt = nil
+            showsDefenseInbox = false
+            selectedDefense = nil
+            selectedDefenseOwner = nil
             loadedAccountSlot = nil
             defenderCommandInFlight = nil
             pendingDefenderCommand = nil
@@ -288,6 +300,24 @@ struct GoatArenaScreen: View {
                 ) { stuckPoint in
                     store.recordStuckPoint(stuckPoint)
                 }
+        }
+        .sheet(isPresented: $showsDefenseInbox, onDismiss: {
+            let chosen = selectedDefense
+            let owner = selectedDefenseOwner
+            selectedDefense = nil
+            selectedDefenseOwner = nil
+            guard let match = chosen, let owner, owner.isCurrent(in: store) else { return }
+            matchLaunch = MatchLaunch(id: match.id, briefing: .init(
+                roleLabel: "방어자", matchLabel: "방어전", stakeText: nil,
+                timeLimitSeconds: match.timeLimitSeconds, startsByText: nil,
+                skipsLobby: match.attempt?.status == "IN_PROGRESS"
+                    || match.attempt?.status == "EVIDENCE_REQUIRED"))
+        }) {
+            ArenaDefenseInbox { match, owner in
+                selectedDefense = match
+                selectedDefenseOwner = owner
+                showsDefenseInbox = false
+            }
         }
         .compactHeightSheet(isPresented: $showsRulebook) {
             GoatArenaRulebookScreen()
@@ -975,6 +1005,17 @@ struct GoatArenaScreen: View {
             }
 
             if snapshot.activeMatch == nil { compactPrimaryAction(snapshot) }
+            if let message = subMatchCreateError {
+                Text(message).font(.mCaption).foregroundStyle(Tokens.dangerInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button {
+                showsDefenseInbox = true
+            } label: {
+                Label("받은 공격 확인", systemImage: "shield.lefthalf.filled")
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .buttonStyle(SecondaryButtonStyle())
 
         }
     }
@@ -1116,16 +1157,23 @@ struct GoatArenaScreen: View {
                 .disabled(isCreatingSubMatch || isRefreshing)
                 .accessibilityHint("현재 자격을 다시 확인하고 공식 Unranked 경기를 만듭니다")
             }
-        } else if snapshot.cycle == nil {
-            Button {
-                store.route = .commerce
-            } label: {
-                Label("이용권과 상점 보기", systemImage: "bag")
-                    .frame(maxWidth: .infinity, minHeight: 50)
+        } else if snapshot.activeMatch == nil {
+            // Missing cycle metadata must not replace the core action with a shop
+            // button. The command service still checks eligibility authoritatively.
+            if !canCommandMatchesNatively {
+                webArenaFallback(onDark: false, destination: .unrankedChallenge, title: "공격 상대 찾기")
+                    .tutorialTarget(.arenaMatchmaking)
+            } else {
+                Button {
+                    Task { await createUnrankedMatch() }
+                } label: {
+                    Label(isCreatingSubMatch ? "공격 상대 찾는 중" : "공격 상대 찾기", systemImage: "person.2.fill")
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isCreatingSubMatch || isRefreshing)
+                .tutorialTarget(.arenaMatchmaking)
             }
-            .buttonStyle(PrimaryButtonStyle())
-            .tutorialTarget(.arenaEligibility)
-            .accessibilityHint("구독 상태와 결제, Ranked 상점 이용 조건을 확인합니다")
         } else if let match = snapshot.activeMatch {
             // 지금 누를 수 있는 경기 버튼이 없는 구간(응답 대기·채점·정산 등).
             // 빈 자리로 두면 "뭘 봐야 할지" 다시 사라진다 — 서버가 준 다음 행동
@@ -1524,6 +1572,7 @@ struct GoatArenaScreen: View {
         }
         .buttonStyle(SecondaryButtonStyle())
         .accessibilityHint("기간 이용권과 Ranked 상점을 한곳에서 확인합니다")
+        .tutorialTarget(.arenaEligibility, when: loadedContent?.snapshot.cycle == nil)
     }
 
     /// 전체 순위표로 가는 문. 이 화면은 "내 자리 #137"만 말하고 그 위아래에 누가
@@ -2764,21 +2813,6 @@ struct GoatArenaScreen: View {
             // 추정 없이 서버 snapshot을 그대로 표시한다.
             tierHero(snapshot.ranking.skill)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("두 가지 기준")
-                    .font(.mMicro)
-                    .foregroundStyle(Tokens.primary)
-                Text("실력과 자리는 다른 숫자입니다")
-                    .font(.mHeading)
-                    .foregroundStyle(Tokens.ink)
-                    .accessibilityAddTraits(.isHeader)
-            }
-
-            Text("MMR은 시험 성과로 바뀌고, Arena Position은 직접 대결에서만 서로 교환됩니다.")
-                .font(.mCallout)
-                .foregroundStyle(Tokens.text2)
-                .fixedSize(horizontal: false, vertical: true)
-
             statusDecisionRow(rankingLifecyclePresentation(snapshot))
 
             if snapshot.ranking.skill.status == "PLACEMENT_PENDING" {
@@ -2887,7 +2921,7 @@ struct GoatArenaScreen: View {
                 .fontDesign(.rounded)
                 .foregroundStyle(Tokens.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("서버가 확인한 현재 실력 티어")
+            Text("현재 실력 티어")
                 .font(.mCaption)
                 .foregroundStyle(Tokens.text2)
         }
@@ -3096,26 +3130,52 @@ struct GoatArenaScreen: View {
 
     @ViewBuilder
     private var recentResultsSection: some View {
-        if !settledRecentMatches.isEmpty {
+        if !settledRecentMatches.isEmpty || recentMatchesLoading || recentMatchesError != nil || recentMatchesLoadedAt != nil {
             VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                 SectionRule(title: "최근 경기 결과")
 
-                VStack(spacing: 0) {
-                    ForEach(Array(settledRecentMatches.enumerated()), id: \.offset) { item in
-                        if item.offset > 0 {
-                            Rectangle()
-                                .fill(Tokens.line)
-                                .frame(height: 1)
-                                .accessibilityHidden(true)
+                if !settledRecentMatches.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(Array(settledRecentMatches.enumerated()), id: \.offset) { item in
+                            if item.offset > 0 {
+                                Rectangle()
+                                    .fill(Tokens.line)
+                                    .frame(height: 1)
+                                    .accessibilityHidden(true)
+                            }
+                            recentResultRow(item.element)
                         }
-                        recentResultRow(item.element)
                     }
+                    .background(Tokens.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                            .strokeBorder(Tokens.line, lineWidth: 1))
+                } else if recentMatchesLoading {
+                    Label("최근 결과를 확인하고 있습니다", systemImage: "arrow.clockwise")
+                        .font(.mCaption).foregroundStyle(Tokens.text2)
+                } else if recentMatchesError == nil {
+                    Text("최근 완료된 경기가 없습니다.")
+                        .font(.mCaption).foregroundStyle(Tokens.text3)
                 }
-                .background(Tokens.surface)
-                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Tokens.Radius.lg)
-                        .strokeBorder(Tokens.line, lineWidth: 1))
+
+                if let recentMatchesError {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: Tokens.Space.s3) {
+                            Label(recentMatchesError, systemImage: "exclamationmark.triangle")
+                            Spacer(minLength: Tokens.Space.s2)
+                            recentMatchesRetryButton
+                        }
+                        VStack(alignment: .leading, spacing: Tokens.Space.s2) {
+                            Label(recentMatchesError, systemImage: "exclamationmark.triangle")
+                            recentMatchesRetryButton
+                        }
+                    }
+                    .font(.mCaption).foregroundStyle(Tokens.warningInk)
+                } else if let loadedAt = recentMatchesLoadedAt {
+                    Text("마지막 확인 \(loadedAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.mMicro).foregroundStyle(Tokens.text3)
+                }
 
                 Text("승패와 자리 이동은 서버 정산 결과입니다. 점수·정답 문항 수는 앱에 내려오지 않아 표시하지 않습니다.")
                     .font(.mCaption)
@@ -3123,6 +3183,17 @@ struct GoatArenaScreen: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var recentMatchesRetryButton: some View {
+        Button("결과 다시 불러오기") {
+            guard let accountSlot = loadedAccountSlot else { return }
+            Task { await loadRecentMatches(accountSlot: accountSlot, token: requestID) }
+        }
+        .buttonStyle(.plain)
+        .font(.mCaption.weight(.semibold))
+        .frame(minHeight: 44)
+        .disabled(recentMatchesLoading)
     }
 
     private func recentResultRow(
@@ -4084,7 +4155,7 @@ struct GoatArenaScreen: View {
             return DecisionPresentation(
                 icon: "questionmark.circle.fill",
                 title: "Arena 자리 상태를 확인하고 있습니다",
-                detail: "알 수 없는 상태를 임의의 순위로 바꾸지 않고 서버 갱신을 기다립니다.",
+                detail: "잠시 후 다시 확인해 주세요.",
                 badge: "확인 중",
                 tint: Tokens.warningInk,
                 background: Tokens.warningSoft)
@@ -4205,7 +4276,7 @@ struct GoatArenaScreen: View {
         if ["PLACEMENT_PENDING", "NOT_SEEDED"].contains(seat.status) {
             return "주간 시드가 끝나면 Arena 자리가 배정됩니다."
         }
-        return "알 수 없는 자리를 임의로 표시하지 않고 서버 확인 중"
+        return "자리 확인 중"
     }
 
     private func conditionTitle(_ key: String) -> String {
@@ -4610,12 +4681,21 @@ struct GoatArenaScreen: View {
     @MainActor
     private func loadRecentMatches(accountSlot: String, token: UUID) async {
         guard ServerAPI.hasToken else { return }
+        recentMatchesLoading = true
+        recentMatchesError = nil
+        defer {
+            if requestID == token, DataScope.slot == accountSlot { recentMatchesLoading = false }
+        }
         do {
             let matches = try await ServerAPI.getGoatArenaMatches(limit: 5)
             guard requestID == token, DataScope.slot == accountSlot else { return }
             recentMatches = matches
+            recentMatchesLoadedAt = Date()
         } catch {
-            return
+            guard requestID == token, DataScope.slot == accountSlot else { return }
+            recentMatchesError = recentMatches.isEmpty
+                ? "최근 경기 결과를 불러오지 못했습니다."
+                : "이 결과는 이전에 확인한 기록입니다. 최신 결과를 확인하지 못했습니다."
         }
     }
 

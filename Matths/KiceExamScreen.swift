@@ -196,7 +196,13 @@ struct KiceExamScreen: View {
         return VStack(spacing: Tokens.Space.s1) {
             HStack(spacing: isNarrow ? Tokens.Space.s2 : Tokens.Space.s4) {
                 Button {
-                    guard let owner = displayedOwner, store.ownsCurrentAccountSession(owner) else { return }
+                    guard store.route == .kice else { return }
+                    guard exam != nil, let owner = displayedOwner,
+                          store.ownsCurrentAccountSession(owner) else {
+                        timer.pause()
+                        store.route = .learn
+                        return
+                    }
                     timer.pause()
                     let elapsed = timer.exactElapsedMs(), page = pdfPageIndex
                     Task { await store.leaveKiceStudy(elapsedMs: elapsed, page: page, expectedOwner: owner) }
@@ -206,7 +212,7 @@ struct KiceExamScreen: View {
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("나가기")
-                .disabled(store.kiceBusy)
+                .disabled(store.kiceBusy && exam != nil)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(exam.map { e in
@@ -215,7 +221,7 @@ struct KiceExamScreen: View {
                         .font(.mBodyB).foregroundStyle(Tokens.ink)
                         // 좁은 폭에서 제목이 세 줄로 자라면 타이머가 밀린다. 두 줄까지만.
                         .lineLimit(isNarrow ? 2 : nil)
-                    if showsExamSubtitle {
+                    if showsExamSubtitle && exam != nil {
                         Text("100분, 30문항, 100점 만점")
                             .font(.mMicro).foregroundStyle(Tokens.text3)
                             .lineLimit(1)
@@ -281,12 +287,12 @@ struct KiceExamScreen: View {
                 .foregroundStyle(Tokens.ink)
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
-            Text("목록이 갱신됐거나 다른 기기에서 응시 기록이 변경됐을 수 있습니다.")
+            Text("학습 화면에서 시험지를 다시 선택해 주세요.")
                 .font(.mCallout)
                 .foregroundStyle(Tokens.text2)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("평가센터로 돌아가기") { store.route = .assess }
+            Button("학습으로 돌아가기") { store.route = .learn }
                 .buttonStyle(PrimaryButtonStyle())
                 .frame(maxWidth: 280)
         }

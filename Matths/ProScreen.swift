@@ -860,7 +860,7 @@ struct ProScreen: View {
             // 예전엔 여기서 그냥 "비전없음" 이라 적어 놓아, 사진을 넣고 한참
             // 기다린 끝에야 이상하다는 걸 알아챘다. 이유까지 적어 준다.
             if let why = UserDefaults.standard.string(forKey: "matths.visionSkipReason"), !why.isEmpty {
-                return "열림: \(file), 비전 꺼짐(\(why)). VL 3B 판독 모델로 바꾸면 사진 분석이 된다"
+                return "열림: \(file), 비전 꺼짐(\(why)). Qwen3.5-2B 사진 판독 모델을 준비해 주세요."
             }
             return "열림: \(file)\(vision ? ", 비전" : ", 비전없음")"
         case .loading:  return "여는 중…"

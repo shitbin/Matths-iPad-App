@@ -277,7 +277,7 @@ struct TodayLearningScreen: View {
 
 struct LearningHubScreen: View {
     @EnvironmentObject private var store: AppStore
-    @State private var showsPractice = false
+    @State private var showsKiceLibrary = false
     @State private var showsTools = false
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
@@ -313,13 +313,12 @@ struct LearningHubScreen: View {
             FlowDestinationRow("짧게 연습", detail: "유형을 골라 문제 풀기", icon: "pencil.line") { store.route = .quickPractice }
                 .tutorialTarget(.quickPracticeStart)
             DisclosureGroup("연습 자료와 풀이 도구", isExpanded: $showsTools) {
-                FlowDestinationRow("기출 연습", icon: "doc.text") { store.route = .kice }
+                FlowDestinationRow("기출 연습", detail: "시험지를 선택해 연습하기", icon: "doc.text") { showsKiceLibrary = true }
                 FlowDestinationRow("시험지 풀이 분석", icon: "camera") { store.route = .pro }
                     .tutorialTarget(.proEntry)
-                FlowDestinationRow("오프라인 연습", detail: "공식 점수·진도에 반영되지 않는 기기 내 연습", icon: "wifi.slash") { showsPractice = true }
             }.font(.mBody).padding(.vertical, Tokens.Space.s3)
         }
-        .fullScreenCover(isPresented: $showsPractice) { OfflinePracticeScreen() }
+        .sheet(isPresented: $showsKiceLibrary) { KiceLibrarySheet() }
         .onReceive(NotificationCenter.default.publisher(for: TutorialFocusRequestCenter.notification)) { _ in
             if TutorialFocusRequestCenter.current?.target == .proEntry { showsTools = true }
         }
@@ -344,8 +343,8 @@ struct LearningRecordsScreen: View {
             FlowDestinationRow("전체 오답", detail: "다시 볼 문제와 복습 예정일", icon: "arrow.counterclockwise") { store.route = .wrongNotes }
                 .tutorialTarget(.wrongNotes)
             let summary = store.learningSummary
-            FlowDestinationRow("개념 학습 기록", detail: "\(summary.done)/\(summary.total)개 완료 · \(summary.percent)%", icon: "chart.bar.xaxis") { store.route = .curriculum }
-            FlowDestinationRow("공식 모의고사 결과", icon: "checkmark.seal") { store.route = .assess }
+            FlowDestinationRow("개념 진도 보기", detail: "\(summary.done)/\(summary.total)개 완료 · \(summary.percent)%", icon: "chart.bar.xaxis") { store.route = .curriculum }
+            FlowDestinationRow("평가와 결과 보기", icon: "checkmark.seal") { store.route = .assess }
             FlowDestinationRow("최근 7일 학습 리포트", detail: "공부한 날 · 학습 시간 · 문제 기록", icon: "chart.xyaxis.line") { showsWeeklyReport = true }
             if sync.pending > 0 || sync.lastError != nil {
                 Text("계정 확인을 기다리는 기록이 있어요. 기기의 기록과 서버 진도가 잠시 다를 수 있습니다.").font(.mCaption).foregroundStyle(Tokens.text2)
@@ -364,8 +363,7 @@ struct MeHubScreen: View {
             Text("나").font(.mTitle).accessibilityAddTraits(.isHeader)
             Button { store.route = .profile } label: {
                 HStack(spacing: Tokens.Space.s3) {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 38)).foregroundStyle(Tokens.actionPrimary)
+                    meAvatar
                     VStack(alignment: .leading, spacing: Tokens.Space.s1) {
                         Text(store.userName.isEmpty ? "내 계정" : store.userName).font(.mHeading)
                         Text("프로필 · 학교 · 계정 보안").font(.mCaption).foregroundStyle(Tokens.text2)
@@ -414,6 +412,32 @@ struct MeHubScreen: View {
                 FlowDestinationRow("문의 내역과 새 문의", detail: "계정 · 학습 · 결제 문제", icon: "bubble.left") { store.route = .support }
             }
         }
+    }
+
+    private var meAvatar: some View {
+        ZStack {
+            Circle().fill(Tokens.actionPrimary)
+            if let name = store.serverProfile?.profileAvatar?.bundledImageName {
+                Image(name).resizable().scaledToFill()
+            } else if let source = store.serverProfile?.profileAvatar?.imageSrc,
+                      let url = URL(string: source, relativeTo: ServerAPI.baseURL)?.absoluteURL {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image { image.resizable().scaledToFill() }
+                    else { avatarFallback }
+                }
+            } else {
+                avatarFallback
+            }
+        }
+        .frame(width: 48, height: 48)
+        .clipShape(Circle())
+        .accessibilityHidden(true)
+    }
+
+    private var avatarFallback: some View {
+        Text(String((store.userName.isEmpty ? "나" : store.userName).prefix(1)))
+            .font(.system(size: 20, weight: .heavy))
+            .foregroundStyle(Tokens.actionForeground)
     }
 }
 

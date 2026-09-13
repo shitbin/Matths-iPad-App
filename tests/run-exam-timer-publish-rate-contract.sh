@@ -57,7 +57,7 @@ grep -Fq 'guard let attempt = store.kiceCurrentAttempt else { timer.pause(); ret
   || fail "KICE 데이터 유실 상태에서도 타이머가 시작될 수 있습니다."
 grep -Fq 'timer.restore(elapsedMs: store.kiceCurrentReceipt?.elapsedMs ?? attempt.elapsedMs)' "$root/Matths/KiceExamScreen.swift" \
   || fail "KICE가 저장된 경과 시간 또는 고정 결과 시간으로 복원되지 않습니다."
-grep -q 'Button("평가센터로 돌아가기")' "$root/Matths/KiceExamScreen.swift" \
+grep -q 'Button("학습으로 돌아가기")' "$root/Matths/KiceExamScreen.swift" \
   || fail "KICE 데이터 유실 화면에 복구 행동이 없습니다."
 
 # ── ⑤ 죽은 밀리초 표시가 되살아나지 않는다 ──────────────────────────────────

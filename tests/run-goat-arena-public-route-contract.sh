@@ -88,7 +88,6 @@ first_content = next(
 if first_content != "tierHero(snapshot.ranking.skill)":
     raise SystemExit(f"server tier must be the first visual ranking child, got {first_content}")
 for marker in (
-    'Text("두 가지 기준")',
     "statusDecisionRow(rankingLifecyclePresentation(snapshot))",
     "store.route = .placement",
     "mmrPanel(",

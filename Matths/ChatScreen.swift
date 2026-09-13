@@ -107,7 +107,7 @@ struct ChatScreen: View {
     /// 파일명에서 사람이 읽을 티어 라벨을 만든다 — "지금 뭐가 도는지" 가 한눈에.
     private func tierLabel(_ file: String) -> String {
         if file.contains("DeepSeek-R1") { return "DeepSeek-R1 7B" }
-        if file.contains("Qwen2.5-VL-3B") { return "Qwen2.5-VL 3B" }
+        if file.contains("Qwen3.5-2B") { return "Qwen3.5-2B" }
         if file.contains("9B") { return file.contains("IQ2") || file.contains("IQ3") ? "9B 경량" : "9B" }
         if file.contains("4B") { return "4B" }
         return "로컬 모델"

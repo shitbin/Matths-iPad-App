@@ -269,7 +269,7 @@ struct ArchiveLibraryScreen: View {
             }
 
             if let error = model.errorMessage {
-                Text(error).font(.mCaption).foregroundStyle(Tokens.danger)
+                Text(error).font(.mCaption).foregroundStyle(Tokens.dangerInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

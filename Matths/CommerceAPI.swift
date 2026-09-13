@@ -29,6 +29,10 @@ extension ServerAPI {
 
         var generatedAt: String
         var checkoutEnabled: Bool
+        /// 새 서버는 웹 PG와 분리한 Apple 결제 준비 상태를 명시한다.
+        /// 구버전 서버에서는 nil이며 checkoutEnabled로 호환한다.
+        var appleCheckoutEnabled: Bool? = nil
+        var webCheckoutEnabled: Bool? = nil
         var currency: String
         var access: Access
         var products: [Product]

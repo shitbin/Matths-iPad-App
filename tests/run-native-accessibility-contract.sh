@@ -17,7 +17,7 @@ canvas="$root/Matths/SolutionCanvas.swift"
 
 grep -Fq '.accessibilityLabel("코치 수위")' "$profile"
 grep -Fq '.accessibilityLabel("복습 리마인더")' "$profile"
-grep -Fq '.accessibilityLabel("화면 모션")' "$profile"
+! grep -Fq 'settingRow("화면 모션"' "$profile"
 grep -Fq '.accessibilityLabel("왼손잡이 모드")' "$profile"
 grep -Fq '.accessibilityLabel("AI 모델 9B 실험 모드")' "$profile"
 grep -Fq '.accessibilityLabel("홈으로 돌아가기")' "$profile"

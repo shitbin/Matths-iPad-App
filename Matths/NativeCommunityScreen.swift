@@ -274,7 +274,7 @@ struct NativeCommunityScreen: View {
             LazyVStack(spacing: Tokens.Space.s3) {
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .font(.mCaption).foregroundStyle(Tokens.danger)
+                        .font(.mCaption).foregroundStyle(Tokens.dangerInk)
                         .padding(Tokens.Space.s3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Tokens.dangerSoft, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
@@ -482,7 +482,7 @@ private struct NativeCommunityDetailSheet: View {
                     }
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.mCaption).foregroundStyle(Tokens.danger)
+                            .font(.mCaption).foregroundStyle(Tokens.dangerInk)
                     }
                 }
                 .frame(maxWidth: 760, alignment: .leading)
@@ -829,7 +829,7 @@ private struct NativeCommunityComposerSheet: View {
                     Text("제목 \(title.utf16.count)/120 · 내용 \(content.utf16.count)/10000").font(.mCaption).foregroundStyle(Tokens.text2)
                     Text("작성 중인 글과 첨부파일은 이 계정의 기기에 임시 저장됩니다.").font(.mCaption).foregroundStyle(Tokens.text2)
                     if isImporting { ProgressView("첨부파일을 준비하고 있어요") }
-                    if let errorMessage { Label(errorMessage, systemImage: "exclamationmark.triangle.fill").font(.mCaption).foregroundStyle(Tokens.danger) }
+                    if let errorMessage { Label(errorMessage, systemImage: "exclamationmark.triangle.fill").font(.mCaption).foregroundStyle(Tokens.dangerInk) }
                     Button {
                         if submissionUncertain { confirmsRetry = true } else { Task { await save() } }
                     } label: {

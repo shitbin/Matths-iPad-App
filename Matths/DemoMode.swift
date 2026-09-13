@@ -690,6 +690,8 @@ enum DemoRouter {
             return DemoRulebookFixture.rulebook
         case "POST /api/v1/goat-arena/matches/sub":
             return DemoArenaFixtures.matchCommandReceipt
+        case "GET /api/v1/goat-arena/matches":
+            return DemoArenaFixtures.participantMatches
         case "GET /api/v1/goat-arena/matches/main/options":
             return DemoArenaFixtures.mainMatchOptions
         case "POST /api/v1/goat-arena/matches/main/upward":

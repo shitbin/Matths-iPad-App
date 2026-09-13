@@ -73,7 +73,7 @@ struct GraderLogScreen: View {
                          + (run.itemCount.map { ", 문항 \($0)개" } ?? ""))
                         .font(.mCaption).foregroundStyle(Tokens.text3)
                     if let f = run.failed {
-                        Text("실패: \(f)").font(.mCaption).foregroundStyle(Tokens.danger)
+                        Text("실패: \(f)").font(.mCaption).foregroundStyle(Tokens.dangerInk)
                             .lineLimit(2)
                     }
                     // 어느 단계까지 갔는지 한 줄로

@@ -50,7 +50,7 @@ struct AdminOperationsGuideScreen: View {
       } else {
         ContentUnavailableView("운영 매뉴얼을 불러오지 못했습니다", systemImage: "book.closed")
       }
-    }.background(Tokens.paper).dynamicTypeSize(...DynamicTypeSize.xxxLarge).task {
+    }.background(Tokens.paper).task {
       await model.load()
     }
   }

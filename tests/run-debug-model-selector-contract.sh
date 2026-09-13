@@ -9,7 +9,7 @@ PRO="$ROOT/Matths/ProScreen.swift"
 
 grep -Fq '#if DEBUG' "$SELECTOR"
 grep -Fq 'Ling 3.0 tiny Q3' "$SELECTOR"
-grep -Fq '사진 판독은 Qwen VL 3B로 고정' "$SELECTOR"
+grep -Fq '사진 판독: Qwen3.5-2B' "$SELECTOR"
 grep -Fq 'frame(minHeight: 44)' "$SELECTOR"
 grep -Fq 'ModelDownloader.shared.startForTierSwitch()' "$SELECTOR"
 grep -Fq 'DebugLocalModelSelector(selection: $debugTier' "$PROFILE"

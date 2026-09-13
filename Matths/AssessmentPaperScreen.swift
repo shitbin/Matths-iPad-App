@@ -320,7 +320,7 @@ struct AssessmentPaperScreen: View {
             // 0점만 보여 주면 학생은 다 틀린 줄 안다.
             if a.disqualified == true {
                 Label("시간 초과로 실격 처리", systemImage: "clock.badge.xmark")
-                    .font(.mBodyB).foregroundStyle(Tokens.danger)
+                    .font(.mBodyB).foregroundStyle(Tokens.dangerInk)
                 Text("제한 시간 안에 제출하지 못해 0점으로 기록됩니다. 웹 평가와 같은 규칙입니다.")
                     .font(.mCaption).foregroundStyle(Tokens.text3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -333,9 +333,9 @@ struct AssessmentPaperScreen: View {
                     .foregroundStyle(passed ? Tokens.success : Tokens.danger)
                 Text("/ 100점").font(.mCaption).foregroundStyle(Tokens.text3)
                 Text(passed ? "통과" : "재응시")
-                    .font(.mMicro).foregroundStyle(passed ? Tokens.success : Tokens.danger)
+                    .font(.mMicro).foregroundStyle(passed ? Tokens.successInk : Tokens.dangerInk)
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .overlay(Capsule().strokeBorder(passed ? Tokens.success : Tokens.danger, lineWidth: 1))
+                    .overlay(Capsule().strokeBorder(passed ? Tokens.successInk : Tokens.dangerInk, lineWidth: 1))
                 Spacer()
                 Text("\(AssessCatalog.grade(for: score))등급 구간")
                     .font(.mCaption).foregroundStyle(Tokens.text2)

@@ -399,7 +399,7 @@ enum VisionSelfTest {
             if let why = UserDefaults.standard.string(forKey: "matths.visionSkipReason"),
                !why.isEmpty { say("비전 꺼진 이유: \(why)") }
 
-            // 8GB 기기의 실제 파이프라인은 3B VLM 판독 뒤 7B 수학 추론을 순차
+            // 8GB 기기의 실제 파이프라인은 2B VLM 판독 뒤 7B 수학 추론을 순차
             // 실행한다. deepseek7B 티어를 직접 요청한 판은 고정된 오답 진단으로
             // 텍스트 후단의 첫 출력·처리량·메모리를 같은 형식으로 잰다.
             if spec.mmprojFile.isEmpty {

@@ -84,9 +84,16 @@ enum TodayActivityPolicy {
         status == "in_progress" || (eligibilityAllowed && canEnterRoom && ["new", "lobby"].contains(status))
     }
     static func canOfferArena(matchStatus: String, attemptStatus: String?, integrity: String, actions: [String]?) -> Bool {
-        guard attemptStatus == "IN_PROGRESS", ["PENDING", "CLEAR"].contains(integrity),
-              ["MATCHED", "READY", "IN_PROGRESS", "SUBMITTED"].contains(matchStatus) else { return false }
-        return actions.map { !Set($0).isDisjoint(with: ["SAVE_ANSWER", "ADVANCE", "SUBMIT"]) } ?? true
+        guard ["PENDING", "CLEAR"].contains(integrity),
+              ["REQUESTED", "MATCHED", "READY", "IN_PROGRESS", "SUBMITTED", "HELD"].contains(matchStatus) else { return false }
+        if ["SUBMITTED", "SETTLED", "COMPLETED", "EXPIRED", "CANCELLED"].contains(attemptStatus ?? "") {
+            return false
+        }
+        if let actions {
+            return !Set(actions).isDisjoint(with: ["START", "SAVE_ANSWER", "ADVANCE", "SUBMIT", "SUBMIT_EVIDENCE"])
+        }
+        return ["READY", "IN_PROGRESS", "EVIDENCE_REQUIRED"].contains(attemptStatus ?? "")
+            || ["MATCHED", "READY"].contains(matchStatus)
     }
 }
 

@@ -369,7 +369,7 @@ struct GoatArenaSupplementalEvidenceSheet: View {
                     sourceButtons
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.mCaption).foregroundStyle(Tokens.danger)
+                            .font(.mCaption).foregroundStyle(Tokens.dangerInk)
                     }
                     Button {
                         confirmsUpload = true

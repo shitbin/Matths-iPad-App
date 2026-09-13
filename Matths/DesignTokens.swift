@@ -215,6 +215,10 @@ enum Tokens {
     /// 화면의 주 행동. 버튼·확정 CTA 이외의 진행 표시에 쓰지 않는다.
     static let actionPrimary = adaptive(light: 0x7B4EFC, dark: 0x9A7BFF)
     static let actionPrimaryPressed = brandVioletDeep
+    /// 주 행동 면 위의 글자·진행 표시. 다크의 밝은 바이올렛 위 흰 글자는
+    /// 3.09:1이라 일반 버튼 글자 기준을 넘지 못한다. 다크에서는 CI Navy를 써
+    /// 6.16:1을 확보하고, 라이트에서는 기존 밝은 전경을 유지한다.
+    static let actionForeground = adaptive(light: 0xFDFCFF, dark: 0x090C1B)
     /// 학습 진도·선택·기능 상태. 주 CTA 색과 분리한다.
     static let progressBlue = adaptive(light: 0x327FFA, dark: 0x7E9BFF)
     /// GOAT Arena 네이비 면의 유일한 구조 액센트.
@@ -452,7 +456,7 @@ extension View {
 /// 주 버튼이 그라데이션이면 그 규율이 처음부터 성립하지 않는다.
 /// 블러 그림자도 없다: 인터랙티브 요소의 깊이는 하드 엣지(밑판)로만 표현한다.
 struct ExtrudedButtonStyle: ButtonStyle {
-    // 모션 게이트 — 앱의 주 버튼 18개 호출부가 전부 이 스타일을 쓰는데,
+    // 모션 게이트 — 앱 전역의 주 버튼 호출부가 이 스타일을 쓰므로,
     // 여기만 게이트가 없어 '화면 모션' 을 꺼도 시스템 '동작 줄이기' 를 켜도
     // 눌림 애니메이션이 계속 돌았다(PressScaleStyle 에만 걸려 있었다, 감사 적발).
     // EnvironmentObject 는 ButtonStyle 에서 못 쓴다. AppStore.motionOn 이
@@ -466,7 +470,7 @@ struct ExtrudedButtonStyle: ButtonStyle {
         let motionOn = userMotion && !reduceMotion
         return configuration.label
             .font(.mBodyB)
-            .foregroundStyle(isEnabled ? Tokens.onBrand : Tokens.text4)
+            .foregroundStyle(isEnabled ? Tokens.actionForeground : Tokens.text4)
             .frame(maxWidth: .infinity, minHeight: 52)   // 최소 터치 타겟 44pt 초과
             .background(
                 ZStack {
@@ -484,7 +488,7 @@ struct ExtrudedButtonStyle: ButtonStyle {
     }
 }
 
-/// 기존 이름 — 호출부 40여 곳이 이 이름을 쓰므로 별칭으로 유지한다.
+/// 기존 이름 — 호출부가 많아 단계적으로 역할별 스타일로 옮기기 위해 별칭으로 유지한다.
 /// 새 코드는 어느 쪽을 써도 같은 단색 바이올렛 퍽 버튼이다.
 typealias PrimaryButtonStyle = ExtrudedButtonStyle
 

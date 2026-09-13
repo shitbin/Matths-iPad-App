@@ -354,10 +354,10 @@ final class LocalAIModelPack: ObservableObject {
 
     nonisolated static func expectedBytes(for file: String) -> Int64 {
         switch file {
-        case ModelDownloader.specVision3B.file:
-            return 1_929_901_056
-        case ModelDownloader.specVision3B.mmprojFile:
-            return 844_757_728
+        case ModelDownloader.specVision2B.file:
+            return 1_280_835_840
+        case ModelDownloader.specVision2B.mmprojFile:
+            return 668_227_264
         case ModelDownloader.specDeepSeek7B.file:
             return 3_808_390_880
         #if DEBUG
@@ -381,10 +381,10 @@ final class LocalAIModelPack: ObservableObject {
     /// 확인하지 못한 모델에는 값을 추측해서 넣지 않는다.
     nonisolated static func expectedSHA256(for file: String) -> String? {
         switch file {
-        case ModelDownloader.specVision3B.file:
-            return "d02fe9b69ad8cadbbd228e387667af66612c44bed29ffc8eb1e7caf9ac486c12"
-        case ModelDownloader.specVision3B.mmprojFile:
-            return "980c9b2f78c04e6cff93d277ada09e768394f112d75db3b4e9dea8a69f9fb904"
+        case ModelDownloader.specVision2B.file:
+            return "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223"
+        case ModelDownloader.specVision2B.mmprojFile:
+            return "7035e9cb8d7c6a9681d07eef9a364783e86ea4cd73faab2eabb4f43a101830c7"
         case ModelDownloader.specDeepSeek7B.file:
             return "0931f946c6f439a3b5cc0226f39dce14c092c2ee4386be98f12ca6305cef7ec7"
         #if DEBUG

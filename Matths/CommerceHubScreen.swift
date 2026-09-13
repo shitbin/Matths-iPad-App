@@ -372,7 +372,8 @@ struct CommerceHubScreen: View {
     }
 
     private func productSection(_ value: ServerAPI.CommerceStorefront) -> some View {
-        VStack(alignment: .leading, spacing: compactHeight ? Tokens.Space.s3 : Tokens.Space.s5) {
+        let appleCheckoutEnabled = value.appleCheckoutEnabled ?? value.checkoutEnabled
+        return VStack(alignment: .leading, spacing: compactHeight ? Tokens.Space.s3 : Tokens.Space.s5) {
             if compactHeight {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {
                     Text("기간 이용권")
@@ -398,7 +399,7 @@ struct CommerceHubScreen: View {
             }
 
             ForEach(value.products) { product in
-                productRow(product, checkoutEnabled: value.checkoutEnabled)
+                productRow(product, checkoutEnabled: appleCheckoutEnabled)
             }
 
             if let message = iap.lastError, !message.isEmpty {
