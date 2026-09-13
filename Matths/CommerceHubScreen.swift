@@ -589,9 +589,10 @@ struct CommerceHubScreen: View {
                     Button {
                         Task { await buy(item) }
                     } label: {
-                        // 가격은 **App Store 가 준 문자열**을 쓴다. 서버 금액을 그대로 찍으면
-                        // 통화·세금·지역 할인이 어긋나 애플이 실제로 청구하는 값과 달라진다.
-                        Text(busy ? "결제 중" : "\(storeProduct.displayPrice) 결제")
+                        // Matths 화면에는 합의된 한국 판매가를 원화로 일관되게 표시한다.
+                        // 실제 청구 통화·환산 금액은 Apple 구매 확인창이 계정 국가·지역에
+                        // 맞춰 최종 표시한다. StoreKit Product는 구매 가능 여부와 거래에 쓴다.
+                        Text(busy ? "결제 중" : "\(formattedKRW(item.listPriceKRW)) 결제")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(PrimaryButtonStyle())
@@ -607,6 +608,11 @@ struct CommerceHubScreen: View {
                         .accessibilityLabel(item == .learningPass
                                             ? "한 달마다 자동 갱신되며, 결제마다 29일 학습 사이클을 제공합니다"
                                             : "한 달마다 자동 갱신됩니다")
+
+                    Text("Apple 결제창의 최종 금액은 계정 국가·지역에 따라 현지 통화로 표시됩니다.")
+                        .font(.mMicro)
+                        .foregroundStyle(Tokens.text3)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if iap.loading {
                     Button("가격 확인 중") {}
                         .buttonStyle(PrimaryButtonStyle())
@@ -677,15 +683,12 @@ struct CommerceHubScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text(product.periodLabel).font(.mCaption).foregroundStyle(Tokens.text3)
         }
-        // 가격은 **App Store 가 준 값이 우선**이다.
-        //
-        // 서버의 amount 는 웹 결제(토스) 기준이라, App Store Connect 에 등록한 가격과
-        // 어긋날 수 있다. 등록가를 바꾸고 서버 정책을 안 고치면 학생이 보는 금액과
-        // 애플이 실제로 청구하는 금액이 달라진다 — 그건 표시 오류가 아니라 분쟁거리다.
-        // 그래서 애플 값이 있으면 그것을 쓰고, 없을 때만 서버 값으로 내려앉는다
-        // (그 상태에서는 결제 버튼도 비활성이라 실제 청구가 일어나지 않는다).
+        // 화면 가격은 한국 서비스의 합의된 원화 판매가다. StoreKit `displayPrice`를
+        // 여기에 쓰면 App Store 계정 지역이 미국인 검수 기기에서 달러로 바뀌어,
+        // 같은 한국어 화면의 상품 카드와 서버 원화 안내가 서로 충돌한다.
+        // 실제 결제 통화는 구매 직전 Apple 시스템 창이 정확한 금액으로 보여 준다.
         let displayPrice = MatthsProduct(serverCode: product.code)
-            .flatMap { iap.product(for: $0)?.displayPrice }
+            .map { formattedKRW($0.listPriceKRW) }
             ?? formattedKRW(product.amount)
         let price = Text(displayPrice)
             .font(.mHeading)
@@ -838,6 +841,7 @@ struct CommerceHubScreen: View {
     private func formattedKRW(_ amount: Int) -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "ko_KR")
         return "\(formatter.string(from: NSNumber(value: amount)) ?? String(amount))원"
     }
 
@@ -911,7 +915,7 @@ private enum CommerceHubFixture {
                 .init(
                     code: "MOCK_EXAM_ONLY",
                     name: "모의고사 이용권",
-                    amount: 9_900,
+                    amount: 5_500,
                     periodLabel: "30일",
                     description: "주간 공식 모의고사와 응시 기록을 확인합니다.",
                     features: ["주간 공식 모의고사", "응시 기록과 성적 확인", "30일 이용"],

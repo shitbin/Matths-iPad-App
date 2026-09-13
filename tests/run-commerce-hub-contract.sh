@@ -64,6 +64,20 @@ if grep -q 'value.appleCheckoutEnabled ?? value.checkoutEnabled' "$HUB"; then
 fi
 grep -q '1개월 자동 갱신 · 결제마다 29일 학습 사이클' "$HUB"
 grep -q '한 달마다 자동 갱신됩니다' "$HUB"
+grep -q 'var listPriceKRW: Int' "$IAP"
+grep -q 'case .learningPass: return 29_000' "$IAP"
+grep -q 'case .mockExamOnly: return 5_500' "$IAP"
+grep -q 'formattedKRW(item.listPriceKRW)' "$HUB"
+grep -q 'Apple 결제창의 최종 금액은 계정 국가·지역에 따라 현지 통화로 표시됩니다.' "$HUB"
+grep -q 'formatter.locale = Locale(identifier: "ko_KR")' "$HUB"
+if grep -q 'storeProduct.displayPrice' "$HUB"; then
+  echo "Korean commerce UI must not change to dollars with the reviewer storefront" >&2
+  exit 1
+fi
+if grep -q 'amount: 9_900' "$HUB"; then
+  echo "Stale mock-exam review price remains in the commerce fixture" >&2
+  exit 1
+fi
 
 # 로컬 StoreKit 검수도 App Store Connect의 실제 상품과 같은 ID·가격을 써야 한다.
 # 서버 storefront가 보여 주는 원화 fallback과 테스트 가격이 다르면, 캡처에서는

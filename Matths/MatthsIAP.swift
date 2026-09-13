@@ -82,6 +82,19 @@ enum MatthsProduct: String, CaseIterable {
         }
     }
 
+    /// 한국 서비스 화면에 표시하는 원화 기준 판매가.
+    ///
+    /// `Product.displayPrice`는 앱 언어가 아니라 사용자의 App Store storefront를
+    /// 따라가므로 미국 계정에서는 한국어 앱에도 달러가 표시된다. Matths 화면은
+    /// 운영 합의 가격을 원화로 일관되게 안내하고, 실제 청구 통화와 환산 금액은
+    /// Apple 구매 확인창이 해당 계정 국가·지역 기준으로 최종 표시한다.
+    var listPriceKRW: Int {
+        switch self {
+        case .learningPass: return 29_000
+        case .mockExamOnly: return 5_500
+        }
+    }
+
     init?(serverCode: String) {
         guard let match = MatthsProduct.allCases.first(where: { $0.serverCode == serverCode })
         else { return nil }
