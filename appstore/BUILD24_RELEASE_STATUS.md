@@ -32,13 +32,27 @@
 - GPT-6 피드백 P1 및 고위험 P2 회귀 계약: PASS.
 - 앱 전체 `tests/run-*.sh`는 외부 Web exact-commit 검사를 제외한 실행 결과와 해당 exact-commit 별도 실행 결과를 함께 기록한다.
 - App Store 배포 프로필 두 개와 Apple Distribution 인증서의 만료·bundle ID를 확인했다.
+- App Store 배포 archive 검증과 IPA export를 완료했다. IPA SHA-256은
+  `5ecec470633b5a231bdefc5b6f9234130fe02973babb67567544a85a4a4f85ff`다.
+- Xcode가 Build 24 업로드를 완료했고 App Store Connect/TestFlight의 업로드 상태는
+  `완료`, 빌드 상태는 `제출 준비 완료`다. 내부 그룹 `Test v1`의 테스터 3명에게
+  제공 가능한 상태다.
+- Build 24 소스로 iPhone 6.9인치 가로 7장과 iPad 13인치 가로 7장을 다시 캡처했다.
+  자산 검사는 `APPSTORE-ASSET PASS: 14 screenshots`로 통과했다.
+- 자동 갱신 구독 두 개의 대한민국 가격은 29일 학습권 `29,000원`, 주간 공식
+  모의고사 `5,500원`으로 확인했다. 두 상품 모두 175개 국가·지역 판매 설정,
+  한국어 현지화, 심사 스크린샷과 심사 메모가 있다.
+- 유료 앱 계약, 대한민국·미국 세금 양식, 은행 계좌와 대한민국 전자상거래법 상태는
+  App Store Connect에서 모두 `활성화됨`으로 확인했다.
 
 ## 아직 실제로 닫아야 하는 출시 게이트
 
-- App Store Connect에서 두 자동 갱신 구독의 판매/심사 상태와 Build 24 선택 확인.
+- App Store 버전 1.0.1에 Build 24를 선택하고, 두 자동 갱신 구독을 이번 심사에 추가.
 - Apple Sandbox에서 신규 구매, 취소, pending, 복원, 재로그인 후 권한, 다른 Matths 계정 귀속 거절 확인.
 - 운영 서버 storefront가 `appleCheckoutEnabled=true`를 내려주는지 실제 로그인 계정으로 확인.
-- App Store 배포 서명 archive 생성, export/validation, TestFlight 업로드·처리 완료 확인.
-- 제출 직전 심사 계정과 심사 메모, 구독 상품 연결, 개인정보·연령 등급의 저장 상태 확인.
+- Cloudtype 운영 서비스가 서버 `bdfe79363f8769cecefc1fdb9727bba32fb3dad3`을
+  실제 실행하도록 최신 `main` 재배포 후 release ID와 health/readiness 결과 확인.
+- App Store Connect의 새 버전은 심사 계정 비밀번호가 비어 있다. 유효한 전용 심사
+  계정 비밀번호를 다시 입력하고, 연락처·업데이트 문안·새 스크린샷을 저장한 뒤 제출.
 
 이 항목을 확인하지 않은 상태에서는 “오늘 사용자 결제 가능”이나 “심사 제출 완료”라고 보고하지 않는다.
