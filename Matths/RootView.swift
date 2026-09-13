@@ -2006,23 +2006,27 @@ struct HomeScreen: View {
         .frame(maxWidth: soloColumnWidth, alignment: .leading)
     }
 
-    /// 두 칸 — 첫 행은 왼쪽 "지금 할 일", 오른쪽 "쌓인 기록".
-    /// Arena 예고는 둘 중 한 칸에 종속시키지 않고 그 아래 전체 폭을 쓴다.
-    /// 그래서 카드의 오른쪽 티어 휘장까지 한 번에 읽히고, 왼쪽 열만 길어져
-    /// 아래쪽에 불필요한 빈 면이 생기지 않는다.
+    /// 두 칸 — 왼쪽은 주 행동과 오늘 수치, 오른쪽은 확인할 일·바로가기·주간 기록.
+    /// 종전에는 왼쪽에 행동을 전부 몰고 오른쪽에 짧은 주간 빈 상태만 놓아서,
+    /// 오른쪽 절반이 큰 공백으로 남고 Arena가 왼쪽 긴 열 아래까지 밀렸다.
+    /// 오른쪽에서 확인할 일을 먼저 읽고 주간 기록을 이어 보게 두 열 높이를 맞춘 뒤,
+    /// Arena 예고는 두 열이 끝나는 즉시 전체 폭으로 이어진다.
     private var twoColumnBody: some View {
         VStack(alignment: .leading, spacing: sectionSpacing) {
             HStack(alignment: .top, spacing: Tokens.Space.s8) {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
-                    missionBlock
+                    missionLead
                     noticeBoard
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                weeklySection
+                VStack(alignment: .leading, spacing: sectionSpacing) {
+                    missionUtilities
+                    weeklySection
+                }
                     // 안쪽 프레임이 칸을 채우고 바깥 프레임이 340pt 에서 멈춘다.
-                    // 남는 폭은 전부 왼쪽 미션이 가져간다 — 3지표와 요일 차트는
-                    // 340pt 면 다 읽히고, 히어로는 넓을수록 본문 줄이 산다.
+                    // 남는 폭은 전부 왼쪽 미션이 가져간다 — 확인할 일·바로가기와
+                    // 3지표·요일 차트는 340pt면 읽히고, 히어로는 넓을수록 본문 줄이 산다.
                     // 창이 좁아 340 에 못 미치면 두 칸이 반씩 나눠 갖는다.
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(maxWidth: Self.recordColumnWidth, alignment: .leading)
@@ -2032,9 +2036,18 @@ struct HomeScreen: View {
         }
     }
 
-    /// ② 미션 + ②-b 바로 가기 — 한 덩어리다. 섹션 간격(28)이 아니라 카드 간격(16)으로
-    /// 붙여야 "주 행동 하나 + 그 아래 가벼운 두 개" 로 읽힌다.
+    /// ② 미션 + ②-b 보조 행동. 한 칸 화면에서는 한 덩어리로 이어지고, 넓은 화면에서는
+    /// 주 행동과 보조 행동을 두 열로 나눠 죽은 공간을 만들지 않는다.
     private var missionBlock: some View {
+        VStack(alignment: .leading,
+               spacing: vSize == .compact ? Tokens.Space.s3 : Tokens.Space.s4) {
+            missionLead
+            missionUtilities
+        }
+    }
+
+    /// 넓은 화면의 왼쪽 열: 오늘의 단일 주 행동과 즉시 읽을 수치만 둔다.
+    private var missionLead: some View {
         VStack(alignment: .leading,
                spacing: vSize == .compact ? Tokens.Space.s3 : Tokens.Space.s4) {
             MissionHeroCard(
@@ -2044,7 +2057,14 @@ struct HomeScreen: View {
                 .entrance(1)
 
             todayProgressStrip
+        }
+    }
 
+    /// 넓은 화면의 오른쪽 열: 확인할 일과 가벼운 바로가기를 먼저 묶는다.
+    /// 주간 기록은 이 묶음 바로 아래에 이어져 오른쪽 열의 빈 면을 채운다.
+    private var missionUtilities: some View {
+        VStack(alignment: .leading,
+               spacing: vSize == .compact ? Tokens.Space.s3 : Tokens.Space.s4) {
             if !todayAgenda.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("함께 확인할 일")

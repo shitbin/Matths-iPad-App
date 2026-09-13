@@ -32,6 +32,14 @@ assert(shortcuts.includes('today-community-shortcut'), 'community shortcut needs
 assert(app.includes('communityOrigin = oldValue'), 'community entry must preserve its navigation origin');
 assert(app.includes('StudentDestination.containing(communityOrigin).route'), 'community must keep the originating tab selected');
 assert(top.includes('case .community: store.route = store.communityOrigin'), 'community back fallback must return to its origin');
+const twoColumnStart = rootView.indexOf('private var twoColumnBody:');
+const twoColumnEnd = rootView.indexOf('private var todayAgenda:', twoColumnStart);
+assert(twoColumnStart >= 0 && twoColumnEnd > twoColumnStart, 'two-column today layout must exist');
+const twoColumn = rootView.slice(twoColumnStart, twoColumnEnd);
+assert(twoColumn.includes('missionLead'), 'left column must keep the primary mission and progress');
+assert(twoColumn.includes('missionUtilities'), 'right column must receive agenda and shortcuts');
+assert(twoColumn.indexOf('missionUtilities') < twoColumn.indexOf('weeklySection'), 'weekly status must follow the right-column actions');
+assert(twoColumn.lastIndexOf('arenaTeaser') > twoColumn.indexOf('weeklySection'), 'Arena must follow the balanced columns without an empty row');
 const learn = section('struct LearningHubScreen:', 'struct LearningRecordsScreen:');
 assert(!learn.includes('LearningPathBrowser()'), 'only one canonical course browser');
 for (const route of ['curriculum', 'assess', 'quickPractice', 'pro']) {
