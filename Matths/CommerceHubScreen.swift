@@ -372,7 +372,12 @@ struct CommerceHubScreen: View {
     }
 
     private func productSection(_ value: ServerAPI.CommerceStorefront) -> some View {
-        let appleCheckoutEnabled = value.appleCheckoutEnabled ?? value.checkoutEnabled
+        // 구버전 서버의 checkoutEnabled는 웹 KG이니시스 스위치다. 그 값을 Apple
+        // StoreKit 폴백으로 쓰면 웹 결제를 닫은 운영 서버에서 정상 App Store
+        // 상품까지 "판매 중지"로 오판한다. 새 서버가 Apple 전용 값을 명시하면
+        // 그것만 따르고, 필드가 없는 구버전 서버에서는 StoreKit 상품 조회 결과가
+        // 실제 구매 가능 여부를 결정하도록 기본 허용한다.
+        let appleCheckoutEnabled = value.appleCheckoutEnabled ?? true
         return VStack(alignment: .leading, spacing: compactHeight ? Tokens.Space.s3 : Tokens.Space.s5) {
             if compactHeight {
                 HStack(alignment: .firstTextBaseline, spacing: Tokens.Space.s3) {

@@ -32,6 +32,20 @@ fi
 grep -Fq 'AEAssessmentSession' "$AAC"
 grep -Fq 'AssessmentSecurityCoordinator' "$AAC"
 
+# 배치고사와 주간 공식 모의고사는 답안 저장·이탈 감사만 유지하고 시스템 단일 앱
+# 잠금에서는 제외한다. KICE와 Arena 경기 잠금만 남는다.
+python3 - "$AAC" <<'PY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r"static let lockedSurfaces: Set<String> = \[(.*?)\]", src, re.S)
+if not match:
+    raise SystemExit("AssessmentLockScope.lockedSurfaces not found")
+values = set(re.findall(r'"([^"]+)"', match.group(1)))
+expected = {"kice-exam", "goat-arena-match"}
+if values != expected:
+    raise SystemExit(f"unexpected system-lock surfaces: {sorted(values)}")
+PY
+
 # 화면 녹화·미러링 차단은 계속 살아 있어야 한다 — 이건 공개 API 로 되는 일이다.
 grep -Fq 'isCaptured' "$GUARD"
 

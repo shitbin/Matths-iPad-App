@@ -2,7 +2,7 @@
 //  Matths
 //
 //  ┌─────────────────────────── 디버그 전용 컴포넌트 ────────────────────────────┐
-//  │ 전역 디버그 바 — 홈·커리큘럼·평가센터·Pro·세션 모드 등 모든 화면 위에 뜬다. │
+//  │ 전역 디버그 바 — 일반 탐색 화면 위에만 뜨고 문제 풀이 세션에서는 숨긴다.       │
 //  │ 무당벌레 버튼을 누르면 퀵 액션이 펼쳐진다:                                  │
 //  │   시험   즉석 모의고사 시작 (전 유형 · 4문항 · 시각 시드)                   │
 //  │   정답   현재 문항을 정답으로 채점 (실경로: 대조→코치→결과)                 │
@@ -42,7 +42,11 @@ struct DebugBar: View {
     @ObservedObject private var hint = DebugBarHint.shared
 
     var body: some View {
-        if reviewCapture { EmptyView() } else { bar }
+        // 열어 둔 디버그 칩은 iPad 가로 풀이의 답 입력·채점 바와 정확히 겹친다.
+        // Release에는 이 뷰가 없더라도, 실기 검수용 Debug 설치본에서 답 입력을
+        // 막으면 검수 자체가 불가능하다. 풀이 화면에서는 항상 숨기고 일반 화면에서만
+        // 시험·데모 진입 도구로 사용한다.
+        if reviewCapture || store.isProblemSolvingRoute { EmptyView() } else { bar }
     }
 
     private var bar: some View {

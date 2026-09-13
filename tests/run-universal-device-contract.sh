@@ -12,6 +12,7 @@ canvas="$root/Matths/SolutionCanvas.swift"
 quick_practice="$root/Matths/QuickPracticeScreen.swift"
 placement_exam="$root/Matths/PlacementExamScreen.swift"
 goat_arena="$root/Matths/GoatArenaScreen.swift"
+debug_bar="$root/Matths/DebugBar.swift"
 
 # WHY: 예전에는 프로젝트 전체의 'TARGETED_DEVICE_FAMILY = "1,2";' 개수를 2로 셌다.
 # 위젯 확장(kr.matths.app.widget)이 생기면서 같은 줄이 4개가 되어 앱 타깃은 멀쩡한데
@@ -57,6 +58,10 @@ grep -Fq 'if !keyboardVisible && !usesSidebar(width: width) && !hasStaffWorkspac
 grep -Fq 'ProductExperience.enabled && store.workspace != .student && store.route == .academy' "$root_view"
 grep -Fq 'false // Student navigation stays in the bottom bar on iPhone and iPad.' "$root_view"
 grep -Fq 'keyboardVisible && verticalSizeClass == .compact' "$root_view"
+
+# 개발 검수본의 전역 디버그 바가 iPad 가로 답 입력·채점 바를 덮지 않아야 한다.
+# Release에서 빠진다는 사실만으로는 실제 기기 검수가 불가능한 문제를 막지 못한다.
+grep -Fq 'reviewCapture || store.isProblemSolvingRoute' "$debug_bar"
 
 # 퀵 연습 가로 화면은 문제/메모/답/제출을 한 화면에 두되, 메모판을 단순 장식처럼
 # 얕게 만들지 않는다. 제목은 도구막대에 합쳐 76pt 필기 면을 확보한다.

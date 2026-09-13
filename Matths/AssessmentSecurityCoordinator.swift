@@ -29,7 +29,7 @@
 //  있는지 알 수 없게 되고, 그건 보호가 아니라 착각이다.
 //
 //  ## 2026-08-18: 배선했다. 그리고 **콘텐츠 게이팅은 아직 켜지 않았다**
-//  `ScreenshotGuard` 가 시험 화면(주간모의고사·배치고사·KICE·아레나 경기)이 뜰 때
+//  `ScreenshotGuard` 가 시스템 잠금 대상 시험 화면(KICE·아레나 경기)이 뜰 때
 //  `beginSecuredSession()`, 사라질 때 `endSecuredSession()` 을 부른다.
 //  `AssessmentLockScope` 가 그 목록의 유일한 진실원이다.
 //
@@ -133,18 +133,18 @@ enum AssessmentProtectionTier: Equatable, Sendable {
 /// 들여다보면 판정점이 둘이 되고, 언젠가 한쪽에만 화면이 추가된다. 등록된 이름
 /// 하나만 본다.
 ///
-/// **왜 전부가 아니라 이 넷인가.** AAC 는 기기를 단일 앱 모드로 잠근다 — 학생이
+/// **왜 전부가 아니라 이 둘인가.** AAC 는 기기를 단일 앱 모드로 잠근다 — 학생이
 /// 홈으로도 못 나간다. 그건 "시험 중" 에만 정당하다. 빠른 연습·풀이·결과 화면
 /// (`isProblemSolvingRoute` 의 나머지)까지 잠그면 공부하다 기기에 갇힌다.
 /// 보호 범위를 전 화면으로 넓혔다가 앱을 못 쓰게 만든 2026-08-17 사고와 같은 실수다.
 ///
-/// `assessment-paper`(시험지 사진 분석)는 뺀다 — 감독이 지정한 시험 넷에 없고,
+/// `assessment-paper`(시험지 사진 분석)는 뺀다 — 시스템 잠금 대상에 없고,
 /// 자기 시험지를 찍어 올려 분석하는 화면이라 기기를 잠글 이유가 없다.
 enum AssessmentLockScope {
-    /// 감독 지정: 주간모의고사 · 배치고사 · KICE · 아레나 경기.
+    /// 사용자가 앱 전환 제한을 유지하기로 한 범위: KICE · 아레나 경기.
+    /// 배치고사와 주간 공식 모의고사는 문제·답안 저장과 이탈 감사만 유지하고,
+    /// 다른 앱 사용을 막는 시스템 잠금에서는 제외한다.
     static let lockedSurfaces: Set<String> = [
-        "weekly-mock",
-        "placement-exam",
         "kice-exam",
         "goat-arena-match",
     ]
@@ -741,10 +741,12 @@ enum AssessmentSecuritySelfTest {
         double.endSecuredSession()
         histories.append(double.stateHistory.joined(separator: ">"))
 
-        // 6. 잠금 범위 — 시험 넷만 잠그고, 나머지 보호 화면은 잠그지 않는다.
+        // 6. 잠금 범위 — KICE·Arena 경기만 잠그고, 배치고사와 주간 공식
+        //    모의고사는 앱 전환을 허용한다. 나머지 보호 화면도 잠그지 않는다.
         //    "제어센터만 열어도 화면이 검게 덮이던" 2026-08-17 사고의 재발 방지선이다.
-        let mustLock = ["weekly-mock", "placement-exam", "kice-exam", "goat-arena-match"]
-        let mustNotLock = ["session", "assessment", "assessment-paper", "goat-arena", "protected"]
+        let mustLock = ["kice-exam", "goat-arena-match"]
+        let mustNotLock = ["weekly-mock", "placement-exam", "session", "assessment",
+                           "assessment-paper", "goat-arena", "protected"]
         let lockScopeMatchesExamSurfaces =
             mustLock.allSatisfy { AssessmentLockScope.locksSystem($0) }
             && mustNotLock.allSatisfy { !AssessmentLockScope.locksSystem($0) }
