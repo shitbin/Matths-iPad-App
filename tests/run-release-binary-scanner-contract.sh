@@ -68,6 +68,15 @@ update_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2
 printf '%s\n' "$update_output" | grep -Fq '공개 업데이트 링크(API 아님): https://apps.apple.com/app/id6803569629'
 printf '%s\n' "$update_output" | grep -Fq 'Release 바이너리 감사 통과'
 
+# KakaoOpenSDK links its exact Kakao Navi entry URL into the main executable.
+# It is a third-party SDK destination, not a second Matths API host.
+printf '\000%s\000%s\000' 'https://www.matths.kr/api/v1' \
+  'https://kakaonavi.kakao.com' > "$binary"
+kakao_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2>&1)
+printf '%s\n' "$kakao_output" | grep -Fq \
+  '카카오 SDK 공식 링크(API 아님): https://kakaonavi.kakao.com'
+printf '%s\n' "$kakao_output" | grep -Fq 'Release 바이너리 감사 통과'
+
 for rejected_url in \
   'https://apps.apple.com/app/id6803569630' \
   'https://apps.apple.com/app/id68035696290' \
@@ -83,6 +92,11 @@ for rejected_url in \
   'https://evil.test/apps.apple.com/app/id6803569629' \
   'https://www.apple.com/app/id6803569629' \
   'https://apps.apple.com/app/id6803569629/huggingface.co' \
+  'https://kakaonavi.kakao.com/' \
+  'https://kakaonavi.kakao.com/extra' \
+  'https://kakaonavi.kakao.com?next=evil.test' \
+  'https://kakaonavi.kakao.com.evil.test' \
+  'https://kakaonavi.kakao.com@evil.test' \
   'https://www.matths.kr.evil.test/app/id6803569629'; do
   printf '\000%s\000%s\000' 'https://www.matths.kr/api/v1' "$rejected_url" > "$binary"
   set +e
@@ -124,7 +138,7 @@ for debug_marker in \
 done
 printf '\000release-prefix\000%s\000release-suffix\000' \
   'https://www.matths.kr/api/v1' > "$binary"
-echo 'Exact App Store update URL, 15 URL rejection cases, canonical API requirement and 8 DEBUG byte markers passed'
+echo 'Exact App Store/Kakao SDK URLs, 20 URL rejection cases, canonical API requirement and 8 DEBUG byte markers passed'
 
 # 번들 용량 정책 양성 대조: 동봉 대상이 아닌 남성 음성이 하나라도 섞이면 닫혀야 한다.
 mkdir -p "$cm/assets/voice/stub-1"

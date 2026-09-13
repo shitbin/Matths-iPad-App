@@ -107,6 +107,10 @@ else
         # A public App Store Link opens the installed app's update page. It is
         # not an API host and does not satisfy the required canonical API URL.
         echo "  ✓ 공개 업데이트 링크(API 아님): $h" ;;
+      https://kakaonavi.kakao.com)
+        # KakaoOpenSDK 정적 라이브러리에 포함된 카카오내비 공식 진입 주소다.
+        # Matths API 호스트가 아니며, 경로·포트·query가 붙은 변형은 허용하지 않는다.
+        echo "  ✓ 카카오 SDK 공식 링크(API 아님): $h" ;;
       *)
         echo "  ✗ 운영 정본이 아닌 API 주소다: $h"
         echo "     → ServerAPI.defaultURL 을 https://www.matths.kr 로 고정한 뒤 다시 돌려라."
