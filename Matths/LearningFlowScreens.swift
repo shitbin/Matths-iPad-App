@@ -12,6 +12,7 @@ struct LearningFlowTopBar: View {
                     }
                     switch store.route {
                     case .commerce: store.route = store.commerceOrigin
+                    case .community: store.route = store.communityOrigin
                     case .notifications: store.route = store.notificationOrigin
                     case .hostedPortal: store.route = store.serviceOrigin
                     case .concept: store.route = .curriculum

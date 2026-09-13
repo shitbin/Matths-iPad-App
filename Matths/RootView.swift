@@ -2963,11 +2963,11 @@ private struct MissionHeroCard: View {
     }
 }
 
-/// ②-b 바로 가기 — 퀵 연습과 학원·서비스.
+/// ②-b 바로 가기 — 퀵 연습, 게시판과 학원·서비스.
 ///
 /// 주 CTA 바로 다음 자리이되 위계는 한 단계 아래다. 카드도 색 면도 쓰지 않는다:
 /// 홈의 흰 카드는 여전히 미션 히어로 하나이고, 이 줄은 히어로 아래에 붙은
-/// 평문 링크 두 개다(복습 미션의 "새 개념으로 바로 가기" 와 같은 문법).
+/// 평문 링크 세 개다(복습 미션의 "새 개념으로 바로 가기" 와 같은 문법).
 ///
 /// 퀵 연습이 먼저다. 쉬는 시간처럼 짧게 비는 때에 한 문항을 푸는 길이라
 /// 홈의 두 번째 행동이 된다. 종전에는 평가센터 맨 아래 "빠른 연습과 도구" 에만
@@ -2989,7 +2989,7 @@ private struct HomeShortcutRow: View {
 
     var body: some View {
         Group {
-            // 접근성 글자 크기에서는 두 칸을 세로로 푼다. 한 줄에 두 개를 유지하면
+            // 접근성 글자 크기에서는 세 칸을 세로로 푼다. 한 줄에 세 개를 유지하면
             // 이름이 두 글자마다 잘리거나 축소되어 결국 못 읽는다.
             if dynamicTypeSize.isAccessibilitySize {
                 stacked
@@ -3001,6 +3001,8 @@ private struct HomeShortcutRow: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .center, spacing: Tokens.Space.s3) {
                         quickPractice
+                        verticalHairline
+                        community
                         verticalHairline
                         services
                     }
@@ -3015,6 +3017,8 @@ private struct HomeShortcutRow: View {
     private var stacked: some View {
         VStack(alignment: .leading, spacing: 0) {
             quickPractice
+            horizontalHairline
+            community
             horizontalHairline
             services
         }
@@ -3038,6 +3042,15 @@ private struct HomeShortcutRow: View {
               icon: "square.grid.2x2.fill") {
             store.route = .services
         }
+    }
+
+    private var community: some View {
+        entry(title: "게시판",
+              detail: "질문과 학습 이야기 나누기",
+              icon: "text.bubble.fill") {
+            store.route = .community
+        }
+        .accessibilityIdentifier("today-community-shortcut")
     }
 
     private func entry(title: String, detail: String, icon: String,

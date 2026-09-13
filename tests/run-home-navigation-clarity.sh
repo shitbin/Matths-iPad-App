@@ -8,6 +8,8 @@ const path = require('node:path');
 const root = process.argv[2];
 const read = name => fs.readFileSync(path.join(root, 'Matths', name), 'utf8');
 const flow = read('LearningFlowScreens.swift');
+const rootView = read('RootView.swift');
+const app = read('MatthsApp.swift');
 const section = (from, to) => flow.slice(flow.indexOf(from), flow.indexOf(to));
 const top = section('struct LearningFlowTopBar:', 'struct LearningFlowSidebar:');
 assert(top.includes('PrimaryBrandIdentity()'));
@@ -20,6 +22,16 @@ const today = section('struct TodayLearningScreen:', 'struct LearningHubScreen:'
 assert(today.includes('TodayLearningOverview'));
 assert(today.includes('TodayDashboardPolicy.agenda'));
 assert(!today.includes('Button("다른 학습 보기")') && !today.includes('Button("학습 기록")'));
+const shortcutStart = rootView.indexOf('private struct HomeShortcutRow:');
+const shortcutEnd = rootView.indexOf('private struct HomeNotice:', shortcutStart);
+assert(shortcutStart >= 0 && shortcutEnd > shortcutStart, 'today shortcut section must exist');
+const shortcuts = rootView.slice(shortcutStart, shortcutEnd);
+assert(shortcuts.includes('entry(title: "게시판"'), 'today needs a direct community shortcut');
+assert(shortcuts.includes('store.route = .community'), 'community shortcut must open the native board');
+assert(shortcuts.includes('today-community-shortcut'), 'community shortcut needs a stable accessibility id');
+assert(app.includes('communityOrigin = oldValue'), 'community entry must preserve its navigation origin');
+assert(app.includes('StudentDestination.containing(communityOrigin).route'), 'community must keep the originating tab selected');
+assert(top.includes('case .community: store.route = store.communityOrigin'), 'community back fallback must return to its origin');
 const learn = section('struct LearningHubScreen:', 'struct LearningRecordsScreen:');
 assert(!learn.includes('LearningPathBrowser()'), 'only one canonical course browser');
 for (const route of ['curriculum', 'assess', 'quickPractice', 'pro']) {

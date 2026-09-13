@@ -593,6 +593,7 @@ final class AppStore: ObservableObject {
             // 기억해 두지 않으면 나갈 때 항상 한 곳으로 뱉어내고, 하단 탭도 엉뚱한
             // 자리에 불이 켜진다(홈에서 들어갔는데 GOAT Arena 가 켜지던 문제).
             if route == .commerce, oldValue != .commerce { commerceOrigin = oldValue }
+            if route == .community, oldValue != .community { communityOrigin = oldValue }
             if route == .services, oldValue != .services, oldValue != .academy,
                oldValue != .hostedPortal {
                 serviceOrigin = oldValue
@@ -632,6 +633,9 @@ final class AppStore: ObservableObject {
 
     /// 이용권·상점 화면에 들어오기 직전의 화면. 나갈 곳과 하단 탭 표시를 여기에 맞춘다.
     private(set) var commerceOrigin: Route = .profile
+    /// 게시판이 독립 탭이 아닌 새 내비게이션에서 어느 문맥으로 돌아갈지 보존한다.
+    /// 오늘 바로가기에서 열면 오늘 탭, 서비스 허브에서 열면 나 탭을 유지한다.
+    private(set) var communityOrigin: Route = .home
     private(set) var notificationOrigin: Route = .home
 
     /// 학원·서비스 허브에 들어오기 직전 화면. 홈과 프로필 어느 쪽에서 열어도 닫을 때
@@ -4031,6 +4035,7 @@ final class AppStore: ObservableObject {
         }
         if ProductExperience.enabled {
             if route == .commerce { return StudentDestination.containing(commerceOrigin).route }
+            if route == .community { return StudentDestination.containing(communityOrigin).route }
             if route == .notifications { return StudentDestination.containing(notificationOrigin).route }
             return StudentDestination.containing(route).route
         }
