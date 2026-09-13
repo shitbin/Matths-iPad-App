@@ -130,7 +130,9 @@ enum AnimationCompletionCriteria {case logicallyComplete}
             precondition(store.route == .rank && flow.visible)
             precondition(TutorialFocusRequestCenter.current?.ownerID == flow.ownerID)
             precondition(TutorialFocusRequestCenter.current?.target == .arenaMatchmaking)
-            precondition(TutorialFocusRequestCenter.current?.animated == motion)
+            // 튜토리얼 패널과 화면이 함께 움직이는 시각적 왕복을 막기 위해
+            // 실제 포커스 이동은 사용자 모션 설정과 무관하게 즉시 처리한다.
+            precondition(TutorialFocusRequestCenter.current?.animated == false)
             count += 1
         }
         do {

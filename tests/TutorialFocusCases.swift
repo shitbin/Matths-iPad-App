@@ -38,9 +38,8 @@ import CoreGraphics
         check(resolve([button], clips: [.zero]) == .offscreen, "Unavailable viewport fails closed")
         check(resolve([CGRect(x: -1, y: 180, width: 394, height: 52)]).frame?.minX == 0,
               "Subpixel boundary tolerance never draws outside viewport")
-        check(!G.placeCoachAbove(target: button, viewport: phone), "Top target gets bottom coach")
-        check(G.placeCoachAbove(target: CGRect(x: 20, y: 740, width: 353, height: 52), viewport: phone),
-              "Bottom target gets top coach")
+        check(G.coachPlacement(viewport: phone) == .bottom,
+              "Portrait coach stays bottom regardless of target")
         for viewport in [
             CGRect(x: 0, y: 0, width: 852, height: 393),
             CGRect(x: 0, y: 0, width: 667, height: 375),
@@ -53,13 +52,21 @@ import CoreGraphics
             check(actual == measured.insetBy(dx: -6, dy: -6), "Rotation/Split View preserves supplied measured bounds")
         }
         let landscape = CGRect(x: 0, y: 0, width: 852, height: 393)
-        check(G.coachPlacement(target: CGRect(x: 20, y: 80, width: 260, height: 48), viewport: landscape) == .right,
-              "Use real right-side space for landscape coach")
-        check(G.coachPlacement(target: CGRect(x: 600, y: 80, width: 220, height: 48), viewport: landscape) == .left,
-              "Use real left-side space for landscape coach")
-        check(G.coachPlacement(target: CGRect(x: 20, y: 80, width: 810, height: 48), viewport: landscape) == .bottom,
-              "Full-width target has no invented side space")
-        check(G.coachPlacement(target: nil, viewport: landscape) == .bottom, "Missing anchor has stable coach fallback")
+        check(G.coachPlacement(viewport: landscape) == .right,
+              "Landscape coach has one stable trailing rail")
+        check(G.coachPlacement(viewport: CGRect(x: 0, y: 0, width: 1366, height: 1024)) == .right,
+              "iPad landscape keeps the same trailing placement")
+        check(G.coachPlacement(viewport: CGRect(x: 0, y: 0, width: 768, height: 1024)) == .bottom,
+              "Portrait and tall Split View keep the same bottom placement")
+        check(G.coachPlacement(viewport: .zero) == .bottom, "Invalid viewport has stable bottom fallback")
+        check(G.contentReserve(viewport: landscape) == CGSize(width: 356, height: 0),
+              "Regular landscape reserves the complete tutorial rail")
+        check(G.contentReserve(viewport: CGRect(x: 0, y: 0, width: 667, height: 375)) == CGSize(width: 347, height: 0),
+              "Small landscape preserves a 320pt application viewport")
+        check(G.contentReserve(viewport: phone) == CGSize(width: 0, height: 300),
+              "Portrait reserves a stable bottom dock")
+        check(G.focusedDimOpacity < 0.5 && G.transitionalDimOpacity < G.focusedDimOpacity,
+              "Tutorial remains readable and never flashes to a stronger full-screen dim")
         let ownerA = UUID(), ownerB = UUID()
         TutorialFocusRequestCenter.request(.arenaMatchmaking, ownerID: ownerA, animated: true)
         let first = TutorialFocusRequestCenter.current!
@@ -79,6 +86,6 @@ import CoreGraphics
         TutorialFocusRequestCenter.cancel(ownerID: ownerA)
         check(TutorialFocusRequestCenter.current?.id == ownedByB.id, "New account request survives old cleanup")
         TutorialFocusRequestCenter.cancel(ownerID: ownerB)
-        print("Tutorial focus real-bounds, clipping, adaptive coach and owner lifecycle: PASS (\(count) cases)")
+        print("Tutorial focus real-bounds, clipping, stable coach rail and owner lifecycle: PASS (\(count) cases)")
     }
 }

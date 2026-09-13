@@ -72,7 +72,17 @@ struct RootView: View {
     }
 
     var body: some View {
-        GeometryReader { viewport in rootContent(width: viewport.size.width) }
+        GeometryReader { viewport in
+            let viewportRect = CGRect(origin: .zero, size: viewport.size)
+            let reserve = store.isTutorialPresentationActive
+                ? TutorialFocusGeometry.contentReserve(viewport: viewportRect)
+                : .zero
+            rootContent(width: max(0, viewport.size.width - reserve.width))
+                // 튜토리얼 패널은 이 빈 레일에 고정된다. 패널이 대상을 덮어서
+                // 다시 반대편으로 튀는 일을 막고, 본문·탭도 실제로 계속 보이게 한다.
+                .padding(.trailing, reserve.width)
+                .padding(.bottom, reserve.height)
+        }
     }
 
     private func rootContent(width: CGFloat) -> some View {
@@ -104,7 +114,7 @@ struct RootView: View {
         .preferredColorScheme(store.isArenaRoute ? .dark : nil)
         .environment(\.colorScheme, store.isArenaRoute ? .dark : systemColorScheme)
         // 페이지 전환 애니메이션 — 모션 꺼짐/동작 줄이기에서는 nil 로 즉시 전환
-        .animation(store.motionOn && !reduceMotion
+        .animation(store.motionOn && !reduceMotion && !store.isTutorialPresentationActive
                    ? .spring(response: 0.35, dampingFraction: 0.9) : nil,
                    value: store.route)
         // 화면이 바뀌면 접힘을 푼다. 새 화면의 스크롤 위치와 무관하게, 도착하자마자
@@ -1147,13 +1157,12 @@ struct NativeTutorialOverlay: View {
                 GeometryReader { proxy in
                     let step = steps[stepIndex]
                     let resolution = focusResolution(for: step.target, proxy: proxy)
-                    let candidates = targets[step.target] ?? []
-                    let rawTarget = candidates.count == 1 ? proxy[candidates[0].bounds] : nil
                     ZStack {
                         if spotlightVisible, let target = resolution.frame,
                            TutorialFocusGeometry.isFinite(coachBounds) {
                             TutorialDimShape(spotlight: target)
-                                .fill(Color.black.opacity(0.72), style: FillStyle(eoFill: true))
+                                .fill(Color.black.opacity(TutorialFocusGeometry.focusedDimOpacity),
+                                      style: FillStyle(eoFill: true))
                                 .allowsHitTesting(false)
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .stroke(Tokens.brandCyan, lineWidth: 3)
@@ -1162,7 +1171,9 @@ struct NativeTutorialOverlay: View {
                                 .shadow(color: Tokens.brandCyan.opacity(0.45), radius: 10)
                                 .allowsHitTesting(false)
                         } else {
-                            Color.black.opacity(0.72)
+                            // 새 라우트의 실제 target anchor가 잡히기 전에도 화면을
+                            // 거의 검게 만들지 않는다. 카드는 계속 보여 맥락을 잃지 않는다.
+                            Color.black.opacity(TutorialFocusGeometry.transitionalDimOpacity)
                         }
 
                         tutorialCard(
@@ -1170,7 +1181,7 @@ struct NativeTutorialOverlay: View {
                             proxy: proxy,
                             resolution: resolution,
                             placement: TutorialFocusGeometry.coachPlacement(
-                                target: rawTarget, viewport: CGRect(origin: .zero, size: proxy.size)))
+                                viewport: CGRect(origin: .zero, size: proxy.size)))
                     }
                     .coordinateSpace(name: "NativeTutorialOverlay")
                     .onPreferenceChange(TutorialCoachBoundsPreference.self) { coachBounds = $0 }
@@ -1233,8 +1244,10 @@ struct NativeTutorialOverlay: View {
         let alignment: Alignment = switch placement {
         case .top: .top
         case .bottom: .bottom
-        case .left: .leading
-        case .right: .trailing
+        // 가로 화면은 상단 모서리, 세로 화면은 하단 기준선을 고정한다.
+        // 문장 길이가 달라져 카드 높이가 변해도 기준점이 매 단계 움직이지 않는다.
+        case .left: .topLeading
+        case .right: .topTrailing
         }
             Group {
                 if compact {
@@ -1385,7 +1398,7 @@ struct NativeTutorialOverlay: View {
         recordFocusDiagnostic("focus_requested")
         guard let owner = runOwner, owns(owner), steps.indices.contains(stepIndex) else { return }
         TutorialFocusRequestCenter.request(steps[stepIndex].target, ownerID: owner.id,
-                                           animated: !reduceMotion && store.motionOn)
+                                           animated: false)
     }
 
     @MainActor
@@ -1506,12 +1519,14 @@ struct NativeTutorialOverlay: View {
         recordFocusDiagnostic("settle_entered", owner: owner)
         guard owns(owner) else { return }
         spotlightVisible = false
-        withAnimation(reduceMotion || !store.motionOn ? nil : .easeOut(duration: 0.2)) {
-            store.route = route
-        }
-        // SwiftUI may retire the route animation before its completion is
-        // delivered. Actual target anchors and didMoveToWindow, not a visual
-        // animation callback or fixed delay, decide when focus is available.
+        // 튜토리얼 자체가 이미 시선을 유도한다. 페이지 전환과 자동 스크롤까지
+        // 동시에 움직이면 대상·카드·화면이 서로 쫓아가는 느낌이 나므로 즉시 전환한다.
+        // nil 트랜잭션은 전환을 움직이지 않게 하면서, route 대입 직후 계정·역할·
+        // 튜토리얼 lease가 바뀌는 경계는 아래 소유권 guard가 계속 검증하게 한다.
+        withAnimation(nil) { store.route = route }
+        // 라우트 대입은 즉시 끝나도 새 화면의 SwiftUI/UIKit 계층은 다음 layout에서
+        // 완성될 수 있다. 시각 효과나 고정 지연이 아니라 실제 target anchor와
+        // didMoveToWindow가 포커스 가능한 시점을 결정한다.
         guard owns(owner), run != nil, store.route == route else {
             recordFocusDiagnostic("settle_rejected", owner: owner)
             return

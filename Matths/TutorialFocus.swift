@@ -103,17 +103,32 @@ enum TutorialFocusGeometry {
         }
         return .visible(target.insetBy(dx: -6, dy: -6).intersection(visibleRegion))
     }
-    static func placeCoachAbove(target: CGRect?, viewport: CGRect) -> Bool {
-        guard let target, isFinite(target), isFinite(viewport) else { return false }
-        return target.minY - viewport.minY > viewport.maxY - target.maxY
+    /// 튜토리얼 카드 위치는 강조 대상이 아니라 현재 창의 방향으로만 정한다.
+    /// 대상마다 빈 공간을 다시 계산하면 다음을 누를 때 카드가 좌우·상하로 왕복해
+    /// 사용자가 설명이 아니라 카드 위치를 다시 찾게 된다. 회전이나 창 크기 변경
+    /// 때만 위치가 바뀌고, 같은 화면 방향에서는 투어가 끝날 때까지 고정된다.
+    static func coachPlacement(viewport: CGRect) -> CoachPlacement {
+        guard isFinite(viewport) else { return .bottom }
+        return viewport.width > viewport.height ? .right : .bottom
     }
-    static func coachPlacement(target: CGRect?, viewport: CGRect) -> CoachPlacement {
-        guard let target, isFinite(target), isFinite(viewport) else { return .bottom }
-        let left = target.minX - viewport.minX
-        let right = viewport.maxX - target.maxX
-        if viewport.width > viewport.height, max(left, right) >= 356 {
-            return left > right ? .left : .right
+
+    /// 고정된 카드가 실제 조작 대상 위를 덮지 않도록 앱 본문이 비워 둘 공간.
+    /// 작은 가로 창에서도 본문 폭 320pt, 작은 세로 창에서도 본문 높이 360pt는
+    /// 남긴다. 따라서 Split View와 iPhone 가로에서도 화면을 카드 뒤로 숨기지 않는다.
+    static func contentReserve(viewport: CGRect) -> CGSize {
+        guard isFinite(viewport) else { return .zero }
+        switch coachPlacement(viewport: viewport) {
+        case .right:
+            return CGSize(width: max(0, min(356, viewport.width - 320)), height: 0)
+        case .bottom:
+            return CGSize(width: 0, height: max(0, min(300, viewport.height - 360)))
+        case .top, .left:
+            return .zero
         }
-        return placeCoachAbove(target: target, viewport: viewport) ? .top : .bottom
     }
+
+    /// 본문을 읽을 수 있게 유지하면서 현재 대상에는 충분한 대비를 주는 강도.
+    /// 대상 탐색/라우트 전환 중에는 더 옅게 유지해 순간적인 전체 암전을 막는다.
+    static let focusedDimOpacity = 0.38
+    static let transitionalDimOpacity = 0.18
 }
