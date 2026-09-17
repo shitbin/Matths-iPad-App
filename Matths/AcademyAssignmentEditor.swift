@@ -30,7 +30,7 @@ struct AcademyAssignmentEditor: View {
             Toggle("학생 온라인 답안 제출", isOn: enabled)
             if configuration?.enabled == true {
                 Stepper("총 \(safeCount)문항", value: questionCount, in: 1...100)
-                Text("학생은 모든 문항을 작성해 제출합니다. 채점과 마감 후 미제출 0점 처리는 서버가 담당합니다.")
+                Text("학생은 모든 문항을 작성해 제출합니다. 제출된 답안은 자동 채점되며, 마감 뒤 미제출은 0점 처리됩니다.")
                     .font(.mCaption).foregroundStyle(Tokens.text2)
                 DisclosureGroup("문항 유형과 선택지 설정") {
                     Stepper("시작 \(rangeStart)번", value: $rangeStart, in: 1...safeCount)
@@ -73,7 +73,7 @@ struct AcademyAssignmentEditor: View {
         .confirmationDialog("문항 수를 줄일까요?", isPresented: $confirmsResize, titleVisibility: .visible) {
             Button("문항 수 줄이기", role: .destructive) { if let pendingCount { resize(pendingCount) }; pendingCount = nil }
             Button("유지", role: .cancel) { pendingCount = nil }
-        } message: { Text("줄어드는 문항의 교사 정답이 편집 초안에서 삭제됩니다. 서버에는 저장을 눌러야 적용됩니다.") }
+        } message: { Text("줄어드는 문항의 교사 정답은 편집 초안에서 삭제됩니다. 저장하기 전까지 실제 과제에는 반영되지 않습니다.") }
     }
     private var enteredAnswers: Int { configuration?.answerKey.prefix(safeCount).filter { !AcademyAssignmentConfiguration.normalizedAnswer($0).isEmpty }.count ?? 0 }
     private func resize(_ count: Int) { configuration?.setQuestionCount(count) }

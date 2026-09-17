@@ -33,9 +33,8 @@ struct AuthScreen: View {
     /// 서버가 애플 교환 경로를 켰는가. **기본값 false** — 조회 전과 조회 실패는
     /// 모두 "모른다"이고, 모를 때는 그리지 않는다(refreshAppleAvailability 주석).
     @State private var appleAvailable = false
-    // 카카오도 같은 파이프, 같은 1:1 상태. 서버 왕복 방식은 Google 과 동일하고
-    // (ASWebAuthenticationSession + PKCE), 카카오 SDK 는 넣지 않았다
-    // — 이유는 KakaoSignInCoordinator 머리말에 있다.
+    // 카카오는 공식 SDK 인증 후 서버의 일회용 grant와 PKCE 교환을 거친다.
+    // 가입 정보가 필요한 계정은 같은 인증 시도를 유지한 네이티브 폼으로 이어진다.
     @StateObject private var kakaoSignIn = KakaoSignInCoordinator()
     @State private var kakaoBusy = false
     @State private var kakaoError: String?
@@ -44,6 +43,16 @@ struct AuthScreen: View {
     /// 서버가 카카오를 켰는가. 애플과 같은 이유로 **기본값 false** 다 —
     /// 눌러도 안 되는 버튼을 먼저 보여주면 학생은 자기 계정 문제로 읽는다.
     @State private var kakaoAvailable = false
+    private struct NativeRegistrationPresentation: Identifiable {
+        let context: NativeSocialRegistrationContext
+        let attemptID: UUID
+        let provider: String
+        var id: UUID { context.id }
+    }
+    @State private var nativeRegistration: NativeRegistrationPresentation?
+    #if DEBUG
+    @State private var didPresentNativeRegistrationCapture = false
+    #endif
     /// 애플 버튼 색은 라이트/다크가 반전된다(HIG). 토큰이 아니라 순수 흑백이라
     /// 색 결정을 위해 외관을 직접 읽는다.
     @Environment(\.colorScheme) private var colorScheme
@@ -77,18 +86,62 @@ struct AuthScreen: View {
         // iPhone 가로에서 page sheet의 드래그 제스처가 가입 폼 ScrollView를
         // 가로채면 학교·약관·가입 버튼에 도달할 수 없다. 인증은 독립 전체 화면이다.
         .fullScreenCover(isPresented: $showEmailAuth) { EmailAuthSheet() }
+        .fullScreenCover(item: $nativeRegistration) { presentation in
+            NativeSocialRegistrationScreen(context: presentation.context) { auth in
+                completeNativeRegistration(auth, presentation: presentation)
+            } onCancel: {
+                guard nativeRegistration?.id == presentation.id else { return }
+                if presentation.provider == "apple" { cancelAppleSignIn() }
+                else { cancelKakaoSignIn() }
+            }
+        }
         .onAppear {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-authSheetCapture") {
                 showEmailAuth = true
             }
+            if ProcessInfo.processInfo.arguments.contains("-nativeRegistrationCapture"), !didPresentNativeRegistrationCapture {
+                didPresentNativeRegistrationCapture = true
+                let attemptID = ServerAPI.beginAuthenticationAttempt()
+                let provider = ProcessInfo.processInfo.arguments.contains("-nativeRegistrationKakao") ? "kakao" : "apple"
+                let info = ServerAPI.NativeSocialRegistrationInfo(
+                    token: "capture-only-not-a-server-ticket", provider: provider,
+                    expiresAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(
+                        ProcessInfo.processInfo.arguments.contains("-nativeRegistrationExpired") ? -60 : 1800)),
+                    email: "sample@example.invalid", suggestedRealName: nil,
+                    termsVersion: "2026-08-13", privacyVersion: "2026-08-13")
+                if provider == "apple" { appleAttemptID = attemptID; appleBusy = true }
+                else { kakaoAttemptID = attemptID; kakaoBusy = true }
+                nativeRegistration = .init(context: .init(registration: info, codeVerifier: "capture-only"),
+                                           attemptID: attemptID, provider: provider)
+            }
             #endif
         }
         .onDisappear { cancelGoogleSignIn() }
-        // 위 한 줄은 계약 검사가 **문자열 그대로** 확인한다(run-server-authentication-
-        // ownership-contract.sh). 애플 취소는 합치지 말고 따로 체이닝한다.
-        .onDisappear { cancelAppleSignIn() }
-        .onDisappear { cancelKakaoSignIn() }
+        // 기존 Google 웹 인증의 종료 처리는 유지한다. Apple·카카오의
+        // 네이티브 인증 화면 전환은 아래 정책으로 별도 처리한다.
+        // Apple 시스템 시트와 카카오톡 앱 전환은 AuthScreen을
+        // 잠시 disappear 상태로 만들 수 있다. busy 중에 여기서
+        // 취소하면 정상 자격 증명 콜백을 스스로 폐기하고,
+        // 취소 오류를 무문구 처리하므로 로그인 화면에 그대로 남는다.
+        // 이메일 폼·다른 provider 선택은 이미 버튼 시점에 명시적으로
+        // cancel하므로, 여기서는 idle 상태의 진짜 teardown만 정리한다.
+        .onDisappear {
+            if NativeAuthenticationPresentationPolicy.shouldCancelOnAuthScreenDisappear(
+                isBusy: appleBusy,
+                sessionPublished: store.authProvider != nil
+            ) {
+                cancelAppleSignIn()
+            }
+        }
+        .onDisappear {
+            if NativeAuthenticationPresentationPolicy.shouldCancelOnAuthScreenDisappear(
+                isBusy: kakaoBusy,
+                sessionPublished: store.authProvider != nil
+            ) {
+                cancelKakaoSignIn()
+            }
+        }
         // 버튼을 그릴지 말지는 서버가 정한다. .task 는 진입에서 한 번 돌고
         // 화면을 벗어나면 스스로 취소된다.
         .task { await refreshSocialAvailability() }
@@ -113,11 +166,9 @@ struct AuthScreen: View {
 
     private var signInActions: some View {
         VStack(spacing: compactHeight ? Tokens.Space.s1 : Tokens.Space.s3) {
-            // 서버가 apple 을 configured 로 내려줄 때만 그린다. 지금 서버에는
-            // /api/v1/auth/apple/exchange 가 없다 — 버튼만 먼저 띄우면 학생이
-            // Face ID 까지 통과한 **뒤** 교환에서 실패하고, 그 순서는 "내 애플
-            // 계정에 문제가 있나" 로 읽힌다. 데모 모드는 픽스처가 configured 를
-            // 내려주므로 감독이 UI 를 볼 수 있다.
+            // 운영 서버의 provider 설정을 확인한 뒤 Apple 버튼을 표시한다.
+            // 네이티브 자격 증명은 /api/v1/auth/apple/exchange에서 검증한다.
+            // configured는 실제 계정 인증의 성공까지 보장하는 값은 아니다.
             if appleAvailable {
                 Button { startAppleSignIn() } label: {
                     HStack(spacing: Tokens.Space.s2) {
@@ -329,8 +380,14 @@ struct AuthScreen: View {
         store.clearAuthenticationNotice()
         appleTask = Task {
             do {
-                let auth = try await appleSignIn.signIn()
+                let result = try await appleSignIn.signIn()
                 guard appleAttemptID == attemptID else { return }
+                if case .registration(let context) = result {
+                    nativeRegistration = .init(context: context, attemptID: attemptID, provider: "apple")
+                    appleTask = nil
+                    return // Keep this attempt busy until native registration completes/cancels.
+                }
+                guard case .authenticated(let auth) = result else { return }
                 let entered = try await store.signInServer(auth, attemptID: attemptID)
                 guard appleAttemptID == attemptID else { return }
                 appleAttemptID = nil
@@ -363,6 +420,7 @@ struct AuthScreen: View {
     }
 
     private func cancelAppleSignIn() {
+        if nativeRegistration?.provider == "apple" { nativeRegistration = nil }
         AuthFlowDiagnostics.record("cancel_requested", attemptID: appleAttemptID)
         appleTask?.cancel()
         appleTask = nil
@@ -388,8 +446,14 @@ struct AuthScreen: View {
         store.clearAuthenticationNotice()
         kakaoTask = Task {
             do {
-                let auth = try await kakaoSignIn.signIn()
+                let result = try await kakaoSignIn.signIn()
                 guard kakaoAttemptID == attemptID else { return }
+                if case .registration(let context) = result {
+                    nativeRegistration = .init(context: context, attemptID: attemptID, provider: "kakao")
+                    kakaoTask = nil
+                    return
+                }
+                guard case .authenticated(let auth) = result else { return }
                 let entered = try await store.signInServer(auth, attemptID: attemptID)
                 guard kakaoAttemptID == attemptID else { return }
                 kakaoAttemptID = nil
@@ -422,6 +486,7 @@ struct AuthScreen: View {
     }
 
     private func cancelKakaoSignIn() {
+        if nativeRegistration?.provider == "kakao" { nativeRegistration = nil }
         AuthFlowDiagnostics.record("cancel_requested", attemptID: kakaoAttemptID)
         kakaoTask?.cancel()
         kakaoTask = nil
@@ -429,6 +494,42 @@ struct AuthScreen: View {
         kakaoSignIn.cancel()
         kakaoAttemptID = nil
         kakaoBusy = false
+    }
+
+    /// The native form never owns Keychain promotion. It returns an AuthResponse
+    /// to the same latest-attempt + account-slot boundary as ordinary login.
+    private func completeNativeRegistration(_ auth: AuthResponse,
+                                            presentation: NativeRegistrationPresentation) {
+        let attemptID = presentation.attemptID
+        let isApple = presentation.provider == "apple"
+        guard nativeRegistration?.id == presentation.id,
+              (isApple ? appleAttemptID : kakaoAttemptID) == attemptID else { return }
+        nativeRegistration = nil
+        let task = Task { @MainActor in
+            do {
+                try Task.checkCancellation()
+                guard (isApple ? appleAttemptID : kakaoAttemptID) == attemptID else { return }
+                let entered = try await store.signInServer(auth, attemptID: attemptID)
+                guard (isApple ? appleAttemptID : kakaoAttemptID) == attemptID else { return }
+                if !entered {
+                    ServerAPI.cancelAuthenticationAttempt(attemptID)
+                    let message = "기존 학습 기록을 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 로그인해 주세요."
+                    if isApple { appleError = message } else { kakaoError = message }
+                }
+            } catch {
+                AuthFlowDiagnostics.fail(error, attemptID: attemptID)
+                ServerAPI.cancelAuthenticationAttempt(attemptID)
+                guard (isApple ? appleAttemptID : kakaoAttemptID) == attemptID else { return }
+                if !(error is CancellationError) {
+                    let message = (error as? ServerAPIError)?.errorDescription ?? "로그인을 완료하지 못했습니다. 다시 시도해 주세요."
+                    if isApple { appleError = message } else { kakaoError = message }
+                }
+            }
+            guard (isApple ? appleAttemptID : kakaoAttemptID) == attemptID else { return }
+            if isApple { appleAttemptID = nil; appleBusy = false; appleTask = nil }
+            else { kakaoAttemptID = nil; kakaoBusy = false; kakaoTask = nil }
+        }
+        if isApple { appleTask = task } else { kakaoTask = task }
     }
 
     private func startGoogleSignIn() {

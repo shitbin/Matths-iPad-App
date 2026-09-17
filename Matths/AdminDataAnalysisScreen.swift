@@ -22,7 +22,7 @@ private final class AdminDataAnalysisModel: ObservableObject {
     notice = nil
     do {
       try await ServerAPI.rebuildAdminDataAnalysis(period: period)
-      notice = "\(period) 권위 원장을 다시 집계했습니다."
+      notice = "\(period) 원본 기록을 다시 집계했습니다."
       value = try await ServerAPI.adminDataAnalysis(period: period)
     } catch { self.error = readable(error) }
     rebuilding = false
@@ -66,7 +66,7 @@ struct AdminDataAnalysisScreen: View {
     .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     .task { await model.load() }
     .confirmationDialog(
-      "선택한 월의 전체 권위 원장을 다시 집계할까요?", isPresented: $confirmsRebuild, titleVisibility: .visible
+      "선택한 월의 전체 원본 기록을 다시 집계할까요?", isPresented: $confirmsRebuild, titleVisibility: .visible
     ) {
       Button("다시 집계") { Task { await model.rebuild() } }
       Button("취소", role: .cancel) {}
@@ -103,7 +103,7 @@ struct AdminDataAnalysisScreen: View {
           Image(systemName: "arrow.triangle.2.circlepath").frame(width: 44, height: 44)
         }
       }.buttonStyle(.plain).disabled(model.rebuilding || model.value == nil).accessibilityLabel(
-        "원장에서 다시 집계")
+        "원본 기록에서 다시 집계")
     }.padding(.horizontal, 14).padding(.vertical, 8).background(Tokens.surface)
   }
 

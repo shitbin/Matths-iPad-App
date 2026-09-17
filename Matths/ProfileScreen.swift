@@ -383,7 +383,7 @@ struct ProfileScreen: View {
 
             // 학년 선택 — 3월 1일 학년도 기준 자동 승급 (웹 생애주기 규칙)
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                SectionRule(title: "학년, GOAT Arena 리그 기준, 매년 3월 1일 자동 승급")
+                SectionRule(title: "학년 및 현재 상태")
                 // **서버 계정은 학년을 앱에서 바꾸지 않는다.**
                 //
                 // 여기서 고른 값은 UserDefaults 에만 저장되고 서버로 가지 않았다.
@@ -416,12 +416,23 @@ struct ProfileScreen: View {
             }
             .entrance(2)
 
-            // 학교 — 경쟁전(학교 리그)의 기반. 전국 2,403개교(나이스) 목록에서만 고른다.
-            VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-                SectionRule(title: "내 학교, 학교 리그 기준")
-                SchoolPickerRow()
+            if store.schoolGrade == 14 {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    SectionRule(title: "내 대학교")
+                    Label(store.serverProfile?.university?.name ?? "대학교 정보를 확인하고 있습니다", systemImage: "building.columns")
+                        .font(.mBody).foregroundStyle(Tokens.ink)
+                    if let campus = store.serverProfile?.university?.campus, !campus.isEmpty {
+                        Text(campus).font(.mCaption).foregroundStyle(Tokens.text3)
+                    }
+                }
+                .entrance(3)
+            } else if (10...12).contains(store.schoolGrade) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s3) {
+                    SectionRule(title: "내 학교, 학교 리그 기준")
+                    SchoolPickerRow()
+                }
+                .entrance(3)
             }
-            .entrance(3)
 
             // 학습 통계
             VStack(alignment: .leading, spacing: Tokens.Space.s3) {
@@ -1028,7 +1039,7 @@ struct ProfileScreen: View {
     /// 동기화 상태 문장 — 좁은 폭에서는 버튼과 위아래로 갈라진다.
     private var syncStatusCopy: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("서버 동기화").font(.mBody).foregroundStyle(Tokens.text1)
+            Text("학습 기록 동기화").font(.mBody).foregroundStyle(Tokens.text1)
             Text(syncStatusLine).font(.mCaption).foregroundStyle(Tokens.text3)
                 .fixedSize(horizontal: false, vertical: true)
             if let e = sync.lastError {
@@ -1280,7 +1291,9 @@ struct ProfileScreen: View {
     }
 
     private var gradeCaption: some View {
-        Text("서버 기준, 매년 3월 1일 자동 승급")
+        Text((10...12).contains(store.schoolGrade)
+             ? "고등학생 학년은 매년 3월 1일 자동 반영됩니다"
+             : "가입할 때 선택한 학습자 구분입니다")
             .font(.mCaption).foregroundStyle(Tokens.text4)
     }
 
@@ -1333,12 +1346,12 @@ struct ProfileScreen: View {
     private var syncStatusLine: String {
         let queuePart = sync.pending == 0 ? "보낼 기록 없음" : "보낼 기록 \(sync.pending)건"
         guard let at = sync.lastSyncedAt else {
-            return "\(queuePart), 이번 실행에서 아직 동기화 성공 없음"
+            return "\(queuePart) · 앱을 연 뒤 아직 동기화를 완료하지 못했습니다"
         }
         let f = RelativeDateTimeFormatter()
         f.locale = Locale(identifier: "ko_KR")
         f.unitsStyle = .short
-        return "\(queuePart), 마지막 성공 \(f.localizedString(for: at, relativeTo: Date()))"
+        return "\(queuePart) · 마지막 동기화 \(f.localizedString(for: at, relativeTo: Date()))"
     }
 }
 

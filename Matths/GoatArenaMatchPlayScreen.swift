@@ -397,7 +397,7 @@ struct GoatArenaMatchPlayScreen: View {
             } }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("이 기기의 Arena 답안 초안 목록 원본을 별도로 보관합니다. 저장되지 않은 답안을 임의로 전송하지 않고 서버의 현재 답안을 다시 확인합니다.")
+            Text("이 기기의 Arena 답안 초안 원본을 별도로 보관한 뒤 서버에 저장된 답안을 불러옵니다. 아직 저장하지 않은 답안은 전송하지 않습니다.")
         }
         .confirmationDialog(
             "답안을 제출할까요?",
@@ -1020,8 +1020,8 @@ struct GoatArenaMatchPlayScreen: View {
                         .foregroundStyle(Tokens.ink)
 
                     Text(submission.evidenceRequired == true
-                         ? "답안과 인앱 풀이판을 서버가 원본 증거로 자동 확정하고 있습니다. 별도 사진 제출은 필요하지 않습니다."
-                         : "서버가 두 참가자의 답안과 풀이판을 같은 기준으로 검토하고 있습니다. 상대 결과와 무결성 판정이 끝나기 전에는 점수나 승패를 미리 표시하지 않습니다.")
+                         ? "답안과 앱에서 작성한 풀이판을 풀이 증거로 저장하고 있습니다. 별도 사진 제출은 필요하지 않습니다."
+                         : "두 참가자의 답안과 풀이판을 같은 기준으로 검토하고 있습니다. 상대 결과와 경기 기록 검토가 끝나면 점수와 승패를 확인할 수 있습니다.")
                         .font(.mCallout)
                         .foregroundStyle(Tokens.text2)
                         .fixedSize(horizontal: false, vertical: true)

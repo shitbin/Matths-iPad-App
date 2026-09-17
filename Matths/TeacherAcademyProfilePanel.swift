@@ -114,7 +114,7 @@ struct TeacherAcademyProfilePanel: View {
             }
             Label("JPG · PNG · WEBP, 최대 5MB", systemImage: "checkmark.shield")
                 .font(.mCaption).foregroundStyle(Tokens.text2)
-            Text("앱에서 1:1로 자른 뒤 서버가 파일 내용과 크기를 다시 검사하고 512×512 WEBP로 변환합니다. 일반 선생님은 대표 사진을 변경할 수 없습니다.")
+            Text("앱에서 사진을 1:1로 자르면 파일 형식과 크기를 확인한 뒤 512×512 WEBP로 저장합니다. 이 화면에서는 원장만 대표 사진을 바꿀 수 있습니다.")
                 .font(.mMicro).foregroundStyle(Tokens.text3)
                 .fixedSize(horizontal: false, vertical: true)
             if let notice = model.noticeMessage {

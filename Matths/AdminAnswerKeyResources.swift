@@ -12,17 +12,17 @@ enum AdminAnswerKeyResource: String, CaseIterable, Identifiable {
     func validate(_ data: Data, mime: String?, checksum: String?) throws {
         guard !data.isEmpty, data.count <= Self.maximumBytes, mime?.lowercased() == self.mime,
               let checksum, checksum.lowercased() == SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() else {
-            throw ServerAPIError(message: "서버 원본 자료의 형식 또는 무결성을 확인하지 못했습니다. 다시 내려받아 주세요.")
+            throw ServerAPIError(message: "자료 형식이나 무결성을 확인하지 못했습니다. 다시 내려받아 주세요.")
         }
         if self == .skeleton {
             guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   value["schemaVersion"] as? String == "matths-answer-key-v3",
                   (value["questions"] as? [[String: Any]])?.count == 30 else {
-                throw ServerAPIError(message: "최신 v3 답지 스켈레톤이 아닙니다. 서버 원본을 확인해 주세요.")
+                throw ServerAPIError(message: "최신 v3 답지 양식이 아닙니다. 원본 자료를 확인해 주세요.")
             }
         } else {
             guard let text = String(data: data, encoding: .utf8), text.contains("# AI 주간 모의고사 개념 카탈로그") else {
-                throw ServerAPIError(message: "개념 카탈로그 원본을 확인할 수 없습니다.")
+                throw ServerAPIError(message: "개념 카탈로그 원본을 읽을 수 없습니다.")
             }
         }
     }

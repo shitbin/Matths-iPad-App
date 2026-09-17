@@ -1083,7 +1083,7 @@ private struct AdminUserActionSheet: View {
                     Text("주간 모의고사 이용권").tag("MOCK_EXAM_ONLY")
                     Text("29일 학습권 패키지").tag("LEARNING_PACKAGE")
                 }
-                Text("미정산 경기나 예치·예약 학습일수가 있으면 서버가 변경을 차단합니다.").font(.mCaption)
+                Text("미정산 경기나 예치·예약 학습일수가 있으면 권한을 변경할 수 없습니다.").font(.mCaption)
             }
             reasonField("패키지 변경 사유")
         case .withdraw:
@@ -1173,7 +1173,7 @@ private struct AdminUserActionSheet: View {
             return [.init(label: target, before: originalForm.emailEnabled ? "이메일 알림 사용" : "이메일 알림 끔", after: form.emailEnabled ? "이메일 알림 사용" : "이메일 알림 끔"),
                     .init(label: "학습·미접속 기준", before: "\(originalForm.minimumMinutesPerDay)분 / \(originalForm.inactivityDays)일", after: "\(form.minimumMinutesPerDay)분 / \(form.inactivityDays)일")]
         case .package:
-            return [.init(label: target, before: "현재 서버 권한(이 화면에서 재조회하지 않음)", after: form.packageType)]
+            return [.init(label: target, before: "현재 권한(이 화면에서는 확인하지 않음)", after: form.packageType)]
         case .notification, .email:
             return [.init(label: target, before: "이번 메시지 미전송", after: "\(form.title)\n\(form.message)")]
         case .passwordReset:

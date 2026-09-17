@@ -664,7 +664,7 @@ struct PlacementExamScreen: View {
 
                     Text(result.verificationRequired
                          ? "추가 실력 확인이 필요합니다. 이어서 4문항을 완료해 주세요."
-                         : "이 결과는 서버의 동일한 배치 규칙으로 확정되었습니다. 이후 MMR과 Arena Position은 서로 다른 기준으로 갱신됩니다.")
+                         : "같은 배치 규칙에 따라 결과를 확정했습니다. 이후 MMR과 Arena Position은 서로 다른 기준으로 갱신됩니다.")
                         .font(.mCallout).foregroundStyle(Tokens.text2)
                         .multilineTextAlignment(.center)
 

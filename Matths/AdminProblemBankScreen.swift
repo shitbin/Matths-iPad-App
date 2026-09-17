@@ -70,7 +70,7 @@ struct AdminProblemBankScreen: View {
       if let notice = model.notice { banner(notice, Tokens.successInk, "checkmark.circle.fill") }
       if model.loading && model.value == nil {
         Spacer()
-        ProgressView("문제 데이터 원장을 불러오는 중입니다")
+        ProgressView("문제 데이터를 불러오는 중입니다")
         Spacer()
       } else if let value = model.value {
         switch area {
@@ -175,7 +175,7 @@ struct AdminProblemBankScreen: View {
           .buttonStyle(.bordered)
         Button("서버 생성기 검산·동기화") {
           Task {
-            _ = await model.perform("서버 생성기를 검산해 DB 리비전에 동기화했습니다.") {
+            _ = await model.perform("문제 생성기를 검산해 저장된 리비전을 갱신했습니다.") {
               try await ServerAPI.syncAdminProblemTypes()
             }
           }
@@ -217,7 +217,7 @@ struct AdminProblemBankScreen: View {
               Text("\(item.engineKey) · r\(item.revision)").font(.mMicro).foregroundStyle(
                 Tokens.text3)
               if item.codeChanged {
-                Label("서버 소스 변경 감지", systemImage: "exclamationmark.triangle.fill").font(.mMicro)
+                Label("문제 생성기 변경 감지", systemImage: "exclamationmark.triangle.fill").font(.mMicro)
                   .foregroundStyle(Tokens.warningInk)
               }
             }.padding(10).background(
@@ -254,12 +254,12 @@ struct AdminProblemBankScreen: View {
             Text(value.operatorNote).font(.mCaption).foregroundStyle(Tokens.text2)
           }
           if value.codeChanged {
-            Text("서버 코드가 DB 스냅샷 이후 변경되었습니다. 동기화 전까지 이전 검산 리비전이 유지됩니다.").font(.mCaption)
+            Text("문제 생성기가 마지막 저장 이후 바뀌었습니다. 동기화 전까지 이전 검산 리비전이 유지됩니다.").font(.mCaption)
               .foregroundStyle(Tokens.warningInk).padding(9).background(
                 Tokens.warningSoft, in: RoundedRectangle(cornerRadius: 9))
           }
           if !value.sourceSnapshot.isEmpty {
-            Text("DB 보존 소스 · 실행하지 않는 감사 스냅샷").font(.mBodyB)
+            Text("저장된 소스 · 실행하지 않는 감사용 사본").font(.mBodyB)
             ScrollView(.horizontal) {
               Text(value.sourceSnapshot).font(.system(.caption, design: .monospaced)).textSelection(
                 .enabled
@@ -278,7 +278,7 @@ struct AdminProblemBankScreen: View {
         HStack {
           VStack(alignment: .leading) {
             Text("현재 적용 중인 Arena 문제 데이터").font(.mTitle)
-            Text("서버 재시작 없이 최대 15초 안에 신규 경기로 반영").font(.mCaption).foregroundStyle(Tokens.text2)
+            Text("저장한 변경은 서버 재시작 없이 최대 15초 안에 새 경기에 반영됩니다.").font(.mCaption).foregroundStyle(Tokens.text2)
           }
           Spacer()
           Button("새 초안 만들기") { editsData = true }.buttonStyle(.borderedProminent)
@@ -397,7 +397,7 @@ private struct AdminProblemTypeRevisionSheet: View {
         Toggle("신규 출제에 사용", isOn: $enabled)
         Stepper("출제 가중치 \(weight)", value: $weight, in: 1...100)
         TextField("변경 사유와 관찰 결과", text: $note, axis: .vertical).lineLimit(4...9)
-        Text("현재 서버 생성기를 5회 자동 검산한 뒤 이전 리비전을 보존하고 새 리비전을 적용합니다.").font(.mCaption).foregroundStyle(
+        Text("현재 문제 생성기를 5회 자동 검산합니다. 이전 리비전은 보관하고 검산이 끝나면 새 리비전을 적용합니다.").font(.mCaption).foregroundStyle(
           Tokens.warningInk)
       }.navigationTitle("문제 유형 설정").toolbar {
         ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } }

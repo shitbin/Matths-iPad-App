@@ -308,7 +308,7 @@ struct ServiceHubScreen: View {
                 .font(verticalSizeClass == .compact ? .mHeading : .mTitle)
                 .foregroundStyle(Tokens.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("공부 화면에 섞지 않은 관리·자료·지원 기능을 여기 모았습니다.")
+            Text("학원 관리, 자료실, 이용권과 고객 지원을 이용하세요.")
                 .font(.mCallout)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -579,7 +579,7 @@ struct HostedServicePortalScreen: View {
     private var loadingCard: some View {
         stateCard(icon: nil,
                   title: "\(destination.title)을 불러오는 중입니다",
-                  message: "로그인 상태를 안전하게 연결하고 있어요.") {
+                  message: "로그인 정보를 확인하고 있어요.") {
             ProgressView().tint(Tokens.primary)
         }
     }
@@ -596,7 +596,7 @@ struct HostedServicePortalScreen: View {
     private var loginCard: some View {
         stateCard(icon: "person.crop.circle.badge.exclamationmark",
                   title: "로그인이 필요합니다",
-                  message: "앱 계정으로 로그인하면 역할에 맞는 기능을 이어서 엽니다.") {
+                  message: "앱 계정으로 로그인하면 권한에 맞는 기능을 이용할 수 있습니다.") {
             Button("로그인 화면으로") { store.signOut() }
                 .buttonStyle(PrimaryButtonStyle())
         }

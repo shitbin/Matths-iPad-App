@@ -117,7 +117,7 @@ struct StaffChangeReview: View {
                     Section(reasonIsRecorded ? "서버에 기록할 사유" : "확인 메모") { Text(reason).font(.mBody) }
                 } else if !reasonIsRecorded {
                     Section {
-                        Text("이 작업의 서버 API는 별도 사유 입력을 지원하지 않습니다. 작업자와 변경 이력은 기존 서버 기록 정책을 따릅니다.")
+                        Text("이 작업에는 별도 사유가 저장되지 않습니다. 작업자와 변경 이력은 기존 기록 정책을 따릅니다.")
                             .font(.mMicro).foregroundStyle(Tokens.text3)
                     }
                 }

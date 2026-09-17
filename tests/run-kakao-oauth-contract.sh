@@ -2,10 +2,8 @@
 # 카카오 로그인이 구글과 **같은 길**을 지나게 묶는다.
 #
 # 막으려는 사고:
-#   카카오는 SDK 를 넣는 방법도 있다. 그 길로 새면 앱에 네이티브 키가 박히고,
-#   카카오톡 전환·웹 폴백 두 갈래가 생기며, 서버 PKCE 왕복을 우회해 토큰을
-#   기기에서 직접 다루게 된다. 그 순간 run-auth-screen-protection-contract.sh 가
-#   지키던 "소셜 교환은 서버를 지난다" 가 무너진다.
+#   SDK 인증이 끝나도 카카오 토큰을 맵쓰 세션으로 직접 사용하지 않는다.
+#   서버의 발급 앱·사용자 검증과 일회용 grant·PKCE 교환을 반드시 거친다.
 #
 #   또 하나: 콜백 경로를 확인하지 않으면 구글 왕복 결과가 카카오 로그인으로
 #   들어온다. 서버는 provider 별로 matths://oauth/<provider> 를 쓰는데,
@@ -23,19 +21,20 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 # ── 서버 PKCE 왕복을 탄다 ───────────────────────────────────────────────────
 grep -Fq 'ASWebAuthenticationSession' "$coordinator" \
   || fail "카카오가 ASWebAuthenticationSession 을 쓰지 않습니다."
-grep -Fq 'appendingPathComponent("/auth/kakao/app")' "$coordinator" \
-  || fail "카카오 앱 진입점(/auth/kakao/app)을 쓰지 않습니다."
-grep -Fq 'URLQueryItem(name: "code_challenge", value: codeChallenge)' "$coordinator" \
-  || fail "PKCE code_challenge 를 보내지 않습니다."
-grep -Fq 'ServerAPI.exchangeSocialAuthCode(' "$coordinator" \
+if grep -Fq 'appendingPathComponent("/auth/kakao/app")' "$coordinator"; then
+  fail "네이티브 개인정보 입력을 웹 가입 페이지로 우회합니다."
+fi
+grep -Fq 'codeChallenge: codeChallenge' "$coordinator" \
+  || fail "네이티브 인증에 PKCE challenge를 보내지 않습니다."
+grep -Fq 'ServerAPI.exchangeSocialAuthCode(' "$root/Matths/NativeSocialRegistrationContext.swift" \
   || fail "서버 교환 경로를 지나지 않습니다."
 
 # Native app switching is now supported, but Matths identity still comes from
 # the server's validated grant and PKCE exchange, never the SDK profile alone.
 grep -Fq 'UserApi.shared.loginWithKakaoTalk' "$root/Matths/KakaoNativeSignIn.swift"
-grep -Fq 'self.requestID == id' "$root/Matths/KakaoNativeSignIn.swift"
-grep -Fq 'ServerAPI.beginNativeKakaoLogin' "$coordinator"
-grep -Fq 'KAKAO_NATIVE_REGISTRATION_REQUIRED' "$coordinator"
+grep -Eq 'guard (self\.)?requestID == id, phase == callbackPhase' "$root/Matths/KakaoNativeSignIn.swift"
+grep -Fq 'ServerAPI.startNativeKakaoAuthentication' "$coordinator"
+grep -Fq 'NativeSocialRegistrationContext.resolve(response, provider: "kakao", codeVerifier: codeVerifier' "$coordinator"
 grep -Fq 'KakaoNativeSignIn.handle(url)' "$root/Matths/MatthsApp.swift"
 grep -Fq 'kakao54f59f482b5e69baaf8102c6f1433c1f' "$root/Info.plist"
 python3 - "$root/Info.plist" <<'PY'
@@ -48,8 +47,8 @@ assert any("kakao54f59f482b5e69baaf8102c6f1433c1f" in row["CFBundleURLSchemes"] 
 PY
 
 # ── 콜백은 카카오 것만 받는다 ───────────────────────────────────────────────
-grep -Fq 'callbackCode(callbackURL, expectedPath: "/kakao")' "$coordinator" \
-  || fail "로그인 콜백의 카카오 경로를 지정하지 않습니다."
+grep -Fq 'callbackCode(callbackURL, expectedPath: "/kakao-reauth")' "$coordinator" \
+  || fail "탈퇴 재인증 콜백의 카카오 경로를 지정하지 않습니다."
 grep -Fq 'callbackURL.path == expectedPath' "$coordinator" \
   || fail "콜백 경로를 확인하지 않습니다. 다른 provider 결과가 섞여 들어옵니다."
 grep -Fq 'callbackURL.host?.lowercased() == "oauth"' "$coordinator" \
@@ -76,8 +75,10 @@ grep -Fq '$0.key == "kakao" && $0.configured' "$auth_screen" \
 for token in 'kakaoAttemptID' 'cancelKakaoSignIn()' 'ServerAPI.beginAuthenticationAttempt()'; do
   grep -Fq "$token" "$auth_screen" || fail "$token 이 없습니다. 시도 격리가 깨집니다."
 done
-grep -Fq '.onDisappear { cancelKakaoSignIn() }' "$auth_screen" \
-  || fail "화면을 벗어날 때 카카오 세션을 접지 않습니다."
+grep -Fq 'NativeAuthenticationPresentationPolicy.shouldCancelOnAuthScreenDisappear(' "$auth_screen" \
+  || fail "카카오톡 앱 전환을 진짜 AuthScreen 종료와 구분하지 않습니다."
+grep -Fq 'isBusy: kakaoBusy' "$auth_screen" \
+  || fail "진행 중인 카카오 자격 증명을 disappear 시점에 보존하지 않습니다."
 
 # ── 조회는 한 번만 ──────────────────────────────────────────────────────────
 # 애플·카카오가 각각 물으면 진입마다 같은 요청이 두 번 나간다.

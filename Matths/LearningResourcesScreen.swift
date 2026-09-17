@@ -16,7 +16,7 @@ struct LearningResourcesScreen: View {
         VStack(alignment: .leading, spacing: Tokens.Space.s5) {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 Text("학습 도구와 자료").font(.mTitle).accessibilityAddTraits(.isHeader)
-                Text("필요한 자료를 찾거나, 막힌 문제를 함께 해결하세요.")
+                Text("필요한 자료를 찾거나 막힌 문제를 함께 해결하세요.")
                     .font(.mCallout).foregroundStyle(Tokens.text2)
             }
             section("공부에 필요한 도구", items: [.coach, .archive, .studyHall, .catalog])
@@ -74,7 +74,7 @@ struct LearningResourcesScreen: View {
             case .archive: "공개된 학습 자료와 파일"
             case .studyHall: "문제지 선택과 답안 작성"
             case .catalog: "학습에 필요한 콘텐츠 찾기"
-            case .community: "질문과 학습 경험 나누기"
+            case .community: "질문과 공부 경험 나누기"
             case .feedback: "제안한 내용과 답변 확인"
             case .parent: "별도 보호자 계정으로 자녀 연결"
             }

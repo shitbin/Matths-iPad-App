@@ -65,7 +65,7 @@ grep -q 'Button { ModelDownloader.shared.start() }' "$CHAT"
 grep -q 'private var compactTutorSetupCopy' "$CHAT"
 
 # 오래된 딥링크나 동기화 경합으로 응시가 사라져도 막다른 빈 상태에 가두지 않는다.
-grep -q '다른 기기에서 종료됐거나 저장된 응시 정보가 갱신됐을 수 있습니다' "$PAPER"
+grep -Fq '다른 기기에서 응시를 끝냈거나 응시 정보가 바뀌었을 수 있습니다.' "$PAPER"
 grep -q 'Button(returnLabel, action: closePaper)' "$PAPER"
 grep -q '"과목 학습으로 돌아가기" : "평가센터로 돌아가기"' "$PAPER"
 grep -q 'store.ownsCurrentAccountSession(account)' "$PAPER"
@@ -77,6 +77,23 @@ grep -q '.onChange(of: attempt.submittedAt)' "$PAPER"
 grep -q 'proxy.scrollTo(Self.paperTopAnchor, anchor: .top)' "$PAPER"
 grep -q 'private static let paperTopAnchor = "assessment-paper-top"' "$PAPER"
 grep -q '"\\(score) / 100점, \\(passed ? "통과" : "재응시"), "' "$PAPER"
+node - "$PAPER" <<'NODE'
+const fs = require('node:fs'), assert = require('node:assert/strict');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+function verify(source) {
+  const start = source.indexOf('Text("응시 정보를 찾을 수 없습니다")');
+  const end = source.indexOf('.padding(Tokens.Space.s6)', start);
+  assert(start >= 0 && end > start, 'missing-attempt recovery state removed');
+  const recovery = source.slice(start, end);
+  assert(recovery.includes('다른 기기에서 응시를 끝냈거나 응시 정보가 바뀌었을 수 있습니다.'), 'missing-attempt explanation removed');
+  assert(recovery.includes('Button(returnLabel, action: closePaper)'), 'missing-attempt recovery close action removed');
+}
+verify(source);
+const start = source.indexOf('Text("응시 정보를 찾을 수 없습니다")');
+const mutant = source.slice(0, start) + source.slice(start).replace('Button(returnLabel, action: closePaper)', 'Button(returnLabel, action: {})');
+assert.throws(() => verify(mutant), /recovery close action/);
+console.log('Missing assessment keeps its own close action; removing it is detected');
+NODE
 if grep -q 'Text(timer.display)' "$PAPER"; then
   echo "missing or submitted assessment must not display a running elapsed timer" >&2
   exit 1

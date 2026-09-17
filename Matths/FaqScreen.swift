@@ -199,7 +199,7 @@ struct FaqScreen: View {
             HStack(spacing: Tokens.Space.s2) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("도움말").font(.mTitle).foregroundStyle(Tokens.ink)
-                    Text("궁금한 내용을 검색하면 바로 답을 찾을 수 있어요.")
+                    Text("궁금한 내용을 검색해 답을 찾아보세요.")
                         .font(.mCaption).foregroundStyle(Tokens.text2).lineLimit(1)
                 }
                 Spacer(minLength: 4)

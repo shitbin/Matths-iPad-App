@@ -15,8 +15,8 @@ xcrun swiftc \
 
 "${TMPDIR:-/tmp}/matths-local-ai-recovery-tests"
 
-grep -Fq '운영체제가 허용하는 짧은 시간 동안만 이어집니다.' "$ROOT/Matths/ProScreen.swift"
-grep -Fq '같은 사진·모델의 완료 기록이 있으면 재사용' "$ROOT/Matths/ProScreen.swift"
+grep -Fq '다른 앱을 열면 잠시 후 분석이 중단될 수 있습니다.' "$ROOT/Matths/ProScreen.swift"
+grep -Fq '같은 사진·모델로 다시 시작하면 완료 기록을 재사용하고 남은 부분을 분석합니다.' "$ROOT/Matths/ProScreen.swift"
 grep -Fq 'LocalAIAnalysisJournal(image:' "$ROOT/Matths/SheetGrader.swift"
 # The shared language/output policy now wraps every stage schema. Require both
 # that policy and its actual use at the original/repair/cache boundaries.
@@ -25,6 +25,7 @@ grep -Fq 'return LocalModelOutputPolicy.isProblemAnalysisObjectAcceptable(object
 node - "$ROOT/Matths/SheetGrader.swift" <<'NODE'
 const fs = require('node:fs'), assert = require('node:assert/strict');
 const source = fs.readFileSync(process.argv[2], 'utf8');
+function verify(source) {
 function section(name, next) {
   const start = source.indexOf(`private func ${name}(`);
   const end = source.indexOf(next, start + 1);
@@ -46,6 +47,11 @@ assert(save.includes('schema.accepts(object)') && save.indexOf('schema.accepts(o
 const repair = section('repair', 'private static func modelPrompt(');
 assert(repair.includes('schema.requiredShapeDescription'));
 assert(repair.includes('schema.accepts(obj)') && repair.includes('throw SheetError('));
+}
+verify(source);
+const unsafeRestore = source.replace('guard schema.accepts(object)', 'guard true');
+assert.notEqual(unsafeRestore, source, 'checkpoint mutation anchor missing');
+assert.throws(() => verify(unsafeRestore), 'a cached object without stage-schema validation must fail');
 console.log('Recovery keeps generic output policy plus explicit stage schema on original, repair, restored and persisted objects');
 NODE
 grep -Fq 'params.shouldCancel = { callCancel.isSet }' "$ROOT/Matths/SheetGrader.swift"

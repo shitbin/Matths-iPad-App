@@ -5,13 +5,9 @@
 //
 //  네이티브 경로를 지원하는 서버에서는 카카오톡 인증을 먼저 사용한다.
 //  SDK 토큰만으로 Matths에 로그인하지 않고 서버가 발급 앱·사용자를 검증한다.
-//  신규 가입·이메일 연결은 기존 웹 절차를 유지하며 구형 서버도 그대로 지원한다.
-//
-//    앱 → GET  /auth/kakao/app?code_challenge=…   (ASWebAuthenticationSession)
-//        → 카카오 동의 → 서버 콜백
-//        → matths://oauth/kakao?code=…            (딥링크로 앱 복귀)
-//    앱 → POST /api/v1/auth/social/exchange       (code + codeVerifier)
-//        → AuthResponse
+//  본인 인증 뒤 가입 정보 입력은 SwiftUI에서 끝낸다. 카카오 공식 계정
+//  인증창과 Matths 웹 가입 페이지는 별개이며, 후자는 절대로 열지 않는다.
+//  아래 ASWebAuthenticationSession은 기존 탈퇴 재인증 전용이다.
 //
 //  GoogleSignInCoordinator의 정상 웹 인증 경로는 변경하지 않는다.
 
@@ -31,7 +27,7 @@ final class KakaoSignInCoordinator: NSObject, ObservableObject,
     private let nativeSignIn = KakaoNativeSignIn()
     #endif
 
-    func signIn() async throws -> AuthResponse {
+    func signIn() async throws -> NativeSocialSignInResult {
         try Task.checkCancellation()
         let diagnosticAttemptID = AuthFlowDiagnostics.currentAttemptID
         AuthFlowDiagnostics.record("provider_lookup", attemptID: diagnosticAttemptID)
@@ -46,42 +42,24 @@ final class KakaoSignInCoordinator: NSObject, ObservableObject,
         let codeVerifier = try Self.makeCodeVerifier()
         let codeChallenge = Self.makeCodeChallenge(codeVerifier)
         #if canImport(KakaoSDKUser)
-        if providers.first(where: { $0.key == "kakao" })?.nativeConfigured == true {
-            do {
-                let token = try await nativeSignIn.token()
-                try Task.checkCancellation()
-                let code = try await ServerAPI.beginNativeKakaoLogin(accessToken: token, codeChallenge: codeChallenge)
-                try Task.checkCancellation()
-                return try await ServerAPI.exchangeSocialAuthCode(code, codeVerifier: codeVerifier)
-            } catch let error as ServerAPIError where error.code == "KAKAO_NATIVE_REGISTRATION_REQUIRED" {
-                // Keep existing registration/consent and verified-email linking.
-            }
+        guard providers.first(where: { $0.key == "kakao" })?.nativeConfigured == true else {
+            throw ServerAPIError(message: "카카오 로그인 연결을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.",
+                                 code: "SOCIAL_AUTH_NOT_CONFIGURED")
         }
-        #endif
-        // 로그인 전 공개 진입점이라 Bearer API router 와 분리돼 있다.
-        // (구글에서 `/api/v1` 미들웨어 순서 때문에 시작 요청이 401 로 잠겼던 회귀가 있었다.)
-        var startComponents = URLComponents(
-            url: ServerAPI.baseURL.appendingPathComponent("/auth/kakao/app"),
-            resolvingAgainstBaseURL: false
-        )
-        startComponents?.queryItems = [
-            URLQueryItem(name: "code_challenge", value: codeChallenge)
-        ]
-        guard let startURL = startComponents?.url else {
-            throw ServerAPIError(
-                message: "카카오 로그인 주소를 만들지 못했습니다.",
-                code: "SOCIAL_AUTH_START_URL_INVALID")
-        }
-        let callbackURL = try await openAuthenticationSession(startURL: startURL, diagnosticAttemptID: diagnosticAttemptID)
+        AuthFlowDiagnostics.record("credential_requested", attemptID: diagnosticAttemptID)
+        let token = try await nativeSignIn.token(onFallback: { code in
+            AuthFlowDiagnostics.record("native_fallback", attemptID: diagnosticAttemptID, apiCode: code)
+        })
         try Task.checkCancellation()
-        let code = try callbackCode(callbackURL, expectedPath: "/kakao")
+        AuthFlowDiagnostics.record("callback_received", attemptID: diagnosticAttemptID)
         AuthFlowDiagnostics.record("exchange_started", attemptID: diagnosticAttemptID)
-        let response = try await ServerAPI.exchangeSocialAuthCode(
-            code,
-            codeVerifier: codeVerifier
-        )
-        AuthFlowDiagnostics.record("exchange_succeeded", attemptID: diagnosticAttemptID)
-        return response
+        let response = try await ServerAPI.startNativeKakaoAuthentication(accessToken: token, codeChallenge: codeChallenge)
+        return try await NativeSocialRegistrationContext.resolve(response, provider: "kakao", codeVerifier: codeVerifier,
+                                                                 diagnosticAttemptID: diagnosticAttemptID)
+        #else
+        throw ServerAPIError(message: "카카오 로그인 기능을 불러오지 못했습니다. 앱을 업데이트해 주세요.",
+                             code: "SOCIAL_AUTH_NOT_CONFIGURED")
+        #endif
     }
 
     func reauthenticateForAccountDeletion()

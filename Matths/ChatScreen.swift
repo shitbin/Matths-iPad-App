@@ -267,7 +267,7 @@ struct ChatScreen: View {
                     ProgressView().controlSize(.small)
                     Text("AI 튜터를 준비하고 있어요").font(.mBodyB).foregroundStyle(Tokens.ink)
                 }
-                Text("수학 모델을 불러오는 중이에요. 보통 몇 초 걸려요")
+                Text("수학 모델을 불러오는 중이에요. 보통 몇 초 정도 걸려요.")
                     .font(.mCallout).foregroundStyle(Tokens.text2)
                 if let t0 = loadingSince, ctx.date.timeIntervalSince(t0) > 60 {
                     Text("평소보다 오래 걸리고 있어요. 계속 안 열리면 다시 시도해 주세요.")
@@ -325,7 +325,7 @@ struct ChatScreen: View {
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 Label("이 기기에서는 AI 튜터를 쓸 수 없어요", systemImage: "cpu")
                     .font(.mBodyB).foregroundStyle(Tokens.ink)
-                Text("온디바이스 AI는 메모리 6GB 이상 기기가 필요합니다. 12GB 이상이면 더 똑똑한 9B 모델이 자동으로 선택돼요.")
+                Text("온디바이스 AI는 메모리 6GB 이상 기기가 필요합니다. 12GB 이상이면 성능이 높은 9B 모델을 자동으로 선택합니다.")
                     .font(.mCallout).foregroundStyle(Tokens.text2)
             }
             .card()
@@ -467,7 +467,7 @@ struct ChatScreen: View {
 
     private var emptyHints: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text("물어보면 답한다. 단, 정답은 안 준다. 길만 알려준다.")
+            Text("질문하면 정답 대신 풀이 방향을 알려드려요.")
                 .font(.mCallout).foregroundStyle(Tokens.text2)
             VStack(alignment: .leading, spacing: Tokens.Space.s2) {
                 ForEach(["극한의 뜻을 그래프로 설명해줘",
@@ -530,7 +530,7 @@ struct ChatScreen: View {
                 Text("온디바이스 AI 준비")
                     .font(.mCaption.weight(.semibold))
                     .foregroundStyle(Tokens.ink)
-                Text("다운로드 후 질문과 사진 분석을 시작할 수 있어요")
+                Text("다운로드가 끝나면 질문하거나 풀이 사진을 분석할 수 있어요.")
                     .font(.mCaption)
                     .foregroundStyle(Tokens.text3)
                     .lineLimit(1)
@@ -567,7 +567,7 @@ struct ChatScreen: View {
                         .resizable().scaledToFill()
                         .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
-                    Text("사진 첨부됨. 질문과 함께 보내집니다")
+                    Text("풀이 사진을 첨부했습니다. 질문을 보내면 함께 분석합니다.")
                         .font(.mCaption).foregroundStyle(Tokens.text3)
                     Button {
                         discardPendingPhoto()

@@ -98,7 +98,7 @@ struct FirstSuccessOnboardingOverlay: View {
                     Text(stageCaption).font(.mCaption).foregroundStyle(Tokens.actionPrimary)
                     if let conflict = model.remoteConflict {
                         Text("어느 기록에서 이어갈까요?").font(.mTitle)
-                        Text("다른 기기에서 첫 학습이 변경됐습니다. 선택 전에는 서로 덮어쓰지 않습니다. 이 기기의 원본도 별도로 보관합니다.")
+                        Text("다른 기기에서 첫 학습 기록이 바뀌었습니다. 이어갈 기록을 선택해 주세요. 선택 전에는 기록을 덮어쓰지 않으며 이 기기의 원본도 별도로 보관합니다.")
                             .font(.mBody).foregroundStyle(Tokens.text2)
                         Text(conflict.state == nil ? "계정에서는 첫 학습 안내가 종료되거나 다시 시작되었습니다." : "계정의 저장 단계: \(remoteStageTitle(conflict.state?.stage))")
                             .font(.mCallout)
@@ -191,7 +191,7 @@ struct FirstSuccessOnboardingOverlay: View {
             Text("앱 사용 안내는 프로필과 설정에서 언제든 다시 볼 수 있어요.")
                 .font(.mCaption).foregroundStyle(Tokens.text2)
             DisclosureGroup("안내를 따라 첫 학습 해보기", isExpanded: $showsGuidedStart) {
-                Text("목표를 고르고, 개념 하나와 확인 문제 3개로 사용법을 익힙니다.")
+                Text("목표를 고른 뒤 개념 하나를 배우고 확인 문제 3개를 풀어봅니다.")
                     .font(.mCallout).foregroundStyle(Tokens.text2)
                     .padding(.vertical, Tokens.Space.s2)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Tokens.Space.s2), count: compactHeight ? 2 : 1), spacing: Tokens.Space.s2) {
@@ -214,12 +214,12 @@ struct FirstSuccessOnboardingOverlay: View {
                     }.buttonStyle(SecondaryButtonStyle())
                 }
             }
-            Text("이 두 문항은 설명의 자세함을 고르는 용도예요. 공식 점수·진도·배치에는 반영하지 않습니다.").font(.mCaption).foregroundStyle(Tokens.text2)
+            Text("두 문항의 답에 맞춰 설명을 조절해요. 공식 점수·진도·배치에는 반영하지 않습니다.").font(.mCaption).foregroundStyle(Tokens.text2)
         case .lesson:
             lessonContent
         case .checks:
             Text("확인 문제를 이어 풀어요").font(.mTitle)
-            Text("\(model.journey.answeredCount) / 3문항을 풀었어요. 이미 제출한 문항은 다시 제출하지 않습니다.").font(.mBody)
+            Text("\(model.journey.answeredCount) / 3문항을 풀었어요. 이미 제출한 문항은 건너뛰고 남은 문제를 풀어요.").font(.mBody)
             Button("남은 문제 이어 풀기") { beginChecks() }.buttonStyle(PrimaryButtonStyle()).disabled(working)
         case .awaitingSync:
             Text("3문제 풀이를 마쳤어요").font(.mTitle)
@@ -229,7 +229,7 @@ struct FirstSuccessOnboardingOverlay: View {
         case .result:
             Text("첫 학습을 마쳤어요").font(.mTitle)
             Text("개념 1개를 읽고 3문제를 풀었어요. 정답은 \(model.journey.correctCount)개예요.").font(.mBodyB)
-            if let progress = model.journey.confirmedProgress { Text("계정에서 확인한 이 개념의 진도: \(progress)%").font(.mCallout) }
+            if let progress = model.journey.confirmedProgress { Text("저장된 개념 진도: \(progress)%").font(.mCallout) }
             Text(model.journey.correctCount < 3 ? "틀린 문제는 오답에 보관했어요. 오늘의 복습에서 다시 풀어볼 수 있습니다." : "이제 오늘 화면에서 다음 학습을 이어가세요.").font(.mBody).foregroundStyle(Tokens.text2)
             Button("오늘의 다음 학습 보기") { complete() }.buttonStyle(PrimaryButtonStyle()).disabled(working)
         case .completed, .skipped:
@@ -242,7 +242,7 @@ struct FirstSuccessOnboardingOverlay: View {
             MathInline(text: concept.title, font: .mTitle, pixelSize: 28)
             MathInline(text: concept.lesson?.summary ?? concept.achievementStandard ?? concept.title, font: .mBody)
             if model.journey.diagnosticCorrectCount < 2 {
-                Text("풀이 순서를 하나씩 확인하며 시작해요. 설명을 펼쳐보고, 문제를 틀리면 해설을 확인할 수 있어요.").font(.mCallout).foregroundStyle(Tokens.text2)
+                Text("풀이 순서를 하나씩 살펴보세요. 설명을 펼쳐볼 수 있고 틀린 문제에는 해설이 나와요.").font(.mCallout).foregroundStyle(Tokens.text2)
                 if let lesson = concept.lesson {
                     ForEach(Array(lesson.steps.enumerated()), id: \.offset) { _, step in
                         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
@@ -264,11 +264,11 @@ struct FirstSuccessOnboardingOverlay: View {
                 ForEach(Array(concept.topics.enumerated()), id: \.offset) { _, topic in MathInline(text: "· " + topic) }
             }
             Button("개념을 읽었어요 · 3문제 풀기") { beginChecks() }.buttonStyle(PrimaryButtonStyle()).disabled(working)
-            Text("실제 과정의 문제입니다. 풀이 기록은 계정에 저장되지만, 3문제를 풀었다고 개념 완료나 평가 합격으로 처리하지는 않아요.").font(.mCaption).foregroundStyle(Tokens.text2)
+            Text("실제 과정의 문제이며 풀이 기록은 계정에 저장돼요. 이 3문제만으로 개념 완료나 평가 합격이 결정되지는 않아요.").font(.mCaption).foregroundStyle(Tokens.text2)
         } else {
             Text("첫 수업을 준비하고 있어요").font(.mTitle)
             Button("다시 확인") { work = Task { await prepareLesson() } }.buttonStyle(PrimaryButtonStyle()).disabled(working)
-            Text("연결이 어렵다면 나중에 계속을 누르고, 학습의 오프라인 연습을 이용할 수 있어요.").font(.mCallout).foregroundStyle(Tokens.text2)
+            Text("연결이 어렵다면 ‘나중에 계속’을 눌러 나가세요. 연결 후 첫 학습을 이어갈 수 있어요.").font(.mCallout).foregroundStyle(Tokens.text2)
         }
     }
     private func presentIfNeeded(manual: Bool = false) {

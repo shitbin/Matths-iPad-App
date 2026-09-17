@@ -165,7 +165,7 @@ final class StudyHallScreenModel: ObservableObject {
                 do {
                     try NativeServiceDraftDisk.backup(slot: DataScope.slot, resource: "study:" + value.id)
                     localDraft = .init(slot: DataScope.slot, resource: "study:" + value.id)
-                    errorMessage = "이전 초안을 읽지 못해 별도 보관했습니다. 현재 서버 답안에서 다시 작성할 수 있어요."
+                    errorMessage = "이전 초안을 읽지 못해 별도로 보관했습니다. 서버에 저장된 답안에서 다시 작성해 주세요."
                 } catch {
                     localDraft = nil
                     errorMessage = "이전 초안을 안전하게 보관하지 못했습니다. 새 답안은 임시 저장 버튼으로 계정에 저장해 주세요."
@@ -268,7 +268,7 @@ struct StudyHallScreen: View {
             HStack(spacing: Tokens.Space.s2) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("수험관").font(.mTitle).foregroundStyle(Tokens.ink)
-                    Text("오늘 풀 콘텐츠를 고르고 진행을 남기세요.")
+                    Text("오늘 풀 자료를 고르고 답안을 작성하세요.")
                         .font(.mCaption).foregroundStyle(Tokens.text2).lineLimit(1)
                 }
                 Spacer()

@@ -82,7 +82,11 @@ for s in "서버 주소 (개발용)" "기록 보기 (디버그)" "채점 기록 
          "LESSON-DEBUG" "-fakeAnalysis" "-fakeTrace" "-proReport" \
          "LocalNativeIntegrationLogin" "NativeLLMRuntimeSelfTest" "ProNativeRuntimeSelfTest" \
          "MATTHS_LOCAL_QA_EMAIL" "MATTHS_LOCAL_QA_PASSWORD" \
-         "native-local-login-qa.json" "native-llm-runtime-qa.json" "ProNativeRuntimeQA"; do
+         "native-local-login-qa.json" "native-llm-runtime-qa.json" "ProNativeRuntimeQA" \
+         "-nativeRegistrationCapture" "-nativeRegistrationFixture" \
+         "-nativeRegistrationExpired" "-nativeRegistrationKakao" \
+         "capture-only-not-a-server-ticket" "NATIVE_SOCIAL_CAPTURE_ONLY" \
+         "-authDiagnostics" "auth-flow-diagnostics.json" "AUTH_FLOW_DIAGNOSTICS_V1"; do
   report "$s" "$(count_fixed_bytes "$BIN" "$s")"
 done
 

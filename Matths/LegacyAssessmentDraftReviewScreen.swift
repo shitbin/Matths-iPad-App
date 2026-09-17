@@ -12,7 +12,7 @@ struct LegacyAssessmentDraftReviewScreen: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("업데이트 전이나 저장 충돌 때 이 기기에 보관한 답안입니다. 최신 서버 기록과 비교한 뒤 사용할 답안을 선택해 주세요.")
+                    Text("업데이트 이전 또는 저장 충돌 때 이 기기에 남겨 둔 답안입니다. 최신 서버 기록과 비교한 뒤 사용할 답안을 선택해 주세요.")
                     if state == .loading { ProgressView("서버 답안 확인 중") }
                     if state == .failed {
                         Text("서버 답안 또는 저장 상태를 확인하지 못했습니다. 기존 기기 답안은 보관 중입니다.")

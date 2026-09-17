@@ -13,6 +13,7 @@ final class AuthFlowDiagnosticRecorder {
         "begin", "provider_lookup", "browser_started", "credential_requested", "callback_received",
         "exchange_started", "exchange_succeeded", "cancel_requested", "keychain_accepted",
         "slot_switched", "session_published", "sign_in_finished", "slot_switch_rejected", "failed",
+        "native_fallback", "registration_required", "registration_submitted",
     ]
     private static let apiCodes: Set<String> = [
         "UNAUTHORIZED", "TOKEN_REVOKED", "INVALID_CREDENTIALS", "INVALID_LOGIN", "INVALID_EMAIL", "INVALID_PASSWORD",
@@ -30,6 +31,17 @@ final class AuthFlowDiagnosticRecorder {
         "APPLE_AUTH_ALG_UNSUPPORTED", "APPLE_AUTH_JWKS_UNAVAILABLE", "APPLE_AUTH_KEY_NOT_FOUND",
         "APPLE_AUTH_NICKNAME_UNAVAILABLE", "APPLE_AUTH_NONCE_REQUIRED", "APPLE_AUTH_SUBJECT_MISSING",
         "APPLE_AUTH_TOKEN_MALFORMED", "APPLE_AUTH_TOKEN_NOT_YET_VALID",
+        "KAKAO_NATIVE_AUTH_FAILED", "KAKAO_NATIVE_TOKEN_MISSING", "KAKAO_NATIVE_TOKEN_INVALID",
+        "KAKAO_NATIVE_APP_MISMATCH", "KAKAO_NATIVE_ID_MISMATCH", "KAKAO_NATIVE_REGISTRATION_REQUIRED",
+        "KAKAO_NATIVE_NOT_SUPPORTED",
+        "KAKAO_NATIVE_TOKEN_NOT_FOUND", "KAKAO_NATIVE_BAD_PARAMETER", "KAKAO_NATIVE_NOT_INITIALIZED",
+        "KAKAO_NATIVE_CASTING_FAILED", "KAKAO_NATIVE_ILLEGAL_STATE", "KAKAO_NATIVE_INVALID_REQUEST",
+        "KAKAO_NATIVE_INVALID_CLIENT", "KAKAO_NATIVE_INVALID_SCOPE", "KAKAO_NATIVE_INVALID_GRANT",
+        "KAKAO_NATIVE_MISCONFIGURED", "KAKAO_NATIVE_UNAUTHORIZED", "KAKAO_NATIVE_UNAUTHORIZED_CLIENT",
+        "KAKAO_NATIVE_LOGIN_REQUIRED", "KAKAO_NATIVE_CONSENT_REQUIRED", "KAKAO_NATIVE_INTERACTION_REQUIRED",
+        "KAKAO_NATIVE_SERVER_ERROR",
+        "NATIVE_SOCIAL_REGISTRATION_EXPIRED", "NATIVE_SOCIAL_REGISTRATION_INVALID",
+        "NATIVE_SOCIAL_RESPONSE_INVALID", "NATIVE_SOCIAL_REGISTRATION_IN_PROGRESS",
     ]
     struct Event: Codable {
         let stage: String
@@ -64,9 +76,11 @@ final class AuthFlowDiagnosticRecorder {
         trace = Trace(provider: provider, attemptID: attemptID, startedAt: Date(), events: [])
         record("begin", attemptID: attemptID)
     }
-    func record(_ stage: String, attemptID: UUID?) {
+    func record(_ stage: String, attemptID: UUID?, apiCode: String? = nil) {
         guard accepts(attemptID), Self.stages.contains(stage) else { return }
-        append(Event(stage: stage, elapsedMilliseconds: elapsed()))
+        var event = Event(stage: stage, elapsedMilliseconds: elapsed())
+        if let apiCode, Self.apiCodes.contains(apiCode) { event.apiCode = apiCode }
+        append(event)
     }
     func fail(_ error: Error, attemptID: UUID?) {
         guard accepts(attemptID) else { return }
@@ -144,9 +158,9 @@ enum AuthFlowDiagnostics {
         recorder.begin(provider: provider, attemptID: attemptID)
         #endif
     }
-    static func record(_ stage: String, attemptID: UUID?) {
+    static func record(_ stage: String, attemptID: UUID?, apiCode: String? = nil) {
         #if DEBUG || MATTHS_AUTH_DIAGNOSTICS
-        recorder.record(stage, attemptID: attemptID)
+        recorder.record(stage, attemptID: attemptID, apiCode: apiCode)
         #endif
     }
     static func fail(_ error: Error, attemptID: UUID?) {

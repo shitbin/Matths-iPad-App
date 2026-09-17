@@ -17,14 +17,16 @@
 //       Apple 을 붙였다" 로 안 읽힐 위험이 있다.
 //    ② 로그인 자체에는 서버의 client_secret(ES256 JWT)이 필요 없다. 네이티브가 준
 //       identityToken 을 서버가 애플 공개키(JWKS)로 검증하면 끝난다.
-//    ③ PKCE·grant 저장소(mobileSocialAuthGrantService)를 거치지 않아 왕복이 하나 준다.
+//    ③ 가입 정보가 더 필요하면 웹 페이지가 아닌 네이티브 폼으로 이어진다.
 //
 //  ■ 붙는 자리는 Google 과 **똑같다**
 //
-//  이 코디네이터는 AuthResponse 를 돌려주고, 그다음은 기존 4단 파이프를 그대로 탄다:
+//  기존 계정은 AuthResponse, 가입/보완이 필요한 계정은 짧은 수명의 등록 context를
+//  돌려준다. 등록 완료도 같은 PKCE grant 교환을 거쳐 기존 파이프를 탄다:
 //      beginAuthenticationAttempt() → signInServer(auth, attemptID:)
 //      (old-slot flush 성공 직후 AppStore가 acceptAuthentication을 원자적으로 수행)
-//  슬롯 전환·게스트 기록 승계·동기화가 전부 거기에 이미 있다. 새 경로를 만들지 않는다.
+//  등록 context 자체로는 로그인하거나 Keychain을 갱신하지 않는다.
+//  슬롯 전환·게스트 기록 승계·동기화는 최종 AuthResponse를 받은 뒤에만 수행한다.
 //
 //  ■ 이름과 이메일은 **최초 1회만 온다**
 //
@@ -49,7 +51,7 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
 
     // MARK: 진입점
 
-    func signIn() async throws -> AuthResponse {
+    func signIn() async throws -> NativeSocialSignInResult {
         try Task.checkCancellation()
         let diagnosticAttemptID = AuthFlowDiagnostics.currentAttemptID
         #if DEBUG
@@ -60,7 +62,7 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
                 method: "POST", path: "/api/v1/auth/apple/exchange") else {
                 throw DemoMode.missingFixture(method: "POST", path: "/api/v1/auth/apple/exchange")
             }
-            return response
+            return .authenticated(response)
         }
         #endif
 
@@ -98,14 +100,15 @@ final class AppleSignInCoordinator: NSObject, ObservableObject {
             .flatMap { String(data: $0, encoding: .utf8) }
 
         AuthFlowDiagnostics.record("exchange_started", attemptID: diagnosticAttemptID)
-        let response = try await ServerAPI.exchangeAppleIdentity(
+        let codeVerifier = try NativeSocialPKCE.makeVerifier()
+        let response = try await ServerAPI.startNativeAppleAuthentication(
             identityToken: identityToken,
             authorizationCode: authorizationCode,
             nonce: rawNonce,
             fullName: Self.displayName(from: credential.fullName),
-            email: credential.email)
-        AuthFlowDiagnostics.record("exchange_succeeded", attemptID: diagnosticAttemptID)
-        return response
+            codeChallenge: NativeSocialPKCE.challenge(codeVerifier))
+        return try await NativeSocialRegistrationContext.resolve(response, provider: "apple", codeVerifier: codeVerifier,
+                                                                 diagnosticAttemptID: diagnosticAttemptID)
     }
 
     /// 탈퇴 직전 본인 확인. 새 Apple 시스템 시트가 발급한 토큰만 서버에 보내며,

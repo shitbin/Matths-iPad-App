@@ -111,7 +111,7 @@ private struct WeeklyMockCenterScreen: View {
                     } else {
                         WeeklyMockFailure(
                             title: "모의고사 정보를 불러오지 못했습니다",
-                            message: errorText ?? "잠시 후 다시 시도해주세요.",
+                            message: errorText ?? "잠시 후 다시 시도해 주세요.",
                             retry: { Task { await load() } })
                     }
                 }
@@ -601,7 +601,7 @@ private struct WeeklyMockAttemptScreen: View {
                     else if LearningEntryStatePolicy.isWeeklyMockLobby(attempt.state) { lobby(attempt) }
                     else { takingView(attempt) }
                 } else {
-                    WeeklyMockFailure(title: "시험을 열지 못했습니다", message: errorText ?? "잠시 후 다시 시도해주세요.", retry: { Task { await load() } })
+                    WeeklyMockFailure(title: "시험을 열지 못했습니다", message: errorText ?? "잠시 후 다시 시도해 주세요.", retry: { Task { await load() } })
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1826,7 +1826,7 @@ private enum WeeklyMockFormat {
         if let url = error as? URLError {
             switch url.code {
             case .notConnectedToInternet, .networkConnectionLost: return "인터넷 연결이 끊겼습니다. 작성한 답안은 이 기기에 보관됩니다."
-            case .timedOut: return "서버 응답이 늦어지고 있습니다. 잠시 후 다시 시도해주세요."
+            case .timedOut: return "서버 응답이 늦어지고 있습니다. 잠시 후 다시 시도해 주세요."
             default: break
             }
         }

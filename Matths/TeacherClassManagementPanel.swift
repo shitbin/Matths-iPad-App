@@ -49,7 +49,7 @@ struct TeacherClassManagementPanel: View {
                             if let selectedClass {
                                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                                     classCard(selectedClass)
-                                    Text("일정 변경은 적용일부터 미래 회차에 반영됩니다. 담당 교사·출석 방식은 저장 전에 변경 내용을 확인합니다.")
+                                    Text("일정 변경은 적용일부터 이후 회차에 반영됩니다. 저장하기 전에 담당 교사와 출석 방식의 변경 내용을 확인하세요.")
                                         .font(.mCaption).foregroundStyle(Tokens.text2)
                                 }
                             } else { emptyState("반을 선택해 주세요", "이름으로 검색하거나 새 반을 만들 수 있습니다.") }
@@ -230,7 +230,7 @@ struct TeacherClassManagementPanel: View {
                         .textInputAutocapitalization(.never)
                         .disabled(editingClass != nil)
                     if editingClass != nil {
-                        Text("반 이름은 학생 기록과 연결되어 있어 고급 설정에서 변경합니다.")
+                        Text("반 이름은 학생 기록과 연결되어 있습니다. 이름 변경은 고급 설정에서 할 수 있습니다.")
                             .font(.mMicro).foregroundStyle(Tokens.text3)
                     }
                     VStack(alignment: .leading, spacing: Tokens.Space.s2) {

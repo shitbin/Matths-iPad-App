@@ -57,6 +57,26 @@ struct DelayedOldError:Error{}
     @MainActor static func drain()async{for _ in 0..<40{await Task.yield()}}
     @MainActor static func main()async throws {
         var count=0
+        // Drive the real coordinator's credential continuation through the
+        // policy AuthScreen uses when native UI temporarily owns presentation.
+        ASAuthorizationController.all=[];ASAuthorizationController.reportsCancel=true
+        let presentedApple=AppleSignInCoordinator()
+        let nativeTask=presentedApple.begin()
+        await until{ASAuthorizationController.all.count==1}
+        let presentedController=ASAuthorizationController.all[0]
+        for _ in 0..<3 {
+            if NativeAuthenticationPresentationPolicy.shouldCancelOnAuthScreenDisappear(
+                isBusy:true, sessionPublished:false
+            ) { nativeTask.cancel(); presentedApple.cancel() }
+            await drain()
+        }
+        precondition(presentedController.cancelCount==0,
+                     "transient disappearance cancelled Apple credential delivery")
+        presentedApple.authorizationController(controller:presentedController,
+            didCompleteWithAuthorization:ASAuthorization(ASAuthorizationAppleIDCredential(3)))
+        let nativeResult=try await nativeTask.value
+        precondition(nativeResult.fixtureID==3 && !nativeTask.isCancelled)
+        count += 1
         for reportsCancel in [false,true] {
             for oldError in [false,true] {
                 ASAuthorizationController.all=[];ASAuthorizationController.reportsCancel=reportsCancel

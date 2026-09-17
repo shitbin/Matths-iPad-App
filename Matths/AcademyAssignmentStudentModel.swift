@@ -197,7 +197,7 @@ final class AcademyAssignmentStudentModel: ObservableObject {
         response = latest; denied = false
         serverClock = Self.date(latest.serverTime); receivedAt = ProcessInfo.processInfo.systemUptime
         receipt = latest.submission.flatMap { $0.isValid && ($0.weekId == nil || $0.weekId == latest.week.id) ? $0 : nil }
-        if latest.submission != nil && receipt == nil { errorMessage = "서버 제출 내역의 형식을 확인하지 못했습니다. 다시 불러와 주세요." }
+        if latest.submission != nil && receipt == nil { errorMessage = "제출 내역을 확인하지 못했습니다. 다시 불러와 주세요." }
         guard let omr else { errorMessage = "이 과제의 온라인 답안지가 종료되었거나 형식을 확인할 수 없습니다."; return }
         guard draftLoaded else { return }
         if draft.fields["configuration"] != nil && draft.fields["configuration"] != fingerprint(latest.week) && dirty {
@@ -220,7 +220,7 @@ final class AcademyAssignmentStudentModel: ObservableObject {
     private func confirm(_ result: AcademyAssignmentSubmission) {
         receipt = result; response.submission = result; answers = result.answers; dirty = false
         persist()
-        notice = draftError == nil ? "서버에서 제출과 채점을 확인했습니다." : "서버 제출은 완료됐지만 이 기기의 보관 상태 갱신에 실패했습니다. 다시 불러오면 서버 내역을 확인합니다."
+        notice = draftError == nil ? "제출과 채점이 완료되었습니다." : "제출은 완료됐지만 이 기기의 저장 상태를 갱신하지 못했습니다. 다시 불러오면 제출 내역을 확인할 수 있습니다."
     }
 
     private func fields(dirty: Bool, answers value: [String]? = nil) throws -> [String: String] {

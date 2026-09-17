@@ -239,7 +239,7 @@ struct AdminFinanceScreen: View {
     }
 
     private var loading: some View {
-        VStack(spacing: 12) { ProgressView(); Text("운영 원장을 불러오는 중입니다").font(.mBodyB) }
+        VStack(spacing: 12) { ProgressView(); Text("재무 내역을 불러오는 중입니다").font(.mBodyB) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -275,7 +275,7 @@ struct AdminFinanceScreen: View {
     private func financeSummary(_ value: ServerAPI.AdminFinanceDashboard) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                title("재무 장부", subtitle: "실제 결제·환불·페이백·출금 원장 기준")
+                title("재무 장부", subtitle: "실제 결제·환불·페이백·출금 기록")
                 if !value.withdrawalsEnabled {
                     banner("PG 수수료 준비금 설정 전이라 사업자 출금이 잠겨 있습니다.", color: Tokens.danger, icon: "lock.fill")
                 }
@@ -562,7 +562,7 @@ private struct AdminFinanceActionSheet: View {
         switch action {
         case .withdrawal: "실제 사업자 계좌 출금을 완료한 뒤에만 장부에 기록하세요."
         case .reserve: "출금 가능액에서 별도로 보존할 미지급 비용 총액을 입력하세요."
-        case .calculate: "서버가 주문·사용 기록과 환불 정책을 다시 확인해 환불 가능액을 계산합니다."
+        case .calculate: "주문·사용 기록과 환불 정책을 다시 확인해 환불 가능액을 계산합니다."
         case .completeRefund: "결제사 취소가 확인된 금액만 입력하세요. 완료 후 이용권과 페이백 자격이 함께 정리됩니다."
         case .rejectRefund: "사용자에게 남을 수 있도록 구체적인 처리 사유를 적으세요."
         case .payout(let item): "\(item.bankName) \(item.accountNumber), 예금주 \(item.accountHolderName)로 실제 송금한 뒤 기록하세요."

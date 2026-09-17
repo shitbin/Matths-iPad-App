@@ -265,16 +265,41 @@ grep -Fq '/api/v1/academy/teacher/profile-image' "$server_api"
 grep -Fq 'updateTeacherAcademyProfileImage' "$server_api"
 grep -Fq 'removeTeacherAcademyProfileImage' "$server_api"
 grep -Fq '사진 선택 및 자르기' "$teacher_profile"
-grep -Fq '일반 선생님은 대표 사진을 변경할 수 없습니다' "$teacher_profile"
+grep -Fq '이 화면에서는 원장만 대표 사진을 바꿀 수 있습니다.' "$teacher_profile"
 grep -Fq 'section != .settings || dashboard.isOwner' "$teacher_academy"
 grep -Fq 'ProfilePhotoCropPicker' "$teacher_academy"
 grep -Fq '/api/v1/academy/teacher/forensics' "$server_api"
 grep -Fq 'analyzeTeacherAcademyForensicsCode' "$server_api"
 grep -Fq 'analyzeTeacherAcademyForensicsFile' "$server_api"
 grep -Fq 'TeacherAcademyForensicsPanel()' "$teacher_academy"
-grep -Fq '전체 회원이나 다른 학원·반은 검색하지 않습니다' "$teacher_forensics"
-grep -Fq '분석 직후 서버 임시 파일 삭제' "$teacher_forensics"
+grep -Fq '선택한 반에 발급된 개인 PDF만 검색합니다. 다른 학원이나 반의 기록은 포함하지 않습니다.' "$teacher_forensics"
+grep -Fq '분석 직후 서버의 임시 파일 삭제' "$teacher_forensics"
 grep -Fq 'static let teacherForensicsResult' "$demo_account_fixtures"
+
+# Copy may be humanized, but the owner-only entry and real native handlers may
+# not disappear with it. In-memory mutations prove these checks are meaningful.
+node - "$teacher_profile" "$teacher_academy" "$teacher_forensics" <<'NODE'
+const fs = require('node:fs'), assert = require('node:assert/strict');
+const [profile, academy, forensics] = process.argv.slice(2).map(p => fs.readFileSync(p, 'utf8'));
+function verify(profile, academy, forensics) {
+  assert(profile.includes('Button(action: onChoosePhoto)'), 'native profile photo picker handler removed');
+  assert(profile.includes('Task { await model.removeAcademyProfileImage() }'), 'native profile removal handler removed');
+  assert(academy.includes('section != .settings || dashboard.isOwner'), 'owner-only profile entry filter removed');
+  assert(academy.includes('TeacherAcademyProfilePanel(dashboard: dashboard, model: model, onChoosePhoto:'), 'native profile panel disconnected');
+  for (const [name, next] of [['analyzeCode()', 'func analyzeFile('], ['analyzeFile(', 'private func analyze(']]) {
+    const start = forensics.indexOf('func ' + name), end = forensics.indexOf(next, start + 1);
+    assert(start >= 0 && end > start, 'forensics native handler missing');
+    const body = forensics.slice(start, end);
+    assert(body.includes('guard !selectedClassID.isEmpty else'), 'forensics class selection guard removed');
+    assert(body.includes('classID: selectedClassID'), 'forensics request lost its selected-class scope');
+  }
+}
+verify(profile, academy, forensics);
+assert.throws(() => verify(profile.replace('Button(action: onChoosePhoto)', 'Button(action: {})'), academy, forensics), /picker handler/);
+assert.throws(() => verify(profile, academy.replace('section != .settings || dashboard.isOwner', 'true'), forensics), /owner-only/);
+assert.throws(() => verify(profile, academy, forensics.replace('classID: selectedClassID', 'classID: ""')), /selected-class scope/);
+console.log('Hosted-service native profile/forensics handlers and owner/scope mutation guards passed');
+NODE
 
 # 운영자는 승인·반려뿐 아니라 전체 학원 검색과 구성원·반·초대·출결 상태도
 # Bearer API와 아이폰 가로 분할 화면에서 확인한다.

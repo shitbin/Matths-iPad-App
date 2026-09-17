@@ -744,7 +744,7 @@ struct ProScreen: View {
             }
             .padding(.top, Tokens.Space.s3)
 
-            Text("다른 앱을 열면 운영체제가 허용하는 짧은 시간 동안만 이어집니다. 중단돼도 사진과 검증을 마친 단계를 보존합니다. 같은 사진·모델의 완료 기록이 있으면 재사용하고 나머지를 분석합니다. 모델이나 입력이 바뀌면 처음부터 다시 확인합니다.")
+            Text("다른 앱을 열면 잠시 후 분석이 중단될 수 있습니다. 사진과 검증을 마친 단계는 보관합니다. 같은 사진·모델로 다시 시작하면 완료 기록을 재사용하고 남은 부분을 분석합니다. 모델이나 입력을 바꾸면 처음부터 다시 확인합니다.")
                 .font(.mMicro)
                 .foregroundStyle(Tokens.text4)
                 .fixedSize(horizontal: false, vertical: true)

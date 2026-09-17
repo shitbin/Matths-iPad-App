@@ -282,7 +282,7 @@ struct KiceExamScreen: View {
                 .font(.system(size: isShort ? 36 : 42, weight: .medium))
                 .foregroundStyle(Tokens.text4)
                 .accessibilityHidden(true)
-            Text("기출 데이터를 찾을 수 없습니다")
+            Text("선택한 기출 시험지를 찾을 수 없습니다")
                 .font(.mHeading)
                 .foregroundStyle(Tokens.ink)
                 .multilineTextAlignment(.center)
@@ -606,7 +606,7 @@ struct KiceExamScreen: View {
                     .background(Tokens.primary, in: RoundedRectangle(cornerRadius: Tokens.Radius.sm))
                     .disabled(store.kiceCurrentReceipt?.localEffectsApplied != true)
             } else {
-                Text("만점입니다. 실전에서도 이 페이스면 됩니다.")
+                Text("만점입니다. 실전에서도 지금처럼 풀어보세요.")
                     .font(.mCaption).foregroundStyle(Tokens.successInk)
             }
             Button("새 응시로 다시 풀기") {

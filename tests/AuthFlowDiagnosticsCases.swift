@@ -70,6 +70,12 @@ struct ServerAPIError: Error { var message: String?; var code: String?; var stat
         let privateEmail = sentinel + "@example.invalid"
         let privateInfo: [String: Any] = [NSLocalizedDescriptionKey: sentinel, NSURLErrorFailingURLErrorKey: URL(string: privateURL)!,
             "email": privateEmail, "token": sentinel, "nonce": sentinel, "code": sentinel]
+        recorder.record("native_fallback", attemptID: b, apiCode: "KAKAO_NATIVE_NOT_SUPPORTED")
+        precondition(recorder.trace?.events.last?.apiCode == "KAKAO_NATIVE_NOT_SUPPORTED")
+        recorder.record("native_fallback", attemptID: b, apiCode: sentinel)
+        precondition(recorder.trace?.events.last?.apiCode == nil, "fallback metadata must not persist arbitrary SDK text")
+        recorder.fail(ServerAPIError(message: sentinel, code: "KAKAO_NATIVE_AUTH_FAILED", statusCode: nil), attemptID: b)
+        precondition(recorder.trace?.events.last?.apiCode == "KAKAO_NATIVE_AUTH_FAILED")
         recorder.fail(NSError(domain: NSURLErrorDomain, code: -1200, userInfo: privateInfo), attemptID: b)
         precondition(recorder.trace?.events.last?.errorDomain == NSURLErrorDomain && recorder.trace?.events.last?.errorCode == -1200)
         recorder.fail(NSError(domain: sentinel, code: 1234, userInfo: privateInfo), attemptID: b)
@@ -78,7 +84,9 @@ struct ServerAPIError: Error { var message: String?; var code: String?; var stat
         precondition(recorder.trace?.events.last?.errorCode == -34018)
         for code in ["AUTH_TOKEN_STORAGE_FAILED", "SOCIAL_AUTH_STATE_INVALID", "SOCIAL_AUTH_ACCOUNT_CONFLICT", "SOCIAL_AUTH_PARENT_ACCOUNT",
                      "APPLE_AUTH_ALG_UNSUPPORTED", "APPLE_AUTH_JWKS_UNAVAILABLE", "APPLE_AUTH_KEY_NOT_FOUND", "APPLE_AUTH_NICKNAME_UNAVAILABLE",
-                     "APPLE_AUTH_NONCE_REQUIRED", "APPLE_AUTH_SUBJECT_MISSING", "APPLE_AUTH_TOKEN_MALFORMED", "APPLE_AUTH_TOKEN_NOT_YET_VALID"] {
+                     "APPLE_AUTH_NONCE_REQUIRED", "APPLE_AUTH_SUBJECT_MISSING", "APPLE_AUTH_TOKEN_MALFORMED", "APPLE_AUTH_TOKEN_NOT_YET_VALID",
+                     "KAKAO_NATIVE_NOT_SUPPORTED", "KAKAO_NATIVE_INVALID_CLIENT", "KAKAO_NATIVE_MISCONFIGURED",
+                     "KAKAO_NATIVE_NOT_INITIALIZED", "KAKAO_NATIVE_UNAUTHORIZED_CLIENT", "KAKAO_NATIVE_SERVER_ERROR"] {
             recorder.fail(ServerAPIError(message: sentinel, code: code, statusCode: 401), attemptID: b)
             precondition(recorder.trace?.events.last?.apiCode == code && recorder.trace?.events.last?.httpStatus == 401)
         }

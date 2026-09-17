@@ -190,8 +190,8 @@ struct NotificationInboxScreen: View {
         case .serverRouteMissing:
             return ("clock.badge.checkmark",
                     inbox.notifications.isEmpty
-                        ? "서버 알림 연결을 준비하고 있습니다. 연결되면 여기에 쌓입니다."
-                        : "서버 알림 연결 준비 중 — 마지막으로 받은 목록을 보여 주고 있습니다.",
+                        ? "서버 알림 기능을 준비 중입니다. 준비되면 새 알림이 여기에 표시됩니다."
+                        : "서버 알림 기능을 준비 중이며, 마지막으로 받은 목록을 보여드립니다.",
                     Tokens.text3)
         case .failed(let message):
             return ("exclamationmark.triangle", message, Tokens.warningInk)

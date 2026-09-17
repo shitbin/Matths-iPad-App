@@ -204,7 +204,7 @@ struct CommerceHubScreen: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
-            Text("결제와 경기 자산을 한곳에서 확인합니다")
+            Text("이용권과 경기 자산을 한곳에서 확인하세요")
                 .font(.mMicro)
                 .foregroundStyle(Tokens.primary)
             // 줄바꿈은 iPad 폭에서 잡은 조판이다. compact 폭에서는 강제 줄바꿈이
@@ -606,7 +606,7 @@ struct CommerceHubScreen: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .accessibilityLabel(item == .learningPass
-                                            ? "한 달마다 자동 갱신되며, 결제마다 29일 학습 사이클을 제공합니다"
+                                            ? "한 달마다 자동 갱신되며 결제마다 29일 학습 사이클을 제공합니다"
                                             : "한 달마다 자동 갱신됩니다")
 
                     Text("Apple 결제창의 최종 금액은 계정 국가·지역에 따라 현지 통화로 표시됩니다.")

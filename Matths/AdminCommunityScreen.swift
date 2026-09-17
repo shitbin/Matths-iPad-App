@@ -345,7 +345,7 @@ private struct AdminCommunityActionSheet: View {
         case .noticeStatus(_, let status):
             Text(status == "delete" ? "공지와 공개 링크가 삭제 상태로 전환됩니다." : "공지 공개 상태를 변경합니다.")
         case .postStatus(let post, let status, _):
-            Text(status == "warn" ? "글을 숨기고 \(post.author.name)의 경고를 1회 올립니다. 3회 누적이면 계정도 정지됩니다." : status == "delete" ? "게시글을 DB 삭제 상태로 전환합니다." : "게시글 공개 상태를 변경합니다.")
+            Text(status == "warn" ? "글을 숨기고 \(post.author.name)의 경고를 1회 올립니다. 3회 누적이면 계정도 정지됩니다." : status == "delete" ? "게시글을 삭제 상태로 전환합니다." : "게시글 공개 상태를 변경합니다.")
             TextField("처리 사유", text: $reason, axis: .vertical).lineLimit(3...7)
         case .commentStatus(let comment, let status):
             Text(status == "warn" ? "댓글을 숨기고 \(comment.author.name)의 경고를 1회 올립니다." : "댓글 상태를 변경합니다.")

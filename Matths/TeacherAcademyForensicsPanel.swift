@@ -226,8 +226,8 @@ struct TeacherAcademyForensicsPanel: View {
             }
             .buttonStyle(PrimaryButtonStyle()).disabled(model.isAnalyzing)
             Text(compactLandscape
-                 ? "PDF·이미지 · 최대 50MB · 분석 후 삭제"
-                 : "PDF, PNG, JPG, WEBP, HEIC · 최대 50MB · 분석 직후 서버 임시 파일 삭제")
+                 ? "PDF·이미지 · 최대 50MB · 분석 후 서버 임시 파일 삭제"
+                 : "PDF, PNG, JPG, WEBP, HEIC · 최대 50MB · 분석 직후 서버의 임시 파일 삭제")
                 .font(.mMicro).foregroundStyle(Tokens.text3).lineLimit(compactLandscape ? 2 : nil)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -258,7 +258,7 @@ struct TeacherAcademyForensicsPanel: View {
                 } else {
                     Label("분석 전입니다", systemImage: "shield.lefthalf.filled")
                         .font(.mBodyB).foregroundStyle(Tokens.text2)
-                    Text("전체 회원이나 다른 학원·반은 검색하지 않습니다. 결과는 선택한 반에서 실제 발급된 개인 PDF 기록으로 제한됩니다.")
+                    Text("선택한 반에 발급된 개인 PDF만 검색합니다. 다른 학원이나 반의 기록은 포함하지 않습니다.")
                         .font(.mCaption).foregroundStyle(Tokens.text2)
                 }
                 Text("OCR 유사 일치만으로 유출자를 확정하지 말고 서명 검증, 발급 시각, 자료 전달 경로를 함께 확인하세요.")

@@ -37,7 +37,11 @@ cp "$root/Matths/curriculum-v2.json" "$app/"
 for shard in "$root"/Matths/curriculum-stories/*.json; do
   cp "$shard" "$app/"
 done
-printf '%s\n' 'release binary https://www.matths.kr' > "$app/Matths"
+printf '\000%s\000' 'release binary https://www.matths.kr' \
+  'NativeSocialRegistrationContext' 'NativeSocialRegistrationScreen' \
+  'NativeSocialRegistrationProfile' 'AuthFlowDiagnostics' \
+  '/api/v1/auth/native-social/apple/start' '/api/v1/auth/native-social/kakao/start' \
+  '/api/v1/auth/native-social/register' > "$app/Matths"
 cat > "$app/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -73,6 +77,30 @@ grep -Fq '"approvedSource": true' "$work/audit.json"
 grep -Fq '"externalAttestationRequired": false' "$work/audit.json"
 grep -Fq '"repository": "https://github.com/is4553807/Matths-Official.git"' "$work/audit.json"
 grep -Fq '"commit": "2b4e518f670d96e5c85128504faedb38456874ef"' "$work/audit.json"
+
+# Actual NUL-delimited executable bytes, not a second implementation of the
+# forbidden list. Shipping context/screen/profile/API symbols above remain valid.
+cp "$app/Matths" "$work/clean-release-binary"
+for debug_marker in \
+  '-nativeRegistrationCapture' '-nativeRegistrationFixture' \
+  '-nativeRegistrationExpired' '-nativeRegistrationKakao' \
+  'capture-only-not-a-server-ticket' 'NATIVE_SOCIAL_CAPTURE_ONLY' \
+  '-authDiagnostics' 'auth-flow-diagnostics.json' 'AUTH_FLOW_DIAGNOSTICS_V1' \
+  '개발 서버 미리보기 코드'; do
+  cp "$work/clean-release-binary" "$app/Matths"
+  printf '\000marker-prefix\000%s\000marker-suffix\000' "$debug_marker" >> "$app/Matths"
+  if MATTHS_LIPO="$work/lipo" node "$root/scripts/createReleaseAuditEvidence.js" \
+    --app "$app" --build-log "$work/build.log" --output "$work/debug-marker.json" \
+    --assets excluded --signing unsigned --source-root "$source_root" \
+    > "$work/debug-marker.log" 2>&1; then
+    echo "DEBUG 표식이 Release 감사 증거를 통과했습니다: $debug_marker" >&2
+    exit 1
+  fi
+  grep -Fq 'Release 바이너리 금칙 문자열:' "$work/debug-marker.log"
+  grep -Fq -- "$debug_marker" "$work/debug-marker.log"
+done
+cp "$work/clean-release-binary" "$app/Matths"
+echo 'Release evidence raw-byte controls: 9 capture/diagnostic markers and Korean UTF-8 detected; shipping native-registration symbols accepted'
 
 printf '%s\n' '** ARCHIVE SUCCEEDED **' > "$work/archive.log"
 MATTHS_LIPO="$work/lipo" node "$root/scripts/createReleaseAuditEvidence.js" \

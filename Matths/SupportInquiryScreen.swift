@@ -172,7 +172,7 @@ struct SupportInquiryScreen: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text("문의하기").font(.mTitle).foregroundStyle(Tokens.ink)
-                Text("접수 상태를 확인하고 답변은 가입 이메일로 받습니다.")
+                Text("여기서 접수 상태를 확인하고 가입 이메일로 답변을 받습니다.")
                     .font(.mCaption).foregroundStyle(Tokens.text2)
             }
             Spacer()

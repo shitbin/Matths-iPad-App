@@ -33,7 +33,7 @@ final class OfflinePracticeModel: ObservableObject {
                                           seed: UInt64(Date().timeIntervalSince1970), avoid: [])
         guard let expected = AssessCatalog.data.paperPlans[scope.rawValue]?.count,
               questions.count == expected else {
-            state = .failure("연습 문제를 충분히 준비하지 못했습니다. 다른 범위를 선택해 주세요.")
+            state = .failure("필요한 수만큼 연습 문제를 만들지 못했습니다. 다른 범위를 선택해 주세요.")
             return
         }
         session = PracticeAssessmentRecord(id: "practice-" + UUID().uuidString,

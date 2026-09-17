@@ -1024,13 +1024,13 @@ struct NativeTutorialOverlay: View {
     private static let dashboardSteps: [NativeTutorialStep] = [
         .init(id: "home-start", section: "오늘", route: .home,
               title: "오늘 시작할 학습이 첫 화면에 있습니다.",
-              message: "추천된 학습 버튼을 누르면 지금 이어 할 공부로 바로 이동합니다.", target: .todayPrimaryAction),
+              message: "학습 버튼을 누르면 추천된 공부로 바로 이동합니다.", target: .todayPrimaryAction),
         .init(id: "home-progress", section: "오늘", route: .home,
               title: "오늘 쌓은 기록을 확인합니다.",
-              message: "실제 학습 기록과 진행 상태를 보고 다음 공부를 정합니다.", target: .todayProgress),
+              message: "학습 기록과 진도를 확인하고 다음 공부를 골라보세요.", target: .todayProgress),
         .init(id: "learn-tab", section: "학습", route: .home,
               title: "학습 탭에서 원하는 공부를 고릅니다.",
-              message: "과목 학습과 단계 평가, 공식 모의고사, 짧은 연습의 진입점을 모았습니다.", target: .tabLearning),
+              message: "과목 학습, 단계 평가, 공식 모의고사, 짧은 연습을 선택할 수 있습니다.", target: .tabLearning),
         .init(id: "course-entry", section: "과목과 단원", route: .learn,
               title: "개념 수업과 단계 평가는 같은 과목 안에 있습니다.",
               message: "과목과 단원에서 과목을 선택하면 개념 목록과 소단원·대단원·과목 평가를 함께 확인할 수 있습니다.", target: .learningCourses),
@@ -1042,7 +1042,7 @@ struct NativeTutorialOverlay: View {
               message: "공식 시험과 구분된 연습 공간에서 문제를 풀고 풀이를 확인합니다.", target: .quickPracticeStart),
         .init(id: "pro-entry", section: "시험지 풀이 분석", route: .learn,
               title: "종이에 푼 시험지도 가져올 수 있습니다.",
-              message: "시험지 풀이 분석에서 사진과 답안을 불러와 문항별 분석을 진행합니다.", target: .proEntry),
+              message: "시험지 풀이 분석에 사진과 답안을 올리면 문항별로 분석합니다.", target: .proEntry),
         .init(id: "arena-status", section: "GOAT Arena", route: .rank,
               title: "Arena 상태와 참가 조건을 확인합니다.",
               message: "현재 티어·순위와 이용 상태를 보고 참가할 수 있는 경기를 선택합니다. 경기 버튼은 참가 조건에 따라 달라집니다.", target: .arenaProfile),
@@ -1056,8 +1056,8 @@ struct NativeTutorialOverlay: View {
               title: "계정과 부가 서비스는 내 정보에 있습니다.",
               message: "계정과 학원, 이용권을 관리하고 학습 도구와 자료로 이동합니다.", target: .tabMe),
         .init(id: "ai-coach", section: "AI 코치", route: .services,
-              title: "질문과 대화는 AI 코치에서 이어갑니다.",
-              message: "대화 기록과 온디바이스 모델 상태를 확인할 수 있습니다.", target: .topChat),
+              title: "궁금한 문제는 AI 코치에게 물어보세요.",
+              message: "대화 기록과 이 기기에 설치된 AI 모델을 확인할 수 있습니다.", target: .topChat),
         .init(id: "community-entry", section: "커뮤니티", route: .services,
               title: "질문과 학습 이야기를 나눕니다.",
               message: "커뮤니티에서 글을 읽고 질문이나 답글을 작성합니다.", target: .communityBrowse),
@@ -1077,7 +1077,7 @@ struct NativeTutorialOverlay: View {
                   message: "경기 신청 또는 이어하기 버튼이 표시되면 그곳에서 진행합니다. 티어·순위·GP는 서버 정산 결과로 확정됩니다.", target: .arenaMatchmaking),
             .init(id: "common-status", section: "기본 안내", route: .rank,
                   title: "내 현재 Arena 상태를 확인합니다.",
-                  message: "현재 티어·순위·GP와 이용 중인 전장을 보고 다음 행동을 정합니다.", target: .arenaProfile),
+                  message: "현재 티어·순위·GP와 이용 중인 전장을 확인하세요.", target: .arenaProfile),
         ],
         "unranked": [
             .init(id: "unranked-hero", section: "UNRANKED 전장", route: .rank,
@@ -1098,13 +1098,13 @@ struct NativeTutorialOverlay: View {
         ],
         "unranked_match": [
             .init(id: "unranked-match-candidate", section: "UNRANKED 1대1", route: .rank,
-                  title: "서버가 가장 가까운 상위 후보를 찾습니다.",
+                  title: "가장 가까운 상위 상대를 찾습니다.",
                   message: "같은 티어의 상위 순위를 우선하고 없으면 바로 위 티어로 넓힙니다. 실제 신청은 상대 찾기 버튼에서 진행합니다.", target: .arenaMatchmaking),
             .init(id: "unranked-match-stake", section: "UNRANKED 1대1", route: .rank,
                   title: "신청 전에 자산과 참가 조건을 봅니다.",
                   message: "Arena 자산에서 사용 가능한 페이백 점수와 학습일수를 확인합니다. 경기 신청 시 실제 예치 조건을 다시 확인합니다.", target: .arenaWallet),
             .init(id: "unranked-match-action", section: "UNRANKED 1대1", route: .rank,
-                  title: "지금 가능한 경기 행동을 선택합니다.",
+                  title: "새 경기를 신청하거나 진행 중인 경기를 이어가세요.",
                   message: "신청할 수 있으면 상대 찾기가, 이미 참가한 경기가 있으면 시작·계속하기가 표시됩니다. 튜토리얼은 경기를 자동 신청하지 않습니다.", target: .arenaMatchmaking),
         ],
         "ranked": [
@@ -1127,15 +1127,15 @@ struct NativeTutorialOverlay: View {
         "ranked_battle": [
             .init(id: "ranked-battle-status", section: "RANKED 경기", route: .rank,
                   title: "새 경기 전에 오늘 이용 상태를 봅니다.",
-                  message: "진행 중 경기, 부족한 학습일수나 이용 제한이 있으면 신청이 잠기고 사유가 표시됩니다.", target: .arenaEligibility),
+                  message: "진행 중인 경기, 학습일수 부족, 이용 제한으로 신청할 수 없다면 이유를 안내합니다.", target: .arenaEligibility),
             .init(id: "ranked-battle-upward", section: "RANKED 경기", route: .rank,
                   title: "상향 쟁탈전은 목표 티어를 정해 도전합니다.",
                   message: "Ranked 상대 찾기에서 목표와 예치량을 확인합니다. 서버가 적격 상대를 배정하며 이 안내만으로 경기를 신청하지 않습니다.", target: .arenaMatchmaking),
             .init(id: "ranked-battle-invite", section: "RANKED 경기", route: .rank,
-                  title: "하위 티어 초대전은 예약부터 만듭니다.",
+                  title: "하위 티어 초대전은 먼저 예약하세요.",
                   message: "아레나 더 보기에서 초대 기능을 선택해 조건을 확인합니다. 먼저 수락한 한 명과 같은 학습일수를 예치합니다.", target: .arenaOperations),
             .init(id: "ranked-battle-friendly", section: "RANKED 경기", route: .rank,
-                  title: "친선전은 랭크 부담 없이 연습합니다.",
+                  title: "친선전에서는 랭크 부담 없이 연습할 수 있습니다.",
                   message: "아레나 더 보기의 친선전에서 Ranked 사용자를 닉네임으로 초대합니다. 티어·GP·학습일수는 움직이지 않습니다.", target: .arenaOperations),
             .init(id: "ranked-battle-invitations", section: "RANKED 경기", route: .rank,
                   title: "초대와 예약은 조건을 보고 처리합니다.",
@@ -2882,7 +2882,7 @@ private struct MissionHeroCard: View {
                 .monospacedDigit()
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            Text("틀렸던 바로 그 문제를 그대로 다시 풉니다.")
+            Text("틀렸던 문제를 다시 풀어보세요.")
                 .font(.mCallout).foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
             Text("예상 약 \(count * 4)분")
@@ -3264,7 +3264,7 @@ private struct WeeklyStudySection: View {
     /// 이번 주 기록 0건 — 0분/0-7일/— 세 칸 대신 한 줄. 시작 CTA 는 위 히어로 몫이라
     /// 여기서는 앞으로 무엇이 이 자리에 쌓이는지만 말한다.
     private var emptyWeekLine: some View {
-        Text("이번 주 기록은 아직 없어요. 학습을 시작하면 학습시간, 학습한 날, 정답률이 여기에 쌓입니다.")
+        Text("이번 주 기록은 아직 없어요. 학습을 시작하면 학습 시간, 학습한 날, 정답률을 여기서 확인할 수 있어요.")
             .font(.mCallout)
             .foregroundStyle(Tokens.text3)
             .fixedSize(horizontal: false, vertical: true)

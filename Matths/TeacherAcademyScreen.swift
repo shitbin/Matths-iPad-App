@@ -921,12 +921,12 @@ private struct AccountScopedTeacherAcademyScreen: View {
                     Text("다른 작업자가 변경한 출결 \(model.attendanceConflicts.count)건과 초안이 다릅니다.")
                         .font(.mCaption).foregroundStyle(Tokens.warningInk)
                     HStack {
-                        Button("서버 기록 사용") { model.useServerAttendance() }
-                        Button("내 초안 확인·유지") { model.confirmLocalAttendance() }
+                        Button("저장된 출결 불러오기") { model.useServerAttendance() }
+                        Button("내 초안 유지") { model.confirmLocalAttendance() }
                     }.buttonStyle(.bordered)
                 }
             } else if model.hasAttendanceChanges {
-                Text("저장하지 않은 출결이 있습니다. 반·날짜를 바꾸어도 이 작업공간의 초안을 유지합니다.")
+                Text("아직 저장하지 않은 출결이 있습니다. 반이나 날짜를 바꿔도 작성 중인 내용은 유지됩니다.")
                     .font(.mMicro).foregroundStyle(Tokens.warningInk)
             }
             Group {

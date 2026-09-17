@@ -223,7 +223,7 @@ struct CurriculumV2MapScreen: View {
                     Text("과목 선택")
                         .font(.mHeading)
                         .foregroundStyle(Tokens.ink)
-                    Text("13과목, 220개념")
+                    Text("13과목 · 220개 개념")
                         .font(.mCaption)
                         .foregroundStyle(Tokens.text3)
                 }
@@ -352,7 +352,7 @@ struct CurriculumV2MapScreen: View {
                 .font(shortHeight ? .mHeading : .mTitle)
                 .foregroundStyle(Tokens.ink)
                 .accessibilityAddTraits(.isHeader)
-            Text("과목을 고르고, 배울 개념을 선택하세요.")
+            Text("과목을 고른 뒤 배울 개념을 선택하세요.")
                 .font(.mCallout)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -499,7 +499,7 @@ struct CurriculumV2MapScreen: View {
                         .font(.mCaption)
                         .foregroundStyle(Tokens.text2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("먼저 들으면 좋다는 뜻이고, 이 과목을 여는 데 제한을 두지는 않습니다.")
+                    Text("먼저 학습하면 좋은 과목이며, 이 과목의 이용을 제한하지는 않습니다.")
                         .font(.mCaption)
                         .foregroundStyle(Tokens.text3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -691,7 +691,7 @@ struct CurriculumV2MapScreen: View {
             DisclosureGroup(isExpanded: $showsLearningTracks) {
                 VStack(alignment: .leading, spacing: Tokens.Space.s3) {
                     VStack(alignment: .leading, spacing: Tokens.Space.s1) {
-                        Text("관련 개념을 배우기 좋은 순서로 묶었습니다. 앞에 적힌 개념이 뒤 개념의 권장 선수 개념입니다.")
+                        Text("관련 개념을 권장 학습 순서대로 정리했습니다. 앞에 나온 개념이 뒤 개념의 권장 선수 개념입니다.")
                             .font(.mCallout)
                             .foregroundStyle(Tokens.text2)
                             .fixedSize(horizontal: false, vertical: true)

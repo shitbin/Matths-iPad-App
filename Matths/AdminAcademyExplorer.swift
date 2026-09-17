@@ -1414,7 +1414,7 @@ struct AdminAcademyExplorer: View {
 
                 infoCard(title: "확인이 필요한 학생 · \(analytics.attentionStudents.count)명") {
                     if analytics.attentionStudents.isEmpty {
-                        Text("현재 기준에서 별도 확인이 필요한 학생이 없습니다.")
+                        Text("지금 확인이 필요한 학생이 없습니다.")
                             .font(.mCaption).foregroundStyle(Tokens.text3)
                     } else {
                         ForEach(analytics.attentionStudents) { item in
@@ -1449,7 +1449,7 @@ struct AdminAcademyExplorer: View {
                 }
             }
         } else {
-            Text("통계 데이터를 불러오지 못했습니다. 서버 배포 상태를 확인한 뒤 새로고침해 주세요.")
+            Text("통계 정보를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.")
                 .font(.mCaption).foregroundStyle(Tokens.text3)
                 .frame(maxWidth: .infinity, minHeight: 150)
         }

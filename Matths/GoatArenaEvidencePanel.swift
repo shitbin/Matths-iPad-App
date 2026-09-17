@@ -130,7 +130,7 @@ struct GoatArenaEvidencePanel: View {
                         HStack(spacing: Tokens.Space.s2) {
                             if isUploading { ProgressView().controlSize(.small) }
                             Label(
-                                isUploading ? "서버에 고정하는 중" : "풀이 증거 제출",
+                                isUploading ? "풀이 증거 제출 중" : "풀이 증거 제출",
                                 systemImage: "lock.shield.fill")
                         }
                     }
@@ -398,7 +398,7 @@ struct GoatArenaEvidencePanel: View {
 
     private func uploaded(_ receipt: ServerAPI.GoatArenaEvidenceReceipt) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            Label("풀이 증거가 서버에 고정되었습니다", systemImage: "checkmark.seal.fill")
+            Label("풀이 증거를 제출했습니다", systemImage: "checkmark.seal.fill")
                 .font(.mBodyB)
                 .foregroundStyle(Tokens.successInk)
             Text(receipt.replayed

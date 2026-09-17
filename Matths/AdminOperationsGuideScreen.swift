@@ -102,7 +102,7 @@ struct AdminOperationsGuideScreen: View {
         }
         Text("권장 점검 순서").font(.mTitle)
         checklist([
-          "관리 알림에서 신고·신원 중복·증거 이상·미처리 문의 확인", "경기·정산 감사에서 원장 불일치와 재시도 작업 확인",
+          "관리 알림에서 신고·신원 중복·증거 이상·미처리 문의 확인", "경기·정산 감사에서 기록 불일치와 재시도 작업 확인",
           "주간 모의고사 문제지·채점 JSON·공개 시간 대조", "R2·Cloudinary·로컬 디스크 용량과 삭제 대기 확인",
           "월별 운영 지표의 표본·전환·페이백 확인",
         ])
@@ -145,7 +145,7 @@ struct AdminOperationsGuideScreen: View {
         ForEach(value.storageMatrix) { item in
           DisclosureGroup {
             row("목적", item.purpose)
-            row("권위 원본", item.primary)
+            row("원본 저장 위치", item.primary)
             row("백업", item.backup)
             row("보존", item.retention)
             row("열람", item.access)
@@ -167,7 +167,7 @@ struct AdminOperationsGuideScreen: View {
   private func automation(_ value: ServerAPI.AdminOperationsGuide) -> some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 10) {
-        Text("서버 자동 작업").font(.mTitle)
+        Text("자동 작업").font(.mTitle)
         ForEach(Array(value.schedulers.enumerated()), id: \.offset) { _, item in rowCard(item) }
         Text("장애 대응 순서").font(.mTitle).padding(.top, 6)
         ForEach(value.incidentPlaybook) { item in

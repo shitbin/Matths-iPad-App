@@ -58,7 +58,7 @@ struct AssessmentPaperScreen: View {
                         .font(.mHeading)
                         .foregroundStyle(Tokens.ink)
                         .accessibilityAddTraits(.isHeader)
-                    Text("다른 기기에서 종료됐거나 저장된 응시 정보가 갱신됐을 수 있습니다.")
+                    Text("다른 기기에서 응시를 끝냈거나 응시 정보가 바뀌었을 수 있습니다.")
                         .font(.mCallout)
                         .foregroundStyle(Tokens.text2)
                         .multilineTextAlignment(.center)
@@ -293,7 +293,7 @@ struct AssessmentPaperScreen: View {
             .buttonStyle(PrimaryButtonStyle())
             .frame(maxWidth: 280)
             .disabled(answeredCount(attempt) == 0 || store.assessmentSubmitting)
-            Text("제출은 한 번만 됩니다. 제출 후 정답과 해설이 공개되고, 틀린 문항은 오답노트로 갑니다.")
+            Text("제출은 한 번만 할 수 있습니다. 제출 후 정답과 해설이 공개되고, 틀린 문항은 오답노트로 갑니다.")
                 .font(.mCaption).foregroundStyle(Tokens.text3)
         }
     }

@@ -190,11 +190,19 @@ function main() {
   const architectures = run(lipo, ["-archs", binary]).split(/\s+/).filter(Boolean);
   if (!architectures.includes("arm64")) throw new Error("Release 바이너리에 arm64가 없습니다.");
   const binaryStrings = run(stringsTool, [binary]);
+  // Scan the bytes themselves: macOS strings may omit Korean UTF-8 and a Mach-O
+  // contains NUL-delimited strings. Public native-registration types and APIs
+  // are shipping features; only the conditional capture/diagnostic markers are forbidden.
+  const binaryBytes = fs.readFileSync(binary);
   const forbidden = [
     "mongodb", "mongodb+srv", "API_TOKEN_SECRET", "EMAIL_API_KEY", "SECRET=",
     "서버 주소 (개발용)", "기록 보기 (디버그)", "개발 서버 미리보기 코드",
     "trycloudflare.com", "ngrok", "loca.lt", "localhost", "127.0.0.1",
-  ].filter((needle) => binaryStrings.includes(needle));
+    "-nativeRegistrationCapture", "-nativeRegistrationFixture",
+    "-nativeRegistrationExpired", "-nativeRegistrationKakao",
+    "capture-only-not-a-server-ticket", "NATIVE_SOCIAL_CAPTURE_ONLY",
+    "-authDiagnostics", "auth-flow-diagnostics.json", "AUTH_FLOW_DIAGNOSTICS_V1",
+  ].filter((needle) => binaryBytes.includes(Buffer.from(needle, "utf8")));
   if (forbidden.length) throw new Error(`Release 바이너리 금칙 문자열: ${forbidden.join(", ")}`);
   if (!binaryStrings.includes("https://www.matths.kr")) throw new Error("운영 서버 주소가 Release 바이너리에 없습니다.");
   if (binaryStrings.includes("https://matths.kr")) throw new Error("구 apex 운영 주소가 Release 바이너리에 남아 있습니다.");

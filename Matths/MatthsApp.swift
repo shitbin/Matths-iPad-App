@@ -1132,7 +1132,10 @@ final class AppStore: ObservableObject {
         case 10: return "고등학교 1학년"
         case 11: return "고등학교 2학년"
         case 12: return "고등학교 3학년"
-        default: return "N수생"
+        case 13: return "N수생"
+        case 14: return "대학생"
+        case 15: return "직장인"
+        default: return "학년 미설정"
         }
     }
 

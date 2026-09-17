@@ -97,7 +97,7 @@ struct AdminPdfForensicsScreen: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
         Label("유출 의심 자료 입력", systemImage: "doc.viewfinder").font(.mTitle)
-        Text("PDF 내부 서명과 스크린샷 반복 추적 코드를 외부 API 전송 없이 서버에서 분석합니다.").font(.mCaption).foregroundStyle(
+        Text("PDF 내부 서명과 스크린샷의 반복 추적 코드를 맵쓰 서버에서 분석하며 외부 API로 보내지 않습니다.").font(.mCaption).foregroundStyle(
           Tokens.text2)
         Button {
           importsFile = true
@@ -140,7 +140,7 @@ struct AdminPdfForensicsScreen: View {
           if value.matches.isEmpty && value.validPayloads.isEmpty {
             ContentUnavailableView(
               "일치 발급 기록 없음", systemImage: "magnifyingglass",
-              description: Text("추적 코드가 지워졌거나 현재 DB 원장과 연결되지 않았습니다."))
+              description: Text("추적 코드가 지워졌거나 현재 발급 기록과 연결되지 않았습니다."))
           }
           ForEach(value.matches) { match in matchCard(match) }
           ForEach(

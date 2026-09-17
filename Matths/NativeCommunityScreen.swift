@@ -7,6 +7,8 @@ import ImageIO
 struct NativeCommunityScreen: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var board = "high-school"
     @State private var search = ""
@@ -22,6 +24,7 @@ struct NativeCommunityScreen: View {
     @State private var showsBlockedUsers = false
     @State private var accountSlot = DataScope.slot
     @State private var listRequestID = UUID()
+    @State private var completionMessage: String?
 
     private var visibleBoards: [(String, String)] {
         let publicBoards = [("high-school", "통합 게시판")]
@@ -43,6 +46,9 @@ struct NativeCommunityScreen: View {
             VStack(spacing: 0) {
                 header
                 Divider()
+                if let completionMessage {
+                    completionBanner(completionMessage)
+                }
                 Group {
                     if isLoading && data == nil {
                         ProgressView("게시글을 불러오는 중입니다")
@@ -64,27 +70,12 @@ struct NativeCommunityScreen: View {
             .background(Tokens.paper)
             .navigationTitle("게시판")
             .navigationBarTitleDisplayMode(.inline)
+            // RootView가 자체 브랜드 상단바를 소유한다. 시스템 navigation bar의
+            // 높이는 regular 창에서 콘텐츠가 브랜드 바 아래에 머무는 안전 여백으로
+            // 유지하되, 글쓰기 행동 자체는 아래 네이티브 헤더가 항상 소유한다.
             .toolbar(verticalSizeClass == .compact ? .hidden : .visible, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(Tokens.paper, for: .navigationBar)
-            .toolbar {
-                if verticalSizeClass != .compact {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        if ServerAPI.hasToken {
-                            Button { showsBlockedUsers = true } label: {
-                                Image(systemName: "person.crop.circle.badge.xmark")
-                            }
-                            .accessibilityLabel("차단한 사용자")
-                        }
-                        Button {
-                            openComposerOrLogin()
-                        } label: {
-                            Label("글쓰기", systemImage: "square.and.pencil")
-                        }
-                        .accessibilityHint(ServerAPI.hasToken ? "새 게시글을 작성합니다" : "로그인 화면으로 이동합니다")
-                    }
-                }
-            }
             .task { await load(reset: true) }
             .refreshable { await load(reset: false) }
             .onReceive(NotificationCenter.default.publisher(for: DataScope.didSwitchNotification)) { note in
@@ -94,6 +85,7 @@ struct NativeCommunityScreen: View {
                 data = nil
                 page = 1; board = "high-school"; search = ""; submittedSearch = ""; category = ""
                 selectedPost = nil; showsComposer = false; showsBlockedUsers = false
+                completionMessage = nil
                 Task { await load(reset: true) }
             }
             .compactHeightSheet(item: $selectedPost) { post in
@@ -105,12 +97,18 @@ struct NativeCommunityScreen: View {
                 }
             }
             .compactHeightSheet(isPresented: $showsComposer) {
-                NativeCommunityComposerSheet(initialBoard: board) { post in
+                NativeCommunityComposerSheet(initialBoard: board) { _, createdBoard in
                     showsComposer = false
+                    selectedPost = nil
+                    board = createdBoard
+                    sort = "latest"
+                    category = ""
+                    search = ""
+                    submittedSearch = ""
                     page = 1
+                    completionMessage = "게시글이 등록되었습니다. 최신 글 목록에서 확인할 수 있습니다."
                     Task {
-                        await load(reset: false)
-                        selectedPost = post
+                        await load(reset: true)
                     }
                 }
             }
@@ -152,25 +150,9 @@ struct NativeCommunityScreen: View {
                 .accessibilityLabel("검색 해제")
             }
             if ServerAPI.hasToken {
-                Button { showsBlockedUsers = true } label: {
-                    Image(systemName: "person.crop.circle.badge.xmark")
-                }
-                .frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("차단한 사용자")
+                blockedUsersButton
             }
-            Button { openComposerOrLogin() } label: {
-                Label("글쓰기", systemImage: "square.and.pencil")
-                    .font(.mCaption)
-                    .foregroundStyle(Tokens.onBrand)
-                    .padding(.horizontal, Tokens.Space.s3)
-                    .frame(minHeight: 44)
-                    .background(Tokens.actionPrimary,
-                                in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
-            }
-            .buttonStyle(.plain)
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("글쓰기")
-            .accessibilityHint(ServerAPI.hasToken ? "새 게시글을 작성합니다" : "로그인 화면으로 이동합니다")
+            composeButton(compact: true)
             if isLoading { ProgressView().controlSize(.small) }
         }
         .padding(.horizontal, Tokens.Space.s4)
@@ -183,47 +165,166 @@ struct NativeCommunityScreen: View {
     }
 
     private var regularHeader: some View {
-        VStack(spacing: verticalSizeClass == .compact ? Tokens.Space.s2 : Tokens.Space.s3) {
+        Group {
+            if usesNarrowRegularHeader {
+                narrowRegularHeader
+            } else {
+                wideRegularHeader
+            }
+        }
+        .padding(.horizontal, Tokens.Space.s4)
+        .padding(.vertical, Tokens.Space.s3)
+        .background(Tokens.surface)
+    }
+
+    /// iPad 전체 폭에서는 게시판·정렬·행동을 한 줄에 둔다. 이 구성은 실제
+    /// 13-inch 세로 화면에서 충분한 폭이 확인됐으므로 정보 밀도를 보존한다.
+    private var wideRegularHeader: some View {
+        VStack(spacing: Tokens.Space.s3) {
             HStack(spacing: Tokens.Space.s3) {
                 boardMenu
                 if board == "operations" { categoryPicker }
                 else { sortPicker.frame(maxWidth: 220) }
                 Spacer(minLength: 0)
                 if isLoading { ProgressView().controlSize(.small) }
+                if ServerAPI.hasToken {
+                    blockedUsersButton
+                }
+                composeButton(compact: false)
             }
-            HStack(spacing: Tokens.Space.s2) {
-                TextField("제목·내용·작성자 검색", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                    .submitLabel(.search)
-                    .onSubmit { submitSearch() }
-                Button("검색") { submitSearch() }
-                    .buttonStyle(SecondaryButtonStyle())
-                if !submittedSearch.isEmpty {
-                    Button("검색 해제") {
-                        search = ""
-                        submittedSearch = ""
-                        page = 1
-                        Task { await load(reset: false) }
+            searchControls
+            guestReadNotice
+        }
+    }
+
+    /// iPhone 세로·좁은 Split View·큰 글씨는 정렬을 별도 행으로 내린다.
+    /// 게시판 이름과 글쓰기라는 현재 문맥/주 행동이 먼저 온전히 읽혀야 한다.
+    private var narrowRegularHeader: some View {
+        VStack(spacing: Tokens.Space.s2) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Tokens.Space.s2) {
+                    boardMenu
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(2)
+                    Spacer(minLength: Tokens.Space.s2)
+                    if isLoading { ProgressView().controlSize(.small) }
+                    if ServerAPI.hasToken { blockedUsersButton }
+                    composeButton(compact: true)
+                }
+                // 접근성 글씨가 가장 큰 경우에도 게시판명이 다시 잘리지 않도록
+                // 보조 행동만 다음 줄로 내린다. 화면 문맥과 주 행동은 그대로 남는다.
+                VStack(alignment: .leading, spacing: Tokens.Space.s1) {
+                    HStack {
+                        boardMenu.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: Tokens.Space.s2)
+                        if isLoading { ProgressView().controlSize(.small) }
                     }
-                    .frame(minHeight: 44)
+                    HStack(spacing: Tokens.Space.s2) {
+                        Spacer(minLength: 0)
+                        if ServerAPI.hasToken { blockedUsersButton }
+                        composeButton(compact: true)
+                    }
                 }
             }
-            if !ServerAPI.hasToken {
-                Label("글과 운영 공지는 로그인 없이 읽을 수 있습니다. 작성·댓글·추천은 로그인이 필요합니다.", systemImage: "eye.fill")
-                    .font(.mCaption)
-                    .foregroundStyle(Tokens.text2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+            if board == "operations" {
+                categoryPicker.frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                sortPicker.frame(maxWidth: .infinity)
+            }
+            searchControls
+            guestReadNotice
+        }
+    }
+
+    private var searchControls: some View {
+        HStack(spacing: Tokens.Space.s2) {
+            TextField("제목·내용·작성자 검색", text: $search)
+                .textFieldStyle(.roundedBorder)
+                .submitLabel(.search)
+                .onSubmit { submitSearch() }
+            Button("검색") { submitSearch() }
+                .buttonStyle(SecondaryButtonStyle())
+            if !submittedSearch.isEmpty {
+                Button("검색 해제") {
+                    search = ""
+                    submittedSearch = ""
+                    page = 1
+                    Task { await load(reset: false) }
+                }
+                .frame(minHeight: 44)
             }
         }
-        .padding(.horizontal, Tokens.Space.s4)
-        .padding(.vertical, verticalSizeClass == .compact ? Tokens.Space.s1 : Tokens.Space.s3)
-        .background(Tokens.surface)
+    }
+
+    @ViewBuilder private var guestReadNotice: some View {
+        if !ServerAPI.hasToken {
+            Label("글과 운영 공지는 로그인 없이 읽을 수 있습니다. 작성·댓글·추천은 로그인이 필요합니다.", systemImage: "eye.fill")
+                .font(.mCaption)
+                .foregroundStyle(Tokens.text2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var usesNarrowRegularHeader: Bool {
+        horizontalSizeClass == .compact || dynamicTypeSize.isAccessibilitySize
+    }
+
+    private var blockedUsersButton: some View {
+        Button { showsBlockedUsers = true } label: {
+            Image(systemName: "person.crop.circle.badge.xmark")
+                .frame(width: 44, height: 44)
+                .background(Tokens.paper2, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+                .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.md).strokeBorder(Tokens.line) }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("차단한 사용자")
+        .accessibilityIdentifier("community-blocked-users-button")
+    }
+
+    private func composeButton(compact: Bool) -> some View {
+        Button { openComposerOrLogin() } label: {
+            Label(ServerAPI.hasToken ? "글쓰기" : "로그인하고 글쓰기",
+                  systemImage: "square.and.pencil")
+                .font(compact ? .mCaption : .mBodyB)
+                .foregroundStyle(Tokens.onBrand)
+                .padding(.horizontal, compact ? Tokens.Space.s3 : Tokens.Space.s4)
+                .frame(minHeight: 44)
+                .background(Tokens.actionPrimary,
+                            in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel(ServerAPI.hasToken ? "글쓰기" : "로그인하고 글쓰기")
+        .accessibilityHint(ServerAPI.hasToken ? "새 게시글을 작성합니다" : "로그인 화면으로 이동합니다")
+        .accessibilityIdentifier("community-compose-button")
+    }
+
+    private func completionBanner(_ message: String) -> some View {
+        HStack(spacing: Tokens.Space.s2) {
+            Label(message, systemImage: "checkmark.circle.fill")
+                .font(.mCaption)
+                .foregroundStyle(Tokens.successInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button { completionMessage = nil } label: {
+                Image(systemName: "xmark")
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("등록 완료 안내 닫기")
+        }
+        .padding(.leading, Tokens.Space.s4)
+        .padding(.trailing, Tokens.Space.s2)
+        .background(Tokens.successSoft)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("community-post-created-banner")
     }
 
     private var boardMenu: some View {
         Menu {
             ForEach(visibleBoards, id: \.0) { item in
                 Button {
+                    completionMessage = nil
                     board = item.0
                     category = ""
                     if board == "operations" { sort = "latest" }
@@ -404,6 +505,7 @@ struct NativeCommunityScreen: View {
     }
 
     private func openComposerOrLogin() {
+        completionMessage = nil
         guard ServerAPI.hasToken else {
             store.route = .profile
             return
@@ -766,7 +868,7 @@ private struct NativeCommunityComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
     let initialBoard: String
-    let onCreated: (ServerAPI.CommunityPost) -> Void
+    let onCreated: (ServerAPI.CommunityPost, String) -> Void
 
     @State private var board: String
     @State private var title = ""
@@ -788,8 +890,19 @@ private struct NativeCommunityComposerSheet: View {
     @State private var confirmsDiscard = false
     @State private var confirmsRetry = false
     @State private var submissionUncertain = false
+    /// A received server success is not a failed POST when local draft cleanup fails.
+    /// Retain it until the submitted draft is cleared or later edits are durable.
+    private struct AcknowledgedSubmission {
+        let post: ServerAPI.CommunityPost
+        let board: String
+        let operationID: String
+        let fields: [String: String]
+        let attachments: [String]
+    }
+    @State private var acknowledgedSubmission: AcknowledgedSubmission?
+    @State private var completionFinalized = false
 
-    init(initialBoard: String, onCreated: @escaping (ServerAPI.CommunityPost) -> Void) {
+    init(initialBoard: String, onCreated: @escaping (ServerAPI.CommunityPost, String) -> Void) {
         self.initialBoard = initialBoard
         self.onCreated = onCreated
         _board = State(initialValue: initialBoard == "operations" ? "high-school" : initialBoard)
@@ -810,48 +923,69 @@ private struct NativeCommunityComposerSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Tokens.Space.s4) {
                     if let access {
-                        Label("오늘 \(access.remainingPosts)개 더 작성할 수 있습니다.", systemImage: "checkmark.circle")
-                            .font(.mCaption).foregroundStyle(Tokens.text2)
+                        if access.remainingPosts > 0 {
+                            Label("오늘 \(access.remainingPosts)개 더 작성할 수 있습니다.", systemImage: "checkmark.circle")
+                                .font(.mCaption).foregroundStyle(Tokens.successInk)
+                        } else {
+                            Label("오늘 작성 한도를 모두 사용했습니다. 내일 다시 작성할 수 있습니다.",
+                                  systemImage: "clock.badge.exclamationmark")
+                                .font(.mCaption).foregroundStyle(Tokens.warningInk)
+                        }
                     }
                     Picker("게시판", selection: $board) {
                         ForEach(composerBoards, id: \.0) { item in
                             Text(item.1).tag(item.0)
                         }
-                    }.pickerStyle(.menu)
-                    TextField("제목 2~120자", text: $title).textFieldStyle(.roundedBorder)
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("community-compose-board")
+                    TextField("제목 2~120자", text: $title)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("community-compose-title")
                     TextEditor(text: $content)
                         .frame(minHeight: 180)
                         .padding(Tokens.Space.s2)
                         .background(Tokens.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.md))
                         .overlay { RoundedRectangle(cornerRadius: Tokens.Radius.md).strokeBorder(Tokens.line) }
+                        .accessibilityLabel("게시글 내용")
+                        .accessibilityIdentifier("community-compose-content")
                     Toggle("익명으로 작성", isOn: $anonymous)
                     attachmentControls
                     Text("제목 \(title.utf16.count)/120 · 내용 \(content.utf16.count)/10000").font(.mCaption).foregroundStyle(Tokens.text2)
                     Text("작성 중인 글과 첨부파일은 이 계정의 기기에 임시 저장됩니다.").font(.mCaption).foregroundStyle(Tokens.text2)
                     if isImporting { ProgressView("첨부파일을 준비하고 있어요") }
                     if let errorMessage { Label(errorMessage, systemImage: "exclamationmark.triangle.fill").font(.mCaption).foregroundStyle(Tokens.dangerInk) }
-                    Button {
-                        if submissionUncertain { confirmsRetry = true } else { Task { await save() } }
-                    } label: {
-                        Label(isSaving ? "등록 중" : "게시글 등록", systemImage: "paperplane.fill").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(!valid || draft == nil || isSaving || isImporting || access == nil || access?.remainingPosts == 0)
                     if access == nil && !isLoading {
                         Button("작성 권한 다시 확인") { Task { await loadAccess() } }.frame(minHeight: 44)
                     }
                 }
                 .frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
                 .adaptiveHPadding().adaptiveVPadding()
+                .disabled(completionFinalized)
             }
             .background(Tokens.paper)
+            // iPad의 form sheet는 세로가 짧아 본문 끝의 버튼이 첫 화면 밖으로 밀린다.
+            // 등록은 이 화면의 주 행동이므로 스크롤 위치와 무관하게 하단에 고정한다.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                submitButton
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, Tokens.Space.s4)
+                    .padding(.vertical, Tokens.Space.s2)
+                    .background(Tokens.surface)
+            }
             .navigationTitle("새 게시글")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("초안 보관 후 닫기") { saveDraft(); dismiss() }.disabled(isSaving) }
-                ToolbarItem(placement: .confirmationAction) { Button("초안 지우기") { confirmsDiscard = true }.disabled(isSaving || isImporting) }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("초안 보관 후 닫기") {
+                        if acknowledgedSubmission != nil { Task { await save() } }
+                        else if saveDraft() { dismiss() }
+                    }.disabled(isSaving || isImporting)
+                }
+                ToolbarItem(placement: .confirmationAction) { Button("초안 지우기") { confirmsDiscard = true }.disabled(isSaving || isImporting || acknowledgedSubmission != nil) }
             }
-            .interactiveDismissDisabled(isSaving || isImporting)
+            .interactiveDismissDisabled(isSaving || isImporting || acknowledgedSubmission != nil)
             .task { owner = store.captureAccountSessionBoundary(); restoreDraft(); await loadAccess() }
             .onChange(of: title) { _, _ in saveDraft() }
             .onChange(of: content) { _, _ in saveDraft() }
@@ -875,6 +1009,22 @@ private struct NativeCommunityComposerSheet: View {
                 Button("미등록을 확인했어요 · 다시 등록") { Task { await save() } }
             } message: { Text("응답을 받지 못해 등록 여부를 확인할 수 없습니다. 같은 글이 있는지 확인한 뒤 다시 등록해 주세요.") }
         }
+    }
+
+    private var submitButton: some View {
+        Button {
+            if acknowledgedSubmission != nil { Task { await save() } }
+            else if submissionUncertain { confirmsRetry = true }
+            else { Task { await save() } }
+        } label: {
+            Label(acknowledgedSubmission != nil ? (isSaving ? "초안 보관 중" : "초안 보관 다시 시도") : (isSaving ? "등록 중" : "게시글 등록"),
+                  systemImage: acknowledgedSubmission != nil ? "tray.and.arrow.down" : "paperplane.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(isSaving || isImporting || completionFinalized ||
+                  (acknowledgedSubmission == nil && (!valid || draft == nil || access == nil || access?.remainingPosts == 0)))
+        .accessibilityIdentifier("community-compose-submit")
     }
 
     private var attachmentControls: some View {
@@ -953,11 +1103,16 @@ private struct NativeCommunityComposerSheet: View {
             if submissionUncertain { errorMessage = "이 글이 이미 등록됐을 수 있습니다. 게시판에서 확인한 뒤 다시 등록해 주세요." }
         } catch { errorMessage = "초안을 읽지 못했습니다. 원본은 보관되어 있습니다. 초안 지우기로 새로 시작할 수 있어요." }
     }
-    private func saveDraft() {
-        guard ownsDraft, var saved = draft else { return }
+    @discardableResult private func saveDraft() -> Bool {
+        guard ownsDraft, !completionFinalized, var saved = draft else { return false }
         saved.fields = draftFields; saved.attachments = files.map(\.lastPathComponent)
-        do { try NativeServiceDraftDisk.save(saved); draft = saved }
-        catch { errorMessage = "초안을 저장하지 못했습니다. 저장 공간을 확인해 주세요." }
+        do { try NativeServiceDraftDisk.save(saved); draft = saved; return true }
+        catch {
+            errorMessage = acknowledgedSubmission == nil
+                ? "초안을 저장하지 못했습니다. 저장 공간을 확인해 주세요."
+                : "게시글은 등록되었습니다. 추가 편집은 아직 보관하지 못했습니다. 화면을 닫지 말고 초안 보관을 다시 시도해 주세요. 게시글은 다시 전송하지 않습니다."
+            return false
+        }
     }
     private func discardDraft() {
         guard ownsDraft else { return }
@@ -967,34 +1122,40 @@ private struct NativeCommunityComposerSheet: View {
         saveDraft()
     }
     @MainActor private func save() async {
-        guard ownsDraft, !isSaving, !isImporting, valid, let access, access.remainingPosts > 0,
+        guard ownsDraft, !isSaving, !isImporting, !completionFinalized else { return }
+        if acknowledgedSubmission != nil {
+            let boundary = store.captureAccountSessionBoundary()
+            isSaving = true
+            defer { if store.ownsCurrentAccountSession(boundary) { isSaving = false } }
+            await finishAcknowledgedSave()
+            return
+        }
+        guard valid, let access, access.remainingPosts > 0,
               files.isEmpty || access.canUploadFiles else { return }
-        saveDraft()
         guard var saved = draft else { return }
+        // The exact RAM snapshot must be durable before it is sent. A failed
+        // onChange save must not let an older draft/ticket stand in for this input.
+        saved.fields = draftFields; saved.attachments = files.map(\.lastPathComponent)
         if saved.submissionID == nil { saved.submissionID = UUID().uuidString }
         do { try NativeServiceDraftDisk.save(saved); draft = saved }
         catch { errorMessage = "등록 전 초안을 안전하게 저장하지 못했습니다."; return }
         let boundary = store.captureAccountSessionBoundary()
         let sentFields = saved.fields, sentAttachments = saved.attachments
+        // The form can still be edited while the request is in flight. Return
+        // to the board that received this post, not a later draft selection.
+        let submittedBoard = board
         isSaving = true; errorMessage = nil
         defer { if store.ownsCurrentAccountSession(boundary) { isSaving = false } }
         do {
             guard let operationID = saved.submissionID else { throw CocoaError(.coderInvalidValue) }
-            let post = try await ServerAPI.createCommunityPost(board: board, title: title, content: content,
+            let post = try await ServerAPI.createCommunityPost(board: submittedBoard, title: title, content: content,
                                                                anonymous: anonymous, files: files, originalNames: originalNames,
                                                                account: accountSlot, operationID: operationID)
             guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
-            if let disk = try? NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-composer"),
-               disk.fields == sentFields, disk.attachments == sentAttachments {
-                discardDraft()
-                if let disk = try? NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-composer"),
-                   disk.submissionID == nil, disk.fields["content"] == "", let auth = ServerAPI.captureAuthorization() {
-                    try? await CommunityRequestIdentity.shared.finishAcknowledgedDraft(
-                        owner: MobileRequestOwner(account: accountSlot, authorization: auth), operationID: operationID)
-                }
-            }
-            guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
-            onCreated(post)
+            acknowledgedSubmission = AcknowledgedSubmission(post: post, board: submittedBoard,
+                                                            operationID: operationID, fields: sentFields,
+                                                            attachments: sentAttachments)
+            await finishAcknowledgedSave()
         } catch {
             guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
             let rejected = (error as? ServerAPIError)?.statusCode.map { (400..<500).contains($0) } == true
@@ -1002,6 +1163,67 @@ private struct NativeCommunityComposerSheet: View {
             submissionUncertain = !rejected
             errorMessage = (error as? ServerAPIError)?.errorDescription ?? "등록 여부를 확인하지 못했습니다. 게시판을 확인한 뒤 다시 시도해 주세요."
             saveDraft()
+        }
+    }
+    @MainActor private func finishAcknowledgedSave() async {
+        guard ownsDraft, !completionFinalized, let acknowledged = acknowledgedSubmission,
+              !Task.isCancelled else { return }
+        let boundary = store.captureAccountSessionBoundary()
+        do {
+            let disk = try NativeServiceDraftDisk.load(slot: accountSlot, resource: "community-composer")
+            let currentFields = draftFields, currentAttachments = files.map(\.lastPathComponent)
+            let unchanged = currentFields == acknowledged.fields && currentAttachments == acknowledged.attachments
+            var retiredTicket = false
+            if unchanged && disk.submissionID == acknowledged.operationID &&
+                disk.fields == acknowledged.fields && disk.attachments == acknowledged.attachments {
+                var cleared = NativeServiceDraft(slot: accountSlot, resource: "community-composer")
+                cleared.fields = ["board": board, "title": "", "content": "", "anonymous": "false", "submissionUncertain": "false"]
+                // Persist first. Neither the only RAM copy nor attachment files
+                // may be erased while the durable submitted draft still exists.
+                try NativeServiceDraftDisk.save(cleared)
+                completionFinalized = true
+                cleanup()
+                files = []; title = ""; content = ""; anonymous = false; originalNames = [:]
+                submissionUncertain = false; draft = cleared; retiredTicket = true
+            } else if !unchanged {
+                var preserved = NativeServiceDraft(slot: accountSlot, resource: "community-composer")
+                preserved.fields = currentFields; preserved.fields["submissionUncertain"] = "false"
+                preserved.attachments = currentAttachments
+                // Later edits are a new, unsent draft, not a retry of this POST.
+                // Do not reuse the acknowledged operation's submissionID.
+                try NativeServiceDraftDisk.save(preserved)
+                draft = preserved; submissionUncertain = false
+                completionFinalized = true; retiredTicket = true
+            } else {
+                // A different durable draft may belong to another presentation.
+                // Never erase it or overwrite it in this sheet's onDisappear.
+                completionFinalized = true
+            }
+            let finalizedFields = draftFields, finalizedAttachments = files.map(\.lastPathComponent)
+            if retiredTicket, let auth = ServerAPI.captureAuthorization() {
+                try? await CommunityRequestIdentity.shared.finishAcknowledgedDraft(
+                    owner: MobileRequestOwner(account: accountSlot, authorization: auth),
+                    operationID: acknowledged.operationID)
+            }
+            guard ownsDraft, store.ownsCurrentAccountSession(boundary) else { return }
+            guard !Task.isCancelled else {
+                // Keep the receipt even when only finalization was cancelled.
+                // A still-mounted sheet must remain able to finish locally.
+                completionFinalized = false
+                return
+            }
+            // A queued input event can precede the disabled form's next render.
+            // If it lands during the ledger await, do not dismiss unsaved input.
+            guard draftFields == finalizedFields, files.map(\.lastPathComponent) == finalizedAttachments else {
+                completionFinalized = false
+                errorMessage = "게시글은 등록되었습니다. 이후 변경한 초안은 아직 보관하지 못했습니다. 초안 보관을 다시 시도해 주세요. 게시글은 다시 전송하지 않습니다."
+                return
+            }
+            errorMessage = nil
+            onCreated(acknowledged.post, acknowledged.board)
+        } catch {
+            guard ownsDraft, store.ownsCurrentAccountSession(boundary), !Task.isCancelled else { return }
+            errorMessage = "게시글은 등록되었습니다. 초안 정리 또는 추가 편집 보관을 완료하지 못했습니다. 화면의 내용은 유지됩니다. 저장 공간을 확인하고 초안 보관을 다시 시도해 주세요. 게시글은 다시 전송하지 않습니다."
         }
     }
     @MainActor private func importPhotos(_ items: [PhotosPickerItem]) async {

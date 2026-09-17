@@ -33,6 +33,7 @@ struct ServerUser: Codable {
     var role: String? = nil
     var schoolGrade: Int?
     var school: ServerSchool?
+    var university: ServerUniversity? = nil
     var currentStreak: Int?
     var longestStreak: Int?
     var rankingDisplayMode: String?
@@ -95,6 +96,14 @@ struct ServerSchool: Codable {
     var region: String?
     var code: String?
     var name: String?
+}
+
+struct ServerUniversity: Codable {
+    var code: String?
+    var name: String?
+    var campus: String?
+    var region: String?
+    var isOverseas: Bool?
 }
 
 struct AuthResponse: Codable {
@@ -215,6 +224,74 @@ enum ServerAPI {
     }
 
     private struct NativeKakaoGrant: Codable { let code: String }
+
+    struct NativeSocialRegistrationInfo: Codable {
+        let token: String
+        let provider: String
+        let expiresAt: String
+        let email: String?
+        let suggestedRealName: String?
+        let termsVersion: String
+        let privacyVersion: String
+    }
+
+    struct NativeSocialStartResponse: Codable {
+        let status: String
+        let code: String?
+        let registration: NativeSocialRegistrationInfo?
+    }
+
+    /// New native-only contract. A missing route is a server deployment error,
+    /// never permission to open the website's registration form.
+    static func startNativeKakaoAuthentication(accessToken: String, codeChallenge: String)
+    async throws -> NativeSocialStartResponse {
+        try await request("POST", "/api/v1/auth/native-social/kakao/start",
+                          body: ["accessToken": accessToken, "codeChallenge": codeChallenge], authed: false)
+    }
+
+    static func startNativeAppleAuthentication(identityToken: String, authorizationCode: String?,
+                                               nonce: String, fullName: String?,
+                                               codeChallenge: String)
+    async throws -> NativeSocialStartResponse {
+        var body: [String: Any] = ["identityToken": identityToken, "nonce": nonce,
+                                   "codeChallenge": codeChallenge]
+        if let authorizationCode { body["authorizationCode"] = authorizationCode }
+        if let fullName { body["fullName"] = fullName }
+        return try await request("POST", "/api/v1/auth/native-social/apple/start", body: body, authed: false)
+    }
+
+    static func completeNativeSocialRegistration(registration: NativeSocialRegistrationInfo,
+                                                codeVerifier: String,
+                                                profile: NativeSocialRegistrationProfile)
+    async throws -> String {
+        var body: [String: Any] = [
+            "registrationToken": registration.token, "codeVerifier": codeVerifier,
+            "realName": profile.realName, "name": profile.name,
+            "birthDate": profile.birthDate, "schoolGrade": profile.schoolGrade,
+            "termsAccepted": profile.termsAccepted, "privacyAccepted": profile.privacyAccepted,
+            "termsVersion": registration.termsVersion, "privacyVersion": registration.privacyVersion,
+        ]
+        if [10, 11, 12].contains(profile.schoolGrade) {
+            body["schoolRegion"] = profile.schoolRegion
+            body["schoolCode"] = profile.schoolCode
+            if profile.schoolCode == "OVERSEAS_HIGH_SCHOOL" {
+                body["overseasSchoolName"] = profile.schoolName
+            }
+        } else if profile.schoolGrade == 14 {
+            body["universityCode"] = profile.universityCode
+            if profile.universityCode == "OVERSEAS_UNIVERSITY" {
+                body["overseasUniversityName"] = profile.universityName
+            }
+        }
+        let result: NativeKakaoGrant = try await request(
+            "POST", "/api/v1/auth/native-social/register", body: body, authed: false)
+        guard !result.code.isEmpty else {
+            throw ServerAPIError(message: "가입 결과를 확인하지 못했습니다. 다시 시도해 주세요.",
+                                 code: "SOCIAL_AUTH_GRANT_MISSING")
+        }
+        return result.code
+    }
+
     static func beginNativeKakaoLogin(accessToken: String, codeChallenge: String) async throws -> String {
         let result: NativeKakaoGrant = try await request(
             "POST", "/api/v1/auth/kakao/native",
@@ -441,6 +518,22 @@ enum ServerAPI {
     static func schools() async throws -> [String: [APISchool]] {
         let res: SchoolsResponse = try await request("GET", "/api/v1/schools", body: nil, authed: false)
         return res.regions
+    }
+
+    struct APIUniversity: Codable, Identifiable {
+        let code: String
+        let name: String
+        var campus: String? = nil
+        var region: String? = nil
+        var requiresCustomName: Bool? = nil
+        var id: String { code }
+    }
+    private struct UniversitiesResponse: Codable { let universities: [APIUniversity] }
+
+    static func universities() async throws -> [APIUniversity] {
+        let result: UniversitiesResponse = try await request(
+            "GET", "/api/v1/universities", body: nil, authed: false)
+        return result.universities
     }
 
     /// 프로필의 학교 변경은 학교 리그 정본을 바꾸는 서버 작업이다.

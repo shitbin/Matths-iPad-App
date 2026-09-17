@@ -975,7 +975,7 @@ struct GoatArenaScreen: View {
         guard !unmet.isEmpty else {
             return snapshot.payback.eligible == true
                 ? "세 조건을 모두 충족했습니다"
-                : "서버의 다음 판정을 기다리세요"
+                : "판정 결과를 기다려 주세요"
         }
         return unmet
             .prefix(2)
@@ -1457,7 +1457,7 @@ struct GoatArenaScreen: View {
 
     private func compactAccessDetail(_ snapshot: Snapshot, cycle: Snapshot.Cycle) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s4) {
-            Text("서버가 판정한 오늘의 이용 범위와 다음 행동입니다. Day 30은 유료 이용 연장이 아니라 별도의 Completion Pass입니다.")
+            Text("오늘 이용할 수 있는 기능을 확인하세요. Day 30은 유료 이용 연장이 아니라 별도의 Completion Pass입니다.")
                 .font(.mCallout)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2179,7 +2179,7 @@ struct GoatArenaScreen: View {
                     .accessibilityAddTraits(.isHeader)
             }
 
-            Text("서버가 판정한 오늘의 이용 범위와 다음 행동입니다. Day 30은 유료 이용 연장이 아니라 별도의 Completion Pass입니다.")
+            Text("오늘 이용할 수 있는 기능을 확인하세요. Day 30은 유료 이용 연장이 아니라 별도의 Completion Pass입니다.")
                 .font(.mCallout)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2257,8 +2257,8 @@ struct GoatArenaScreen: View {
                 icon: "exclamationmark.shield.fill",
                 title: "학습 이용이 검토 중입니다",
                 detail: cycle.status == "PAYMENT_DISPUTED"
-                    ? "결제 상태 확인이 끝날 때까지 이용 권리가 잠겨 있습니다. 웹 계정의 주문 상태를 확인하세요."
-                    : "계정 검토가 끝날 때까지 이용 권리가 잠겨 있습니다. 기록은 읽기 전용으로 보존됩니다.",
+                    ? "결제 상태를 확인하는 동안 이용이 제한됩니다. 웹 계정의 주문 상태를 확인하세요."
+                    : "계정 검토가 끝날 때까지 이용이 제한됩니다. 기존 기록은 그대로 조회할 수 있습니다.",
                 badge: "검토 잠금",
                 tint: Tokens.warningInk,
                 background: Tokens.warningSoft)
@@ -2277,7 +2277,7 @@ struct GoatArenaScreen: View {
             return DecisionPresentation(
                 icon: "clock.badge.exclamationmark",
                 title: "Completion Pass 판정을 기다리고 있습니다",
-                detail: "허용 시간과 활동 기준이 확정되기 전에는 앱이 Day 30 이용 가능 여부를 추측하지 않습니다.",
+                detail: "Day 30의 허용 시간과 활동 기준을 확인 중입니다. 확인이 끝나면 이용 가능 여부를 안내합니다.",
                 badge: "정책 대기",
                 tint: Tokens.warningInk,
                 background: Tokens.warningSoft)
@@ -2297,7 +2297,7 @@ struct GoatArenaScreen: View {
             return DecisionPresentation(
                 icon: "clock.fill",
                 title: "Day 1 시작을 기다리고 있습니다",
-                detail: "결제 승인과 시작일 판정이 끝나면 서버가 이용 권리를 자동으로 엽니다.",
+                detail: "결제 승인과 시작일 확인이 끝나면 자동으로 이용할 수 있습니다.",
                 badge: "시작 대기",
                 tint: Tokens.primary,
                 background: Tokens.primarySoft)
@@ -2376,8 +2376,8 @@ struct GoatArenaScreen: View {
         if snapshot.payback.state == "POLICY_PENDING" {
             return DecisionPresentation(
                 icon: "doc.text.magnifyingglass",
-                title: "기록은 계속 쌓고, 최종 기준을 기다리세요",
-                detail: "확정되지 않은 기준 때문에 판정만 보류된 상태입니다. 서버는 출석·일수·완료 경기 기록을 계속 보존합니다.",
+                title: "최종 판정 기준을 확인 중입니다",
+                detail: "기준이 확정될 때까지 판정을 보류합니다. 출석·일수·완료 경기 기록은 계속 저장됩니다.",
                 badge: "다음 행동",
                 tint: Tokens.warningInk,
                 background: Tokens.warningSoft)
@@ -2391,7 +2391,7 @@ struct GoatArenaScreen: View {
                     : "Completion Pass 판정 갱신을 기다리세요",
                 detail: cycle.access.completionPassActive
                     ? "완료 뒤 이 화면을 새로고침해 30일 출석과 페이백 판정을 확인하세요."
-                    : "운영 기준이 서버에 반영되면 이용 가능 상태와 다음 행동이 자동으로 갱신됩니다.",
+                    : "운영 기준이 반영되면 이용 가능 여부와 할 일을 이 화면에서 안내합니다.",
                 badge: "다음 행동",
                 tint: Tokens.primary,
                 background: Tokens.primarySoft)
@@ -2412,7 +2412,7 @@ struct GoatArenaScreen: View {
                 icon: "checkmark.seal.fill",
                 title: "세 조건을 모두 충족했습니다",
                 detail: snapshot.activeMatch == nil
-                    ? "서버의 페이백 지급 절차가 열릴 때까지 원장 상태를 유지하세요."
+                    ? "페이백 지급 절차를 기다려 주세요. 현재 기록은 그대로 유지됩니다."
                     : "진행 중인 경기가 정산된 뒤 최종 페이백 가능 여부가 다시 판정됩니다.",
                 badge: "조건 충족",
                 tint: Tokens.successInk,
@@ -2421,8 +2421,8 @@ struct GoatArenaScreen: View {
 
         return DecisionPresentation(
             icon: "clock.fill",
-            title: "서버의 다음 판정을 기다리세요",
-            detail: "사이클·무결성·정산 상태가 갱신되면 이 화면의 다음 행동도 함께 바뀝니다.",
+            title: "판정 결과를 기다려 주세요",
+            detail: "사이클·경기 검토·정산 상태가 바뀌면 이 화면에서 할 일을 안내합니다.",
             badge: "판정 대기",
             tint: Tokens.warningInk,
             background: Tokens.warningSoft)
@@ -2537,9 +2537,9 @@ struct GoatArenaScreen: View {
             .map(policyFieldLabel) ?? []
         let unique = Array(Set(fields)).sorted()
         guard !unique.isEmpty else {
-            return "출석과 대결 기록은 계속 저장됩니다. 아직 확정되지 않은 운영 기준을 앱이 임의로 채우지는 않습니다."
+            return "출석과 대결 기록은 계속 저장됩니다. 운영 기준이 확정되면 판정 결과를 안내합니다."
         }
-        return "확인 중: \(unique.joined(separator: ", ")). 기록은 계속 저장되며, 앱이 기준값을 임의로 채우지 않습니다."
+        return "확인 중: \(unique.joined(separator: ", ")). 기준이 확정될 때까지 판정은 보류하며 기록은 계속 저장됩니다."
     }
 
     private func policyFieldLabel(_ field: String) -> String {
@@ -2580,8 +2580,8 @@ struct GoatArenaScreen: View {
         case "INTEGRITY_REVIEW":
             return DecisionPresentation(
                 icon: "exclamationmark.shield.fill",
-                title: "무결성 확인이 진행 중입니다",
-                detail: "검토가 끝날 때까지 페이백 판정을 보류합니다. 학습·대결 원장은 그대로 보존됩니다.",
+                title: "경기 기록을 검토하고 있습니다",
+                detail: "검토가 끝날 때까지 페이백 판정을 보류합니다. 학습·대결 기록은 그대로 보존됩니다.",
                 badge: "검토 중",
                 tint: Tokens.warningInk,
                 background: Tokens.warningSoft)
@@ -2589,7 +2589,7 @@ struct GoatArenaScreen: View {
             return DecisionPresentation(
                 icon: "clock.fill",
                 title: "최종 판정을 기다리고 있습니다",
-                detail: "서버 원장의 보류 사유가 해소되면 자동으로 다시 판정됩니다.",
+                detail: "보류 사유가 해소되면 자동으로 다시 판정합니다.",
                 badge: "판정 대기",
                 tint: Tokens.warningInk,
                 background: Tokens.warningSoft)
@@ -4121,7 +4121,7 @@ struct GoatArenaScreen: View {
             return DecisionPresentation(
                 icon: "eye.slash.fill",
                 title: "\(pool) 자리가 일시 숨김 상태입니다",
-                detail: "무결성 확인 중에는 공개 순위에서 보이지 않지만 마지막 시드와 원장은 서버에 보존됩니다.",
+                detail: "경기 기록을 검토하는 동안 공개 순위에서 숨겨집니다. 마지막 시드와 기록은 그대로 보관합니다.",
                 badge: "HIDDEN",
                 tint: Tokens.warningInk,
                 background: Tokens.warningSoft)
@@ -4129,7 +4129,7 @@ struct GoatArenaScreen: View {
             return DecisionPresentation(
                 icon: "arrow.triangle.2.circlepath",
                 title: "\(pool) 자리 정산이 진행 중입니다",
-                detail: "경기 결과와 일수 원장이 함께 확정될 때까지 자리 숫자를 최종 결과로 보지 마세요.",
+                detail: "경기 결과와 일수 정산이 끝나면 최종 자리를 확인할 수 있습니다.",
                 badge: "SETTLING",
                 tint: Tokens.primary,
                 background: Tokens.primarySoft)
@@ -4377,7 +4377,7 @@ struct GoatArenaScreen: View {
             return DecisionPresentation(
                 icon: "checkmark.circle.fill",
                 title: "내 답안 제출 완료",
-                detail: "내 답안은 서버에 고정되었습니다. 공유 경기가 진행 중이어도 다시 시작하거나 수정하지 않고 상대 제출과 채점 결과를 기다립니다.",
+                detail: "제출한 답안은 다시 시작하거나 수정할 수 없습니다. 상대 제출과 채점 결과를 기다려 주세요.",
                 badge: "제출 완료",
                 tint: Tokens.successInk,
                 background: Tokens.successSoft)
@@ -4402,7 +4402,7 @@ struct GoatArenaScreen: View {
             tint = Tokens.primary
             background = Tokens.primarySoft
         case "READY":
-            detail = "경기 시작 구간입니다. 아래 버튼에서 내 개인 제한 시간이 시작됩니다."
+            detail = "경기를 시작할 수 있습니다. 아래 시작 버튼을 누르면 내 제한 시간이 시작됩니다."
             icon = "play.circle.fill"
             tint = Tokens.warningInk
             background = Tokens.warningSoft
@@ -4417,17 +4417,17 @@ struct GoatArenaScreen: View {
             tint = Tokens.successInk
             background = Tokens.successSoft
         case "HELD":
-            detail = "자동 정산을 멈추고 무결성을 확인하고 있습니다. 자리와 맡긴 일수는 그대로 잠겨 있습니다."
+            detail = "경기 기록을 검토하는 동안 자동 정산을 보류합니다. 자리와 맡긴 일수는 그대로 잠겨 있습니다."
             icon = "exclamationmark.shield.fill"
             tint = Tokens.warningInk
             background = Tokens.warningSoft
         case "RESOLVED":
-            detail = "경기 결과는 결정되었고, 자리 교환과 일수 원장을 한 번에 확정하는 중입니다."
+            detail = "경기 결과가 결정되었습니다. 자리 교환과 일수 정산을 함께 처리하고 있습니다."
             icon = "arrow.triangle.2.circlepath"
             tint = Tokens.primary
             background = Tokens.primarySoft
         default:
-            detail = "알 수 없는 경기 상태를 임의로 해석하지 않고 서버 갱신을 기다립니다."
+            detail = "경기 상태를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요."
             icon = "questionmark.circle.fill"
             tint = Tokens.warningInk
             background = Tokens.warningSoft
@@ -4455,11 +4455,11 @@ struct GoatArenaScreen: View {
         switch match.status {
         case "REQUESTED": return "상대 확정을 기다리세요"
         case "MATCHED": return "시작 마감을 확인하세요"
-        case "READY": return "현재 경기 경로에서 시작하세요"
+        case "READY": return "아래 버튼에서 경기를 시작하세요"
         case "IN_PROGRESS": return "제출 마감을 놓치지 마세요"
         case "SUBMITTED": return "채점 결과를 기다리세요"
-        case "HELD": return "무결성 검토 결과를 기다리세요"
-        case "RESOLVED": return "원장 정산 완료를 기다리세요"
+        case "HELD": return "경기 검토 결과를 기다려 주세요"
+        case "RESOLVED": return "정산이 끝날 때까지 기다려 주세요"
         default: return "서버 상태를 다시 확인하세요"
         }
     }
@@ -4493,11 +4493,11 @@ struct GoatArenaScreen: View {
         case "SUBMITTED":
             return "채점 중에는 자리를 최종 결과로 보지 마세요. 결과가 확정되면 정산 단계로 이동합니다."
         case "HELD":
-            return "검토 중에는 자리와 맡긴 일수가 움직이지 않습니다. 앱이 승패나 정산 결과를 추측하지 않습니다."
+            return "검토 중에는 자리와 맡긴 일수가 바뀌지 않습니다. 검토가 끝나면 승패와 정산 결과를 안내합니다."
         case "RESOLVED":
             return "자리와 일수 원장이 함께 확정되면 Arena Position과 사용 가능 일수가 갱신됩니다."
         default:
-            return "잠시 후 새로고침해 서버가 내려준 상태를 다시 확인하세요."
+            return "잠시 후 새로고침해 경기 상태를 다시 확인하세요."
         }
     }
 

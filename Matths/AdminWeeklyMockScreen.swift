@@ -415,7 +415,7 @@ private struct AdminMockExamUploadSheet: View {
                     fileButton("확인용 답지 PDF (선택)", url: answerSheetURL) { importTarget = .answerSheet }
                 }
                 Section("답지 작성 자료") { AdminAnswerKeyResourcePanel() }
-                Section { Text("서버가 PDF·JSON 실제 내용을 검사하고, 정답 키와 문항 수가 맞지 않으면 등록을 거부합니다.").font(.mCaption).foregroundStyle(Tokens.text2) }
+                Section { Text("PDF·JSON의 실제 내용과 정답 키·문항 수를 확인합니다. 서로 맞지 않으면 등록할 수 없습니다.").font(.mCaption).foregroundStyle(Tokens.text2) }
             }
             .navigationTitle("주간 모의고사 등록").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("등록 검토") { confirming = true }.disabled(!valid || saving) } }
@@ -425,7 +425,7 @@ private struct AdminMockExamUploadSheet: View {
             }
             .confirmationDialog("이 회차를 등록할까요?", isPresented: $confirming, titleVisibility: .visible) {
                 Button("파일 검증 후 공개 예약") { Task { await upload() } }; Button("취소", role: .cancel) {}
-            } message: { Text("업로드가 성공하면 서버 일정에 따라 회원 공개와 공지가 예약됩니다.") }
+            } message: { Text("등록이 완료되면 설정된 일정에 따라 회원 공개와 공지가 예약됩니다.") }
         }.presentationDetents([.large])
     }
 

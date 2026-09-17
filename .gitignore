@@ -30,4 +30,5 @@ ConceptMotion/
 node_modules/
 .Matths-UIQA.xcodeproj/
 .Matths-DeviceQA.xcodeproj/
+.Matths-NativeSocialQA.xcodeproj/
 *.generating

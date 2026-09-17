@@ -192,7 +192,7 @@ struct ArenaShopScreen: View {
                     .foregroundStyle(Tokens.onNavy)
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
-                Text("경기로 얻은 학습일을 분석·일정·장식 기능에 사용")
+                Text("경기로 얻은 학습일로 분석·일정·장식 기능 이용")
                     .font(.mCaption)
                     .foregroundStyle(Tokens.onNavy.opacity(0.62))
                     .lineLimit(1)
@@ -223,7 +223,7 @@ struct ArenaShopScreen: View {
             Text("Ranked 상점")
                 .font(.mMicro)
                 .foregroundStyle(Tokens.primary)
-            Text("경기로 얻은 시간을\n다음 성장에 사용하세요")
+            Text("경기로 얻은 학습일로\n필요한 기능을 이용하세요")
                 .font(.mTitle)
                 .foregroundStyle(Tokens.ink)
             Text("승패나 GP를 사는 곳이 아닙니다. 분석·일정·장식 기능만 서버 정책에 따라 적용됩니다.")
@@ -408,7 +408,7 @@ struct ArenaShopScreen: View {
                 } catch {
                     // 키 파일을 읽지 못한 채 새 키로 보내면 비중복 보장이 깨진다.
                     // GoatArena command-keys 규약과 동일하게 구매 자체를 막는다.
-                    errorMessage = "안전한 재시도 정보를 이 기기에서 확인하지 못해 구매를 시작하지 않았습니다. 저장 공간을 확인한 뒤 다시 시도해 주세요."
+                    errorMessage = "중복 차감을 막는 재시도 정보를 이 기기에서 확인하지 못해 구매를 시작하지 않았습니다. 저장 공간을 확인한 뒤 다시 시도해 주세요."
                 }
             } label: {
                 Text(item.itemCode == "DEFENSE_SCHEDULE_PROTECTION" ? "적용하기" : "조건 확인 후 사용")
@@ -713,7 +713,7 @@ struct ArenaShopScreen: View {
                 accountSlot: ownerSlot)
         } catch {
             guard ownsRequest(nextID, slot: ownerSlot) else { return }
-            errorMessage = "안전한 재시도 정보를 이 기기에 저장하지 못해 요청을 보내지 않았습니다. 저장 공간을 확인한 뒤 다시 시도해 주세요."
+            errorMessage = "중복 차감을 막는 재시도 정보를 이 기기에 저장하지 못해 요청을 보내지 않았습니다. 저장 공간을 확인한 뒤 다시 시도해 주세요."
             purchasing = false
             return
         }
@@ -736,7 +736,7 @@ struct ArenaShopScreen: View {
             // 안전한 방향이다 — 남은 키는 다음 구매에서 replay 영수증으로
             // 확인될 뿐, 추가 차감을 만들지 않는다.
             successMessage = response.receipt.replayed
-                ? "이미 처리된 요청의 같은 구매 결과를 확인했습니다. 추가 차감은 없습니다."
+                ? "이미 처리된 구매 결과를 확인했습니다. 학습일은 추가로 차감되지 않았습니다."
                 : "\(ArenaDisplayTerms.apply(response.receipt.purchase.displayName))을 적용했습니다. 잔액은 \(response.receipt.beforeAvailableDays)일에서 \(response.receipt.afterAvailableDays)일로 바뀌었습니다."
             errorMessage = nil
         } catch {
@@ -859,16 +859,16 @@ private func arenaShopPurchaseError(_ error: Error) -> String {
             )
         }
         let reason = ArenaDisplayTerms.apply(apiError.message ?? "서버 오류로 구매 결과를 확인하지 못했습니다.")
-        return reason + " 같은 버튼을 다시 누르면 동일 요청으로 확인됩니다."
+        return reason + " 같은 버튼으로 다시 시도해 주세요. 이미 처리된 구매라면 학습일은 추가로 차감되지 않습니다."
     }
     if error is DecodingError {
         #if DEBUG
         print("ArenaShop 구매 응답 디코딩 실패:", error)
         #endif
-        return "구매 응답을 읽지 못했습니다. 같은 버튼을 다시 누르면 동일 요청으로 확인됩니다. 이미 처리된 구매는 추가 차감 없이 그대로 확인됩니다."
+        return "구매 응답을 읽지 못했습니다. 같은 버튼으로 다시 시도해 주세요. 이미 처리된 구매라면 학습일은 추가로 차감되지 않습니다."
     }
     // URLError(타임아웃·연결 유실)·CancellationError 등 — 대표적인 '보냈는지 모름'.
-    return "구매 결과를 확인하지 못했습니다. 같은 버튼을 다시 누르면 동일 요청으로 확인됩니다. 추가 차감은 없습니다."
+    return "구매 결과를 확인하지 못했습니다. 같은 버튼으로 다시 시도해 주세요. 이미 처리된 구매라면 학습일은 추가로 차감되지 않습니다."
 }
 
 // MARK: - 구매 멱등키 보존소

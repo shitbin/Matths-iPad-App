@@ -51,8 +51,11 @@ grep -A3 -F 'if message.name == "lessonDebug" {' "$root/Matths/LessonWebView.swi
   | grep -Fq '#if DEBUG'
 
 # 음성 대조: 정식 API 주소만 든 바이너리는 감사에 통과해야 한다.
-printf '\000release-prefix\000%s\000release-suffix\000' \
-  'https://www.matths.kr/api/v1' > "$binary"
+printf '\000%s\000' 'https://www.matths.kr/api/v1' \
+  'NativeSocialRegistrationContext' 'NativeSocialRegistrationScreen' \
+  'NativeSocialRegistrationProfile' 'AuthFlowDiagnostics' \
+  '/api/v1/auth/native-social/apple/start' '/api/v1/auth/native-social/kakao/start' \
+  '/api/v1/auth/native-social/register' > "$binary"
 clean_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2>&1)
 printf '%s\n' "$clean_output" | grep -Fq 'Release 바이너리 스캐너 양성 대조 통과'
 printf '%s\n' "$clean_output" | grep -Fq 'Release 바이너리 감사 통과'
@@ -123,7 +126,11 @@ printf '%s\n' "$missing_api_output" | grep -Fq '공개 업데이트 링크는 AP
 for debug_marker in \
   'LocalNativeIntegrationLogin' 'NativeLLMRuntimeSelfTest' 'ProNativeRuntimeSelfTest' \
   'MATTHS_LOCAL_QA_EMAIL' 'MATTHS_LOCAL_QA_PASSWORD' \
-  'native-local-login-qa.json' 'native-llm-runtime-qa.json' 'ProNativeRuntimeQA'; do
+  'native-local-login-qa.json' 'native-llm-runtime-qa.json' 'ProNativeRuntimeQA' \
+  '-nativeRegistrationCapture' '-nativeRegistrationFixture' \
+  '-nativeRegistrationExpired' '-nativeRegistrationKakao' \
+  'capture-only-not-a-server-ticket' 'NATIVE_SOCIAL_CAPTURE_ONLY' \
+  '-authDiagnostics' 'auth-flow-diagnostics.json' 'AUTH_FLOW_DIAGNOSTICS_V1'; do
   printf '\000%s\000%s\000' 'https://www.matths.kr/api/v1' "$debug_marker" > "$binary"
   set +e
   debug_output=$(cd "$root" && SKIP_BUILD=1 DD="$work" bash ./verify-release.sh 2>&1)
@@ -133,12 +140,12 @@ for debug_marker in \
     echo "새 DEBUG 표식이 실제 바이너리 감사를 통과했습니다: $debug_marker" >&2
     exit 1
   fi
-  printf '%s\n' "$debug_output" | grep -F "$debug_marker" | grep -Fq '1건 발견'
+  printf '%s\n' "$debug_output" | grep -F -- "$debug_marker" | grep -Fq '1건 발견'
   printf '%s\n' "$debug_output" | grep -Fq '실패 1 건'
 done
 printf '\000release-prefix\000%s\000release-suffix\000' \
   'https://www.matths.kr/api/v1' > "$binary"
-echo 'Exact App Store/Kakao SDK URLs, 20 URL rejection cases, canonical API requirement and 8 DEBUG byte markers passed'
+echo 'Exact App Store/Kakao SDK URLs, 20 URL rejection cases, canonical API, shipping native-registration symbols and 17 DEBUG byte markers passed'
 
 # 번들 용량 정책 양성 대조: 동봉 대상이 아닌 남성 음성이 하나라도 섞이면 닫혀야 한다.
 mkdir -p "$cm/assets/voice/stub-1"

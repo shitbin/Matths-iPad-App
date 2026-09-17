@@ -324,7 +324,7 @@ struct QuickPracticeScreen: View {
                 HStack(spacing: Tokens.Space.s5) { metaItems }
                 VStack(alignment: .leading, spacing: Tokens.Space.s2) { metaItems }
             }
-            Text("수능과 모평 첫 페이지에서 나오는 계산 유형입니다. 빨리 정확하게가 전부입니다.")
+            Text("수능과 모평 첫 페이지에 나오는 계산 유형입니다. 빠르고 정확하게 푸는 연습입니다.")
                 .font(isShort ? .mCallout : .mBody)
                 .foregroundStyle(Tokens.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -375,12 +375,12 @@ struct QuickPracticeScreen: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: Tokens.Space.s2) {
                 quickPracticeStep("1", "문제 받기", "취약 개념에서 한 문항", "bolt.fill")
-                quickPracticeStep("2", "40초 풀이", "서버 시간으로 공정하게", "timer")
+                quickPracticeStep("2", "40초 풀이", "서버 시간으로 정확히 측정", "timer")
                 quickPracticeStep("3", "변화 확인", "정답률과 평균 속도", "chart.line.uptrend.xyaxis")
             }
             VStack(spacing: Tokens.Space.s2) {
                 quickPracticeStep("1", "문제 받기", "취약 개념에서 한 문항", "bolt.fill")
-                quickPracticeStep("2", "40초 풀이", "서버 시간으로 공정하게", "timer")
+                quickPracticeStep("2", "40초 풀이", "서버 시간으로 정확히 측정", "timer")
                 quickPracticeStep("3", "변화 확인", "정답률과 평균 속도", "chart.line.uptrend.xyaxis")
             }
         }
@@ -448,8 +448,8 @@ struct QuickPracticeScreen: View {
                     // 퀵 연습은 마감 판정이 서버 몫이라 오프라인 대체가 없다(설계).
                     // 대신 기기 안에서 끝나는 길을 알려 준다.
                     Text("퀵 연습은 시간 판정을 서버가 맡아 인터넷이 필요합니다. "
-                         + "지금 바로 풀고 싶다면 커리큘럼의 연습 문제나 오답노트 복습은 "
-                         + "기기 안에서 그대로 됩니다.")
+                         + "지금 풀고 싶다면 커리큘럼 연습 문제와 오답노트 복습은 "
+                         + "이 기기에서도 계속 이용할 수 있습니다.")
                         .font(.mCaption).foregroundStyle(Tokens.text3)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -471,9 +471,9 @@ struct QuickPracticeScreen: View {
     private var setEntry: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s3) {
             SectionRule(title: "이어 풀기")
-            Text("고른 배점으로 여러 문항을 이어서 풉니다. 한 문항마다 40초는 그대로이고, "
-                 + "몇 번째인지 화면에 표시됩니다. 중간에 그만둘 수 있고 끝나면 "
-                 + "몇 문항 맞았는지 알려 드립니다.")
+            Text("선택한 배점으로 여러 문항을 이어서 풉니다. 문항마다 40초가 주어지고 "
+                 + "현재 순서가 화면에 표시됩니다. 중간에 그만둘 수 있으며, 끝나면 "
+                 + "맞힌 문항 수를 확인할 수 있습니다.")
                 .font(.mCaption).foregroundStyle(Tokens.text3)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)

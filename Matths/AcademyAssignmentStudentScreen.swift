@@ -62,7 +62,7 @@ struct AcademyAssignmentStudentScreen: View {
                                             .font(.mBody).foregroundStyle(Tokens.text2)
                                     }
                                 } else {
-                                    Text("제출이 마감됐습니다. 마감 여부와 점수는 서버에서 확인합니다.")
+                                    Text("제출이 마감됐습니다. 제출 여부와 점수는 제출 기록을 기준으로 표시됩니다.")
                                         .font(.mBody).foregroundStyle(Tokens.text2)
                                 }
                             } else if !model.loaded { ProgressView("답안지 확인 중") }
@@ -95,7 +95,7 @@ struct AcademyAssignmentStudentScreen: View {
             }
             Button("계속 작성", role: .cancel) {}
         } message: {
-            Text("서버에서 채점하고 제출 결과를 확인합니다. 마감 전에는 답안을 수정해 다시 제출할 수 있습니다.")
+            Text("제출하면 자동 채점 후 결과를 확인할 수 있습니다. 마감 전에는 답안을 수정해 다시 제출할 수 있습니다.")
         }
         .confirmationDialog("현재 답안지로 새로 작성할까요?", isPresented: $confirmsReplace, titleVisibility: .visible) {
             Button("원본 백업 후 새로 작성", role: .destructive) { model.useCurrentConfiguration(reuseAnswers: false) }
@@ -198,7 +198,7 @@ struct AcademyAssignmentStudentScreen: View {
     private func result(_ receipt: AcademyAssignmentSubmission) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             HStack {
-                Label(receipt.status == "MISSED" ? "마감 미제출" : "서버 제출 내역", systemImage: "checkmark.shield")
+                Label(receipt.status == "MISSED" ? "마감 미제출" : "제출 내역", systemImage: "checkmark.shield")
                     .font(.mBodyB)
                 Spacer()
                 Text("\(Int(receipt.scorePercent))점").font(.mHeading.monospacedDigit())
@@ -224,7 +224,7 @@ struct AcademyAssignmentStudentScreen: View {
     private func footer(showMissing: @escaping () -> Void) -> some View {
         HStack(spacing: Tokens.Space.s3) {
             VStack(alignment: .leading, spacing: 2) {
-                if model.busy { ProgressView("서버 확인 중").font(.mCaption) }
+                if model.busy { ProgressView("답안지 확인 중").font(.mCaption) }
                 else if model.deadlinePassed { Text("제출 마감").font(.mBodyB) }
                 else if let first = model.firstMissing {
                     Button("빈 문항 \(first + 1)번으로") { focusedQuestion = nil; showMissing() }

@@ -105,7 +105,7 @@ struct TeacherAcademySetupPanel: View {
                 .font(.mCaption).foregroundStyle(Tokens.warningInk)
             Text("\(academy.name) 등록 요청을 확인하고 있습니다")
                 .font(.mHeading).foregroundStyle(Tokens.ink)
-            Text("승인 전에는 학원이 검색 목록에 표시되지 않고 학생·교사도 참여할 수 없습니다. 승인되면 새로고침 후 관리 화면이 열립니다.")
+            Text("승인 전에는 검색 결과에 나오지 않으며 학생과 선생님도 참여할 수 없습니다. 승인 후 새로고침하면 관리 화면이 열립니다.")
                 .font(.mCaption).foregroundStyle(Tokens.text2)
             Button("승인 상태 확인") { Task { await model.load() } }
                 .buttonStyle(PrimaryButtonStyle()).frame(maxWidth: compactLandscape ? 340 : .infinity)
@@ -238,7 +238,7 @@ struct TeacherAcademySetupPanel: View {
     private var policyNote: some View {
         VStack(alignment: .leading, spacing: Tokens.Space.s2) {
             Text("승인과 개인정보").font(.mBodyB).foregroundStyle(Tokens.ink)
-            Text("새 학원은 운영자 승인, 기존 학원 참여는 원장 승인을 거칩니다. 승인 전에는 내부 학생 정보와 학습 기록이 앱에 내려오지 않습니다.")
+            Text("새 학원은 운영자, 기존 학원 참여는 원장의 승인이 필요합니다. 승인 전에는 학생 정보와 학습 기록을 볼 수 없습니다.")
                 .font(.mCaption).foregroundStyle(Tokens.text2)
             Button("학원 정보·교사 권한 문의") { store.route = .support }
                 .font(.mCaption).foregroundStyle(Tokens.primary)

@@ -104,7 +104,7 @@ struct AdminArenaScreen: View {
       }
       if model.isLoading && model.dashboard == nil {
         Spacer()
-        ProgressView("Arena 운영 원장을 불러오는 중입니다")
+        ProgressView("Arena 운영 기록을 불러오는 중입니다")
         Spacer()
       } else if let value = model.dashboard {
         dashboard(value)
@@ -152,7 +152,7 @@ struct AdminArenaScreen: View {
           .buttonStyle(.plain).foregroundStyle(Tokens.primary).accessibilityLabel("관리자 홈")
         VStack(alignment: .leading, spacing: 1) {
           Text("GOAT Arena 운영").font(.mHeading)
-          Text("실시간 경기·부정행위·원장·랭킹").font(.mCaption).foregroundStyle(Tokens.text2)
+          Text("실시간 경기·부정행위·정산·랭킹").font(.mCaption).foregroundStyle(Tokens.text2)
         }
         Spacer()
         if area == .history {
@@ -463,7 +463,7 @@ struct AdminArenaScreen: View {
               badge("대기 \(value.summary.pendingOutboxCount)")
             }
             if value.issues.isEmpty {
-              ContentUnavailableView("원장 이상 없음", systemImage: "checkmark.seal")
+              ContentUnavailableView("기록 이상 없음", systemImage: "checkmark.seal")
             }
             ForEach(value.issues) { issue in
               Button {
@@ -502,7 +502,7 @@ struct AdminArenaScreen: View {
             VStack(spacing: 10) {
               Image(systemName: "checkmark.seal.fill").font(.largeTitle).foregroundStyle(
                 Tokens.successInk)
-              Text("원장 상태 \(value.health)").font(.mHeading)
+              Text("기록 상태 \(value.health)").font(.mHeading)
               Text(
                 "경기 \(value.summary.checkedMatches)건 · 이용 주기 \(value.summary.checkedCycles)건 · 초대 \(value.summary.checkedInvitations)건 검사"
               ).font(.mCaption)

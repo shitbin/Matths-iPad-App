@@ -15,7 +15,7 @@ for(const label of ['Google','Kakao']){
 fs.writeFileSync(out+'/Coordinators.swift',output);
 JS
 # Exact product state machine methods, controlled OS callback boundary only.
-xcrun swiftc -swift-version 5 "$ROOT/Matths/AuthFlowDiagnostics.swift" "$WORK/Coordinators.swift" "$ROOT/tests/AuthCoordinatorCancellationCases.swift" -o "$WORK/cases"
+xcrun swiftc -swift-version 5 "$ROOT/Matths/AuthFlowDiagnostics.swift" "$ROOT/Matths/NativeAuthenticationPresentationPolicy.swift" "$WORK/Coordinators.swift" "$ROOT/tests/AuthCoordinatorCancellationCases.swift" -o "$WORK/cases"
 "$WORK/cases"
 # Use real Apple SDK APIs at the shipping minimum OS, without performing login,
 # launching a simulator, linking/running an app, or using provider credentials.
@@ -23,5 +23,6 @@ SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 xcrun swiftc -swift-version 5 -target arm64-apple-ios17.0 -sdk "$SDK" -typecheck \
   "$ROOT/Matths/GoogleSignInCoordinator.swift" "$ROOT/Matths/KakaoSignInCoordinator.swift" "$ROOT/Matths/AppleSignInCoordinator.swift" \
   "$ROOT/Matths/AuthFlowDiagnostics.swift" \
+  "$ROOT/Matths/NativeSocialRegistrationContext.swift" \
   "$ROOT/tests/AuthCoordinatorSDKStubs.swift"
 echo 'Authentication coordinator actual iOS 17 SDK typecheck passed'
